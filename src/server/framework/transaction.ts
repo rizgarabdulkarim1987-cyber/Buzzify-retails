@@ -20,12 +20,20 @@ export type WritePlan<O> = {
   key: string;
   /** canonicalHash of {action, actorId, input}: binds the key to one action, one actor, one payload. */
   payloadHash: string;
-  /** Null for platform-level audit rows. */
+  /**
+   * The audited business. Null for platform-level plans: then run may name the business it acted
+   * on (`auditBusinessId` in its result); a business action's fixed id can never be overridden.
+   */
   auditBusinessId: string | null;
   actorId: string;
   action: string;
   /** Does the change; returns the value and what to audit. Runs inside the transaction. */
-  run(tx: Tx): Promise<{ value: O; audit: AuditDraft }>;
+  run(tx: Tx): Promise<{ value: O; audit: AuditDraft; auditBusinessId?: string | null }>;
+  /**
+   * What to keep in the idempotency row instead of the value, for values that carry a one-time
+   * secret (an invitation token): a replay then returns this redacted value. Default: the value.
+   */
+  storedValue?(value: O): O;
 };
 
 /** Fixed-alphabet lock name for (scope, key): hashing keeps odd characters out of the SQL parameter. */
@@ -67,10 +75,10 @@ export async function runIdempotentWrite<O>(
       });
       if (existing) return replay<O>(existing, plan.payloadHash);
 
-      const { value, audit } = await plan.run(tx);
+      const { value, audit, auditBusinessId } = await plan.run(tx);
       await tx.rtAuditLog.create({
         data: {
-          businessId: plan.auditBusinessId,
+          businessId: plan.auditBusinessId ?? auditBusinessId ?? null,
           actorId: plan.actorId,
           action: plan.action,
           entity: audit.entity,
@@ -83,7 +91,7 @@ export async function runIdempotentWrite<O>(
           scope: plan.scope,
           key: plan.key,
           payloadHash: plan.payloadHash,
-          result: { value: encode(value) } as Prisma.InputJsonObject,
+          result: { value: encode(plan.storedValue ? plan.storedValue(value) : value) } as Prisma.InputJsonObject,
         },
       });
       return { value, replayed: false };

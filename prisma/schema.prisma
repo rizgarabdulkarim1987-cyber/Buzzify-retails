@@ -49,6 +49,9 @@ model RtBusiness {
   subscriptionLog  RtSubscriptionEvent[]
   subscriptionPays RtSubscriptionPayment[]
   featureOverrides RtFeatureOverride[]
+
+  capabilities RtCapability[]
+  invitations  RtInvitation[]
 }
 
 model RtBranch {
@@ -154,9 +157,10 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  sessions Session[]
-  accounts Account[]
-  staff    RtStaff[]
+  sessions      Session[]
+  accounts      Account[]
+  staff         RtStaff[]
+  platformAdmin RtPlatformAdmin?
 }
 
 model Session {
@@ -346,4 +350,61 @@ model RtFeatureOverride {
   business RtBusiness @relation(fields: [businessId], references: [id])
 
   @@index([businessId, feature])
+}
+
+// Super-admin tables (Task 7).
+
+// A Buzzify platform administrator. Holds no business data access by itself (support access is
+// Task 8); it only allows the platform actions (provisioning, invitations, lifecycle, overrides).
+model RtPlatformAdmin {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+enum Capability {
+  VARIANTS
+  SERIAL
+  BATCH
+  WEIGHT
+  MULTI_UNIT
+  WARRANTY
+  WHOLESALE
+  LOYALTY
+  CREDIT
+  HOLDS
+  TRANSFERS
+}
+
+// Which capabilities a business has enabled. Business-scoped (tenants read it through scopedDb).
+model RtCapability {
+  id         String     @id @default(cuid())
+  businessId String
+  capability Capability
+  enabled    Boolean    @default(true)
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, capability])
+}
+
+// An owner invitation. Only the sha256 (hex) of the token is stored; the raw token exists only in
+// the mail and in the creating action's first response. Platform-managed: never reachable by tenants.
+model RtInvitation {
+  id           String    @id @default(cuid())
+  businessId   String
+  // Stored lowercase (CHECK constraint in the migration).
+  email        String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  usedAt       DateTime?
+  supersededAt DateTime?
+  createdById  String
+  createdAt    DateTime  @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
 }

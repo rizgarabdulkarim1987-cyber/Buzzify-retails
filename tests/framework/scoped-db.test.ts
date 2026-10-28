@@ -542,12 +542,20 @@ describe("model classification", () => {
       }
     }
     expect(UNSCOPED_MODELS).toEqual(expect.arrayContaining(["User", "Session", "Account", "Verification"]));
-    // Subscription tables are platform-managed: unscoped (no tenant access) although they carry a businessId.
-    const platform = ["RtPlan", "RtSubscription", "RtSubscriptionEvent", "RtSubscriptionPayment", "RtFeatureOverride"];
-    expect(UNSCOPED_MODELS).toEqual(expect.arrayContaining(platform));
+    // Subscription tables and owner invitations are platform-managed: unscoped (no tenant access)
+    // although they carry a businessId.
+    const platform = [
+      "RtPlan",
+      "RtSubscription",
+      "RtSubscriptionEvent",
+      "RtSubscriptionPayment",
+      "RtFeatureOverride",
+      "RtInvitation",
+    ];
+    expect(UNSCOPED_MODELS).toEqual(expect.arrayContaining([...platform, "RtPlatformAdmin"]));
     expect([...PLATFORM_MANAGED_MODELS].sort()).toEqual([...platform].sort());
     expect(BUSINESS_SCOPED_MODELS).toEqual(
-      expect.arrayContaining(["RtBusiness", "RtBranch", "RtLocation", "RtTerminal", "RtStaff", "RtStaffBranch"]),
+      expect.arrayContaining(["RtBusiness", "RtBranch", "RtLocation", "RtTerminal", "RtStaff", "RtStaffBranch", "RtCapability"]),
     );
     expect([...BRANCH_SCOPED_MODELS].sort()).toEqual(["RtBranch", "RtLocation", "RtStaffBranch", "RtTerminal"]);
   });

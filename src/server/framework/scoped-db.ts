@@ -47,6 +47,7 @@ const SCOPE_RULES = {
   RtTerminal: { business: "businessId", branch: "branchId" },
   RtStaff: { business: "businessId" },
   RtStaffBranch: { business: "businessId", branch: "branchId" },
+  RtCapability: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**
@@ -65,6 +66,11 @@ const UNSCOPED = [
   "RtSubscriptionEvent",
   "RtSubscriptionPayment",
   "RtFeatureOverride",
+  // Platform administrators (no businessId).
+  "RtPlatformAdmin",
+  // Owner invitations: carry a businessId, but hold token hashes and are only touched by platform
+  // actions and acceptInvitation (src/server/admin). A tenant must never list or read them.
+  "RtInvitation",
 ] as const satisfies readonly ModelName[];
 
 /** The UNSCOPED models that may carry a businessId column (platform-managed; the framework reads them with the base client). */
@@ -74,6 +80,7 @@ const PLATFORM_MANAGED = [
   "RtSubscriptionEvent",
   "RtSubscriptionPayment",
   "RtFeatureOverride",
+  "RtInvitation",
 ] as const satisfies readonly (typeof UNSCOPED)[number][];
 
 /**

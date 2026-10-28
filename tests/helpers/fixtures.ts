@@ -9,6 +9,29 @@ export async function createUser(db: PrismaClient, overrides: Partial<User> = {}
   });
 }
 
+/** A user who is a Buzzify platform admin. */
+export async function createPlatformAdmin(db: PrismaClient): Promise<User> {
+  const user = await createUser(db);
+  await db.rtPlatformAdmin.create({ data: { userId: user.id } });
+  return user;
+}
+
+/** A subscription plan (active, 3 branches unless overridden). */
+export async function createPlan(db: PrismaClient, overrides: { code?: string; maxBranches?: number; active?: boolean } = {}) {
+  return db.rtPlan.create({
+    data: {
+      code: overrides.code ?? "basic",
+      name: "Basic",
+      maxBranches: overrides.maxBranches ?? 3,
+      maxTerminals: 5,
+      maxUsers: 10,
+      storageMb: 1024,
+      aiMonthly: 100,
+      active: overrides.active ?? true,
+    },
+  });
+}
+
 /** A business with the named branches, and one staff member per entry of `staff`. */
 export async function createBusinessWithStaff(
   db: PrismaClient,

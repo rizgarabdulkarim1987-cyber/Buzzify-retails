@@ -4,9 +4,11 @@ import { db } from "@/server/db";
 import { can, type Permission } from "@/server/domain/permissions";
 import { ActorError, resolveActor, type Actor } from "./actor";
 import {
+  ForbiddenError,
   IdempotencyMismatchError,
   InternalActionError,
   NotFoundError,
+  RuleError,
   VersionConflictError,
   failure,
   type ErrorCode,
@@ -45,6 +47,8 @@ function codeOf(err: unknown): ErrorCode | undefined {
   if (err instanceof VersionConflictError) return "VERSION_CONFLICT";
   if (err instanceof NotFoundError) return "NOT_FOUND";
   if (err instanceof IdempotencyMismatchError) return "IDEMPOTENCY_MISMATCH";
+  if (err instanceof RuleError) return err.code;
+  if (err instanceof ForbiddenError) return "FORBIDDEN";
   return undefined;
 }
 
@@ -62,8 +66,25 @@ export function toFailure(action: string, err: unknown): { ok: false; code: Erro
 }
 
 /** A usable idempotency key: 1 to 200 characters, no NUL (which Postgres text cannot hold). */
-function validKey(key: unknown): key is string {
+export function validKey(key: unknown): key is string {
   return typeof key === "string" && key.length >= 1 && key.length <= 200 && !key.includes(String.fromCharCode(0));
+}
+
+/**
+ * The checks every action kind runs before touching the database: the input parses, can be
+ * hashed and stored, and a write carries a usable idempotency key. Null means INVALID_INPUT.
+ */
+export function prepareInput<I>(schema: ZodType<I>, raw: unknown, writes: boolean, key: unknown): { input: I } | null {
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) return null;
+  try {
+    canonicalHash(parsed.data); // rejects values that cannot be stored or hashed (NaN, Map, Set, ...)
+  } catch (err) {
+    if (err instanceof SerializationError) return null;
+    throw err;
+  }
+  if (writes && !validKey(key)) return null;
+  return { input: parsed.data };
 }
 
 /**
@@ -73,18 +94,9 @@ function validKey(key: unknown): key is string {
  */
 export function defineAction<I, O>(spec: ActionSpec<I, O>) {
   return async function action(raw: unknown, meta: ActionMeta): Promise<Result<O>> {
-    const parsed = spec.input.safeParse(raw);
-    if (!parsed.success) return failure("INVALID_INPUT");
-    const input = parsed.data;
-    try {
-      canonicalHash(input); // rejects values that cannot be stored or hashed (NaN, Map, Set, ...)
-    } catch (err) {
-      if (err instanceof SerializationError) return failure("INVALID_INPUT");
-      throw err;
-    }
-    if (spec.writes && !validKey(meta.idempotencyKey)) {
-      return failure("INVALID_INPUT");
-    }
+    const prepared = prepareInput(spec.input, raw, spec.writes, meta.idempotencyKey);
+    if (!prepared) return failure("INVALID_INPUT");
+    const { input } = prepared;
 
     try {
       const actor = await resolveActor(meta.userId, meta.businessId);
