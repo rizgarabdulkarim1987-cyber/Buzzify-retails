@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acceptInvitation } from "@/server/admin/invitations";
 import { setBusinessStatus } from "@/server/admin/lifecycle";
 import { provisionBusiness } from "@/server/admin/provision";
-import { grantSupport } from "@/server/admin/support";
+import { grantSupport, revokeSupport } from "@/server/admin/support";
 import { MemoryMailer, setMailer } from "@/server/email/mailer";
 import { resolveActor } from "@/server/framework/actor";
 import { gateOf } from "@/server/framework/gate";
@@ -108,47 +108,73 @@ describe("R0 acceptance", () => {
     // ... nor the setup wizard of their own business (no staff.manage permission).
     expect(await getSetupProgress({}, asCashier())).toMatchObject({ ok: false, code: "FORBIDDEN" });
 
-    // 4c. The subscription becomes READ_ONLY through the real lifecycle action (suspension).
+    // A support grant made while FULL: revoking it is the one write allowed while READ_ONLY (below).
+    const granted = await grantSupport({ granteeId: admin.id, scopes: ["STOCK_READ"], reason: "مراجعة أرصدة الفرع", hours: 2 }, asOwner());
+    expect(granted.ok).toBe(true);
+    if (!granted.ok) return;
+
+    const extra = await createUser(db, { email: "extra@amal.test" });
+    const counts = async () => ({
+      audit: await db.rtAuditLog.count({ where: { businessId } }),
+      staff: await db.rtStaff.count({ where: { businessId } }),
+      branches: await db.rtBranch.count({ where: { businessId } }),
+      capabilities: await db.rtCapability.count({ where: { businessId, enabled: true } }),
+      grants: await db.rtSupportGrant.count({ where: { businessId } }),
+      progressDone: await db.rtSetupProgress.count({ where: { businessId, status: "DONE" } }),
+      business: await db.rtBusiness.findUniqueOrThrow({ where: { id: businessId }, select: { name: true, activityType: true } }),
+    });
+
+    /** Every business write the owner has is refused with READ_ONLY; the cashier's is FORBIDDEN; nothing changes. */
+    async function everyWriteRefused() {
+      expect(await gateOf(businessId, db)).toBe("READ_ONLY");
+      const before = await counts();
+      const version = (await db.rtBusiness.findUniqueOrThrow({ where: { id: businessId } })).version;
+      const writes = [
+        () => completeSetupStep({ step: 1, data: { name: "x", defaultCurrency: "IQD", enabledCurrencies: ["IQD"], timezone: "Asia/Baghdad", expectedVersion: version } }, asOwner()),
+        () => completeSetupStep({ step: 2, data: { branches: [{ name: "فرع C" }] } }, asOwner()),
+        () => completeSetupStep({ step: 3, data: { activityType: "MIXED", capabilities: ["VARIANTS"], expectedVersion: version } }, asOwner()),
+        () => completeSetupStep({ step: 5, data: { staff: [{ email: extra.email, role: "CASHIER", branchIds: [branchA.id] }] } }, asOwner()),
+        () => grantSupport({ granteeId: admin.id, scopes: ["STOCK_READ"], reason: "مراجعة أرصدة الفرع", hours: 2 }, asOwner()),
+      ];
+      for (const write of writes) expect(await write()).toMatchObject({ ok: false, code: "READ_ONLY" });
+      // The cashier's attempt on branch B: no write permission at all, refused before the gate is consulted.
+      expect(
+        await completeSetupStep({ step: 2, data: { branches: [{ id: branchB.id, name: "فرع D", expectedVersion: branchB.version }] } }, asCashier()),
+      ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+      expect(await counts()).toEqual(before);
+      // Reads still work while READ_ONLY, and still only branch A for the cashier.
+      const readOnlyOptions = await shellOptions({}, asCashier());
+      expect(readOnlyOptions.ok && readOnlyOptions.value.branches.map((b) => b.id)).toEqual([branchA.id]);
+    }
+
+    // 4c. READ_ONLY through the subscription: the live (TRIAL) subscription ended and its grace
+    // period passed (dates set as a fixture; the real gate derives the mode from them).
+    const subscription = await db.rtSubscription.findFirstOrThrow({ where: { businessId, status: "TRIAL" } });
+    const DAY = 86_400_000;
+    const lapsed = new Date(Date.now() - 30 * DAY);
+    await db.rtSubscription.update({
+      where: { id: subscription.id },
+      data: { currentPeriodStart: new Date(Date.now() - 60 * DAY), trialEndsAt: lapsed, currentPeriodEnd: lapsed, graceDays: 7 },
+    });
+    await everyWriteRefused();
+
+    // The deliberate exception: revoking support access (spec allowWhenReadOnly) still works while
+    // READ_ONLY, because taking access away must never wait on billing.
+    expect(await revokeSupport({ grantId: granted.value.grantId }, asOwner())).toMatchObject({ ok: true });
+    expect((await db.rtSupportGrant.findUniqueOrThrow({ where: { id: granted.value.grantId } })).revokedAt).toBeInstanceOf(Date);
+
+    // Back to FULL (subscription restored), then 4d. READ_ONLY through the real lifecycle action (suspension).
+    await db.rtSubscription.update({
+      where: { id: subscription.id },
+      data: { currentPeriodStart: subscription.currentPeriodStart, trialEndsAt: subscription.trialEndsAt, currentPeriodEnd: subscription.currentPeriodEnd },
+    });
+    expect(await gateOf(businessId, db)).toBe("FULL");
     const biz = await db.rtBusiness.findUniqueOrThrow({ where: { id: businessId } });
     const suspended = await setBusinessStatus(
       { businessId, next: "SUSPENDED", reason: "متأخر عن دفع الاشتراك الشهري", expectedVersion: biz.version },
       asAdmin(),
     );
     expect(suspended).toMatchObject({ ok: true });
-    expect(await gateOf(businessId, db)).toBe("READ_ONLY");
-
-    const before = {
-      audit: await db.rtAuditLog.count({ where: { businessId } }),
-      staff: await db.rtStaff.count({ where: { businessId } }),
-      branches: await db.rtBranch.count({ where: { businessId } }),
-      progressDone: await db.rtSetupProgress.count({ where: { businessId, status: "DONE" } }),
-    };
-    const version = (await db.rtBusiness.findUniqueOrThrow({ where: { id: businessId } })).version;
-    const extra = await createUser(db, { email: "extra@amal.test" });
-
-    // Every business write is refused, by the owner and by the cashier.
-    const writes = [
-      () => completeSetupStep({ step: 1, data: { name: "x", defaultCurrency: "IQD", enabledCurrencies: ["IQD"], timezone: "Asia/Baghdad", expectedVersion: version } }, asOwner()),
-      () => completeSetupStep({ step: 2, data: { branches: [{ name: "فرع C" }] } }, asOwner()),
-      () => completeSetupStep({ step: 3, data: { activityType: "MIXED", capabilities: ["VARIANTS"], expectedVersion: version } }, asOwner()),
-      () => completeSetupStep({ step: 5, data: { staff: [{ email: extra.email, role: "CASHIER", branchIds: [branchA.id] }] } }, asOwner()),
-      () => grantSupport({ granteeId: admin.id, scopes: ["STOCK_READ"], reason: "مراجعة أرصدة الفرع", hours: 2 }, asOwner()),
-    ];
-    for (const write of writes) expect(await write()).toMatchObject({ ok: false, code: "READ_ONLY" });
-    // The cashier has no write permission at all: refused before the gate is even consulted.
-    expect(
-      await completeSetupStep({ step: 2, data: { branches: [{ name: "فرع D" }] } }, asCashier()),
-    ).toMatchObject({ ok: false });
-
-    expect({
-      audit: await db.rtAuditLog.count({ where: { businessId } }),
-      staff: await db.rtStaff.count({ where: { businessId } }),
-      branches: await db.rtBranch.count({ where: { businessId } }),
-      progressDone: await db.rtSetupProgress.count({ where: { businessId, status: "DONE" } }),
-    }).toEqual(before);
-
-    // Reads still work while READ_ONLY, and still only branch A for the cashier.
-    const readOnlyOptions = await shellOptions({}, asCashier());
-    expect(readOnlyOptions.ok && readOnlyOptions.value.branches.map((b) => b.id)).toEqual([branchA.id]);
+    await everyWriteRefused();
   });
 });

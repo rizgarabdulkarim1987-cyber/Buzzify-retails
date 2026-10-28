@@ -4,21 +4,19 @@ import { join, resolve } from "node:path";
 import { platform, arch } from "node:os";
 import pg from "pg";
 import EmbeddedPostgres from "embedded-postgres";
+import { isLocalHost } from "./local-db";
+
+export { isLocalHost };
 
 export const EMBEDDED_PORT = 54329;
 export const DATA_DIR = resolve(process.cwd(), ".data", "pg");
 export const DATABASES = ["retails_dev", "retails_test"] as const;
 const TEST_DATABASE = "retails_test";
-const LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
 const USER = "postgres";
 const PASSWORD = "postgres";
 
 function adminUrl(database = "postgres"): string {
   return `postgresql://${USER}:${PASSWORD}@localhost:${EMBEDDED_PORT}/${database}`;
-}
-
-export function isLocalHost(url: string): boolean {
-  return LOCAL_HOSTS.includes(new URL(url).hostname);
 }
 
 /** True when the URL targets the embedded server (and so we may start it). */

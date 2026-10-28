@@ -32,4 +32,53 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - name: Create the shadow database for the drift check
+        run: PGPASSWORD=postgres psql -h localhost -U postgres -c 'CREATE DATABASE buzzify_retails_shadow'
+      - name: Migrations match schema.prisma (exit 2 on drift)
+        # Prisma 7 takes the shadow database from prisma.config.ts (SHADOW_DATABASE_URL), not a CLI flag.
+        env:
+          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/buzzify_retails_shadow
+        run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
       - run: npm test
+      - name: Build
+        # Placeholders: the build never connects to a database or signs anything.
+        env:
+          DATABASE_URL: postgresql://ci:ci-placeholder@localhost:5432/ci_build_placeholder
+          BETTER_AUTH_SECRET: ci-build-placeholder-not-a-real-secret-0000
+          APP_URL: http://localhost:3000
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: retails_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Read by playwright.config.ts and tests/e2e/seed.ts (migrates and seeds this database).
+      E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/retails_e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7

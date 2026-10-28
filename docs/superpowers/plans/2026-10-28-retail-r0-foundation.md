@@ -53,7 +53,7 @@ src/server/framework/actor.ts          resolveActor
 src/server/framework/scoped-db.ts      عميل محصور بالمنشأة والفرع
 src/server/framework/action.ts         defineAction
 src/server/admin/                      عمليات السوبر أدمن
-src/server/support/                    منح الدعم
+src/server/admin/support.ts            منح الدعم (في مجلد admin المستثنى: حلّ المنح يحتاج العميل الأساسي)
 src/app/retail/                        واجهة المنشأة
 src/app/admin/                         واجهة السوبر أدمن
 src/messages/{ar,ckb,en}.ts

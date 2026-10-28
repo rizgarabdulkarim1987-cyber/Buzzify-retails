@@ -172,11 +172,11 @@ describe("setup progress", () => {
     expect(await getSetupProgress({}, a.as("cashier"))).toMatchObject({ ok: false, code: "FORBIDDEN" });
     expect(await completeSetupStep({ step: 2, data: { branches: [] } }, a.as("cashier"))).toMatchObject({ ok: false, code: "FORBIDDEN" });
     const u = await createUser(db, { email: "m2@example.test" });
-    for (const role of ["MANAGER", "OWNER"]) {
-      expect(
-        await completeSetupStep({ step: 5, data: { staff: [{ email: u.email, role, branchIds: [a.branches.A!.id] }] } }, a.as("manager")),
-      ).toMatchObject({ ok: false });
-    }
+    const grant = (role: string) =>
+      completeSetupStep({ step: 5, data: { staff: [{ email: u.email, role, branchIds: [a.branches.A!.id] }] } }, a.as("manager"));
+    // MANAGER is a real role the manager may not give; OWNER is never a valid wizard role.
+    expect(await grant("MANAGER")).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(await grant("OWNER")).toMatchObject({ ok: false, code: "INVALID_INPUT" });
     expect(await db.rtStaff.count({ where: { userId: u.id } })).toBe(0);
     // A manager may add a cashier.
     expect(
