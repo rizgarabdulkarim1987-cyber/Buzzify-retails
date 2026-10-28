@@ -1,0 +1,107 @@
+/*
+ * Seeds the e2e database through the app's own server code (Better Auth sign-up, the platform
+ * provisioning action, the owner invitation acceptance). Rows that have no action yet (staff
+ * assignment, terminals: later tasks) are inserted with the base client, as the vitest fixtures do.
+ *
+ * Run with DATABASE_URL pointing at the e2e database: `tsx tests/e2e/seed.ts` (global-setup does).
+ */
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { isEmbeddedUrl, isLocalHost, startServer } from "../../scripts/embedded-pg";
+import {
+  ADMIN,
+  BRANCH_A,
+  BRANCH_B,
+  BUSINESS,
+  CASHIER,
+  E2E_DATABASE_URL,
+  LONG_BRANCH,
+  LONG_BUSINESS,
+  LONG_OWNER,
+  OWNER,
+  PASSWORD,
+  TERMINAL_A,
+  E2E_SECRET,
+} from "./fixtures";
+
+const url = E2E_DATABASE_URL;
+if (!isLocalHost(url)) throw new Error(`Refusing to seed non-local database host "${new URL(url).hostname}"`);
+process.env.DATABASE_URL = url;
+process.env.BETTER_AUTH_SECRET ??= E2E_SECRET;
+process.env.APP_URL ??= "http://localhost:3100";
+
+async function main() {
+  if (isEmbeddedUrl(url)) {
+    const name = decodeURIComponent(new URL(url).pathname.slice(1));
+    await startServer([name], [name]);
+  }
+  const prismaCli = fileURLToPath(new URL("../../node_modules/prisma/build/index.js", import.meta.url));
+  const migrate = spawnSync(process.execPath, [prismaCli, "migrate", "deploy"], {
+    env: { ...process.env, DATABASE_URL: url },
+    encoding: "utf8",
+  });
+  if (migrate.status !== 0) throw new Error(`prisma migrate deploy failed:\n${migrate.stdout}\n${migrate.stderr}`);
+
+  // Imported after DATABASE_URL is set: the singleton client reads it on import.
+  const { db } = await import("@/server/db");
+  const { auth } = await import("@/server/auth/auth");
+  const { provisionBusiness } = await import("@/server/admin/provision");
+  const { acceptInvitation } = await import("@/server/admin/invitations");
+  const { MemoryMailer, setMailer } = await import("@/server/email/mailer");
+  setMailer(new MemoryMailer());
+
+  const tables = await db.$queryRaw<{ tablename: string }[]>`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;
+  await db.$executeRawUnsafe(`TRUNCATE TABLE ${tables.map((t) => `"public"."${t.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`);
+
+  const signUp = async (u: { email: string; name: string }) =>
+    (await auth.api.signUpEmail({ body: { email: u.email, name: u.name, password: PASSWORD } })).user.id;
+
+  const adminId = await signUp(ADMIN);
+  await db.rtPlatformAdmin.create({ data: { userId: adminId } });
+  await db.rtPlan.create({
+    data: { code: "basic", name: "Basic", maxBranches: 5, maxTerminals: 10, maxUsers: 20, storageMb: 1024, aiMonthly: 0 },
+  });
+
+  let n = 0;
+  async function provision(name: string, branches: string[], ownerEmail: string, ownerId: string) {
+    const created = await provisionBusiness(
+      {
+        name,
+        activityType: "MARKET",
+        capabilities: [],
+        branches: branches.map((b) => ({ name: b })),
+        ownerEmail,
+        currencies: ["IQD", "USD"],
+        planCode: "basic",
+        trialDays: 30,
+      },
+      { userId: adminId, idempotencyKey: `e2e-seed-${++n}` },
+    );
+    if (!created.ok || !created.value.token) throw new Error(`provision failed: ${JSON.stringify(created)}`);
+    const accepted = await acceptInvitation({ token: created.value.token }, { userId: ownerId, idempotencyKey: `e2e-accept-${n}` });
+    if (!accepted.ok) throw new Error(`accept failed: ${JSON.stringify(accepted)}`);
+    return created.value.businessId;
+  }
+
+  const ownerId = await signUp(OWNER);
+  const businessId = await provision(BUSINESS, [BRANCH_A, BRANCH_B], OWNER.email, ownerId);
+  const longOwnerId = await signUp(LONG_OWNER);
+  await provision(LONG_BUSINESS, [LONG_BRANCH], LONG_OWNER.email, longOwnerId);
+
+  // A cashier of branch A, and one terminal in branch A (no actions for these until later tasks).
+  const branchA = await db.rtBranch.findFirstOrThrow({ where: { businessId, name: BRANCH_A } });
+  const cashierId = await signUp(CASHIER);
+  const staff = await db.rtStaff.create({ data: { businessId, userId: cashierId, role: "CASHIER" } });
+  await db.rtStaffBranch.create({ data: { businessId, staffId: staff.id, branchId: branchA.id } });
+  const location = await db.rtLocation.findFirstOrThrow({ where: { businessId, branchId: branchA.id } });
+  await db.rtTerminal.create({ data: { businessId, branchId: branchA.id, locationId: location.id, name: TERMINAL_A } });
+
+  await db.$disconnect();
+  console.log("e2e seed ready");
+}
+
+main().catch((err: unknown) => {
+  console.error(err);
+  process.exit(1);
+});

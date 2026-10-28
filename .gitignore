@@ -3,6 +3,7 @@ node_modules/
 .env
 .env.local
 .next/
+.next-e2e/
 .data/
 *.tsbuildinfo
 next-env.d.ts

@@ -7,5 +7,5 @@ export default defineConfig([
   ...nextTs,
   // useTestDb is a Vitest setup helper, not a React hook.
   { files: ["tests/**"], rules: { "react-hooks/rules-of-hooks": "off" } },
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", ".data/**", "node_modules/**", "src/generated/**"]),
+  globalIgnores([".next/**", ".next-e2e/**", "out/**", "build/**", "next-env.d.ts", ".data/**", "node_modules/**", "src/generated/**"]),
 ]);
