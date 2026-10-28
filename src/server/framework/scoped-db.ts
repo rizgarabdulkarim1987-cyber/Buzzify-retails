@@ -369,6 +369,94 @@ function scopeArgs(scope: Scope, model: string, operation: string, args: unknown
 // ---------------------------------------------------------------------------------------------
 // Clients.
 
+const DELEGATE_MODELS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.values(Prisma.ModelName).map((m) => [m.charAt(0).toLowerCase() + m.slice(1), m]),
+);
+
+/** The model operations a guarded delegate exposes; every other delegate key is undefined. */
+const MODEL_OPERATIONS = new Set([...WHERE_OPS, ...CREATE_OPS]);
+const RAW_METHODS = new Set([
+  "$queryRaw",
+  "$executeRaw",
+  "$queryRawUnsafe",
+  "$executeRawUnsafe",
+  "$queryRawTyped",
+  "$runCommandRaw",
+]);
+
+/**
+ * Which client a guard fronts:
+ * - "client": a full client carrying the scope extension (the extension rewrites every query);
+ * - "extendedTx": the interactive-transaction client of such a client (same extension);
+ * - "tx": a handed-in base transaction client (Prisma 7 denies `$extends` on it), so the guard
+ *   itself runs scopeArgs before every call.
+ */
+type GuardKind = "client" | "extendedTx" | "tx";
+
+/**
+ * Allow-list facade over a Prisma client. The Proxy's target is an empty object, so `ownKeys`,
+ * `getOwnPropertyDescriptor`, `has` and `getPrototypeOf` reveal nothing of the underlying
+ * client (util.inspect prints the empty target). `get` returns only: model delegates (themselves allow-listed to the model operations),
+ * `$transaction` (full client only, with the callback's tx guarded too), raw SQL methods that
+ * reject with ScopeError('RAW_QUERY'), `$transaction` on a transaction that rejects with
+ * ScopeError('UNSUPPORTED_OPERATION'), and Symbol.toStringTag. Every other key (all `_` internals
+ * such as `_appliedParent`, `$extends`, `$connect`, `then`, unknown symbols) is undefined.
+ */
+function guard(client: object, scope: Scope, kind: GuardKind): object {
+  const delegates = new Map<string, object>();
+  const rejecting = (code: ScopeErrorCode, what: string) => () => Promise.reject(new ScopeError(code, what));
+
+  const delegateFor = (key: string, model: string): object => {
+    const facade = Object.create(null) as object;
+    return new Proxy(facade, {
+      get(_t, op) {
+        if (typeof op !== "string" || !MODEL_OPERATIONS.has(op)) return undefined;
+        return (args?: unknown) => {
+          // Resolve the delegate per call so nothing is cached outside the closure.
+          const delegate = Reflect.get(client, key) as Record<string, (a: unknown) => unknown>;
+          if (kind !== "tx") return delegate[op]!.call(delegate, args);
+          let scoped: Args;
+          try {
+            scoped = scopeArgs(scope, model, op, args);
+          } catch (err) {
+            return Promise.reject(err);
+          }
+          return delegate[op]!.call(delegate, scoped);
+        };
+      },
+    });
+  };
+
+  const transaction = (arg: unknown, options?: unknown): unknown => {
+    const base = client as { $transaction: (a: unknown, o?: unknown) => Promise<unknown> };
+    if (typeof arg === "function") {
+      return base.$transaction((tx: object) => (arg as (t: object) => unknown)(guard(tx, scope, "extendedTx")), options);
+    }
+    // Array form: the operations are promises built from this facade's own delegates.
+    if (Array.isArray(arg)) return base.$transaction(arg, options);
+    return Promise.reject(new ScopeError("UNSUPPORTED_OPERATION", "$transaction"));
+  };
+
+  const facade = Object.create(null) as object;
+  return new Proxy(facade, {
+    get(_t, prop) {
+      if (prop === Symbol.toStringTag) return "ScopedDb";
+      if (typeof prop !== "string") return undefined;
+      const model = DELEGATE_MODELS[prop];
+      if (model !== undefined) {
+        let d = delegates.get(prop);
+        if (!d) delegates.set(prop, (d = delegateFor(prop, model)));
+        return d;
+      }
+      if (RAW_METHODS.has(prop)) return rejecting("RAW_QUERY", prop);
+      if (prop === "$transaction") {
+        return kind === "client" ? transaction : rejecting("UNSUPPORTED_OPERATION", "nested $transaction");
+      }
+      return undefined;
+    },
+  });
+}
+
 function extendClient(client: PrismaClient, scope: Scope): PrismaClient {
   const extended = client.$extends({
     name: "scopedDb",
@@ -380,52 +468,12 @@ function extendClient(client: PrismaClient, scope: Scope): PrismaClient {
       },
     },
   });
-  return extended as unknown as PrismaClient;
+  return guard(extended, scope, "client") as PrismaClient;
 }
 
-const DELEGATE_MODELS: Readonly<Record<string, string>> = Object.fromEntries(
-  Object.values(Prisma.ModelName).map((m) => [m.charAt(0).toLowerCase() + m.slice(1), m]),
-);
-
-/**
- * Prisma 7 denies `$extends` on interactive-transaction clients, so a handed-in `tx` is wrapped
- * in a Proxy that runs the same scopeArgs on every model call and refuses every `$` method
- * (raw SQL, nested $transaction).
- */
+/** A handed-in base transaction client: guarded, with scopeArgs run by the guard itself. */
 function wrapTransaction(tx: Prisma.TransactionClient, scope: Scope): Prisma.TransactionClient {
-  const delegates = new Map<string, unknown>();
-  const wrapDelegate = (delegate: object, model: string) =>
-    new Proxy(delegate, {
-      get(target, prop) {
-        const value: unknown = Reflect.get(target, prop);
-        if (typeof prop !== "string" || typeof value !== "function") return value;
-        return (args?: unknown) => {
-          let scoped: Args;
-          try {
-            scoped = scopeArgs(scope, model, prop, args);
-          } catch (err) {
-            return Promise.reject(err);
-          }
-          return (value as (a: Args) => unknown).call(target, scoped);
-        };
-      },
-    });
-  return new Proxy(tx, {
-    get(target, prop, receiver) {
-      if (typeof prop === "string") {
-        const model = DELEGATE_MODELS[prop];
-        if (model !== undefined) {
-          if (!delegates.has(prop)) delegates.set(prop, wrapDelegate(Reflect.get(target, prop) as object, model));
-          return delegates.get(prop);
-        }
-        if (prop.startsWith("$")) {
-          const code: ScopeErrorCode = /raw/i.test(prop) ? "RAW_QUERY" : "UNSUPPORTED_OPERATION";
-          return () => Promise.reject(new ScopeError(code, prop));
-        }
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  });
+  return guard(tx, scope, "tx") as Prisma.TransactionClient;
 }
 
 /**

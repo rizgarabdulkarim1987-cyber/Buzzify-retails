@@ -15,6 +15,7 @@ const ALLOWED_FILES = ["src/server/db.ts"];
 const ALLOWED_DIRS = ["src/server/framework/", "src/server/auth/", "src/server/admin/"];
 
 const BASE_DB = "src/server/db";
+const PRISMA_INTERNALS = /\._(appliedParent|originalClient|createItxClient|engine|request|executeRequest)\b/g;
 const GENERATED_CLIENT = ["src/generated/prisma/client", "src/generated/prisma"];
 
 /** True when this repo-relative (posix) path may use the base client. */
@@ -58,8 +59,10 @@ function importsPrismaClientValue(clause: string | null): boolean {
 
 /** Pure scanner: the violations in one file's contents (empty when the file is clean or exempt). */
 export function findDirectDbAccess(file: string, content: string): string[] {
-  if (isExempt(file)) return [];
   const violations: string[] = [];
+  // Prisma internals that unwrap a scoped client to the base client; refused everywhere, exempt folders included.
+  for (const m of content.matchAll(PRISMA_INTERNALS)) violations.push(`${file}: reaches Prisma internal ${m[0]}`);
+  if (isExempt(file)) return violations;
   for (const site of importSites(content)) {
     const target = resolveSpecifier(file, site.spec);
     if (target === null) continue;
@@ -111,6 +114,9 @@ describe("enforcement", () => {
       `import { PrismaClient as PC } from "../../../generated/prisma/client";`,
       `import { PrismaClient } from "@prisma/client";`,
       `const c = new PrismaClient({ adapter });`,
+      `const base = scopedDb(actor)._appliedParent;`,
+      `const raw = (tx as any)._originalClient.rtLocation;`,
+      `await client._request({ action: "findMany" });`,
     ];
     for (const sample of bad) expect(findDirectDbAccess(file, sample), sample).not.toEqual([]);
     expect(findDirectDbAccess("src/app/page.tsx", `import { db } from "../server/db";`)).not.toEqual([]);
@@ -122,6 +128,7 @@ describe("enforcement", () => {
       `import { scopedDb } from "@/server/framework/scoped-db";`,
       `import { dbx } from "@/server/dbx";`,
       `import { db } from "./db";`, // resolves to src/server/features/sales/db, not the base client
+      `const x = obj._requestId;`,
     ];
     for (const sample of good) expect(findDirectDbAccess(file, sample), sample).toEqual([]);
   });
@@ -131,6 +138,7 @@ describe("enforcement", () => {
     for (const f of ["src/server/db.ts", "src/server/framework/actor.ts", "src/server/auth/auth.ts", "src/server/admin/x.ts"]) {
       expect(findDirectDbAccess(f, sample)).toEqual([]);
     }
+    expect(findDirectDbAccess("src/server/framework/x.ts", `const p = s._appliedParent;`)).toHaveLength(1);
     for (const f of ["src/server/domain/money.ts", "src/server/frameworkx/a.ts", "src/app/api/route.ts", "src/server/db-helpers.ts"]) {
       expect(findDirectDbAccess(f, sample)).toHaveLength(1);
     }

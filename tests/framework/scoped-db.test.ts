@@ -406,6 +406,95 @@ describe("scopedDb client behaviour", () => {
   });
 });
 
+const INTERNAL_KEYS = [
+  "_appliedParent",
+  "_originalClient",
+  "_createItxClient",
+  "_engine",
+  "_request",
+  "_executeRequest",
+  "_runtimeDataModel",
+  "$extends",
+  "$connect",
+  "$disconnect",
+  "$on",
+  "$use",
+  "$parent",
+  "then",
+];
+
+/** Every way a surface could hand back an unscoped client: none may be reachable. */
+async function expectNoEscape(surface: object, w: Awaited<ReturnType<typeof world>>) {
+  const any = surface as Record<string | symbol, unknown>;
+  for (const key of INTERNAL_KEYS) expect(any[key], key).toBeUndefined();
+  for (const sym of Object.getOwnPropertySymbols(Object.getPrototypeOf(db) ?? {})) expect(any[sym]).toBeUndefined();
+  expect(Object.keys(surface)).toEqual([]);
+  expect(Reflect.ownKeys(surface)).toEqual([]);
+  expect(Object.getPrototypeOf(surface)).toBeNull();
+  expect("_appliedParent" in surface).toBe(false);
+  expect(Object.getOwnPropertyDescriptor(surface, "_appliedParent")).toBeUndefined();
+  // Delegates expose only the model operations.
+  const delegate = any.rtLocation as Record<string, unknown>;
+  for (const key of ["$parent", "$name", "fields", "_appliedParent", "constructor", "then"]) {
+    expect(delegate[key], `rtLocation.${key}`).toBeUndefined();
+  }
+  expect(Reflect.ownKeys(delegate)).toEqual([]);
+  // Every reachable property, recursively one level down, yields nothing of another business or branch.
+  const s = surface as Scoped;
+  expect((await s.rtLocation.findMany()).map((l) => l.id)).toEqual([w.locA.id]);
+  expect(await s.rtBusiness.findUnique({ where: { id: w.two.business.id } })).toBeNull();
+  await expectScopeError(s.user.findMany(), "UNSCOPED_MODEL");
+  await expectScopeError(s.$queryRaw`SELECT 1`, "RAW_QUERY");
+  expect(String(Object.prototype.toString.call(surface))).toBe("[object ScopedDb]");
+}
+
+describe("scopedDb exposes no escape hatch to the base client", () => {
+  it("on scopedDb(actor)", async () => {
+    const w = await world();
+    const scoped = scopedDb(w.cashier, db);
+    await expectNoEscape(scoped, w);
+    expect((scoped as unknown as Record<string, unknown>)._appliedParent).not.toBe(db);
+  });
+
+  it("on scopedDb(actor, tx)", async () => {
+    const w = await world();
+    await db.$transaction(async (tx) => {
+      await expectNoEscape(scopedDb(w.cashier, tx), w);
+    });
+  });
+
+  it("on the tx inside scopedDb(actor).$transaction", async () => {
+    const w = await world();
+    await scopedDb(w.cashier, db).$transaction(async (tx) => {
+      await expectNoEscape(tx, w);
+      await expectScopeError((tx as unknown as { $transaction: () => Promise<unknown> }).$transaction(), "UNSUPPORTED_OPERATION");
+    });
+  });
+
+  it("prints without crashing", async () => {
+    const w = await world();
+    const { inspect } = await import("node:util");
+    // util.inspect shows the proxy's empty target, never the wrapped client.
+    expect(inspect(scopedDb(w.cashier, db))).toBe("[Object: null prototype] {}");
+    await db.$transaction(async (tx) => expect(inspect(scopedDb(w.cashier, tx))).toBe("[Object: null prototype] {}"));
+    expect(() => expect(scopedDb(w.cashier, db)).toEqual({ nope: 1 })).toThrow();
+  });
+
+  it("an array $transaction with a ScopeError inside rolls back entirely", async () => {
+    const w = await world();
+    const s = scopedDb(w.cashier, db);
+    const err = await s
+      .$transaction([
+        s.rtLocation.create({ data: { businessId: w.one.business.id, branchId: w.one.branches.A!.id, name: "batch" } }),
+        s.rtLocation.create({ data: { businessId: w.one.business.id, branchId: w.one.branches.B!.id, name: "batch" } }),
+      ])
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ScopeError);
+    expect(err).toMatchObject({ code: "FOREIGN_BRANCH" });
+    expect(await db.rtLocation.count({ where: { name: "batch" } })).toBe(0);
+  });
+});
+
 describe("model classification", () => {
   it("every Rt model with a businessId column is listed as scoped", () => {
     const fields = modelFields();
