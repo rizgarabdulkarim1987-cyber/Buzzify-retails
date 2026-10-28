@@ -7,6 +7,7 @@ import {
   NULLABLE_BUSINESS_MODELS,
   ScopeError,
   UNSCOPED_MODELS,
+  PLATFORM_MANAGED_MODELS,
   classifyModels,
   modelFields,
   scopedDb,
@@ -534,13 +535,17 @@ describe("model classification", () => {
     for (const model of models) {
       const scalars = fields[model]!.scalars;
       if (model.startsWith("Rt") && scalars.includes("businessId")) {
-        expect([...BUSINESS_SCOPED_MODELS, ...NULLABLE_BUSINESS_MODELS]).toContain(model);
+        expect([...BUSINESS_SCOPED_MODELS, ...NULLABLE_BUSINESS_MODELS, ...PLATFORM_MANAGED_MODELS]).toContain(model);
       }
       if (BUSINESS_SCOPED_MODELS.includes(model) && scalars.includes("branchId")) {
         expect(BRANCH_SCOPED_MODELS).toContain(model);
       }
     }
     expect(UNSCOPED_MODELS).toEqual(expect.arrayContaining(["User", "Session", "Account", "Verification"]));
+    // Subscription tables are platform-managed: unscoped (no tenant access) although they carry a businessId.
+    const platform = ["RtPlan", "RtSubscription", "RtSubscriptionEvent", "RtSubscriptionPayment", "RtFeatureOverride"];
+    expect(UNSCOPED_MODELS).toEqual(expect.arrayContaining(platform));
+    expect([...PLATFORM_MANAGED_MODELS].sort()).toEqual([...platform].sort());
     expect(BUSINESS_SCOPED_MODELS).toEqual(
       expect.arrayContaining(["RtBusiness", "RtBranch", "RtLocation", "RtTerminal", "RtStaff", "RtStaffBranch"]),
     );
@@ -564,5 +569,8 @@ describe("model classification", () => {
     expect(classifyModels(authWithBusiness).misclassified).toEqual([
       "User: has a businessId column but is listed as unscoped",
     ]);
+    // ...except the platform-managed tables, which are expressly allowed to.
+    const platformWithBusiness = { ...modelFields(), RtSubscription: { scalars: ["id", "businessId"], relations: {} } };
+    expect(classifyModels(platformWithBusiness).misclassified).toEqual([]);
   });
 });

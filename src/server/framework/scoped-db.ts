@@ -53,7 +53,28 @@ const SCOPE_RULES = {
  * Models without a businessId column (Better Auth tables; RtIdempotency, keyed by a scope string
  * that is the businessId or 'platform'). Never reachable through scopedDb (base client only).
  */
-const UNSCOPED = ["User", "Session", "Account", "Verification", "RtIdempotency"] as const satisfies readonly ModelName[];
+const UNSCOPED = [
+  "User",
+  "Session",
+  "Account",
+  "Verification",
+  "RtIdempotency",
+  // Platform-managed subscription tables: most carry a businessId, but tenants never reach them.
+  "RtPlan",
+  "RtSubscription",
+  "RtSubscriptionEvent",
+  "RtSubscriptionPayment",
+  "RtFeatureOverride",
+] as const satisfies readonly ModelName[];
+
+/** The UNSCOPED models that may carry a businessId column (platform-managed; the framework reads them with the base client). */
+const PLATFORM_MANAGED = [
+  "RtPlan",
+  "RtSubscription",
+  "RtSubscriptionEvent",
+  "RtSubscriptionPayment",
+  "RtFeatureOverride",
+] as const satisfies readonly (typeof UNSCOPED)[number][];
 
 /**
  * Models whose businessId is nullable (rows that may belong to no business, e.g. audit
@@ -83,6 +104,7 @@ export const BRANCH_SCOPED_MODELS: readonly ModelName[] = Object.freeze(
   BUSINESS_SCOPED_MODELS.filter((m) => own(RULES, m)?.branch !== undefined),
 );
 export const UNSCOPED_MODELS: readonly ModelName[] = Object.freeze([...UNSCOPED]);
+export const PLATFORM_MANAGED_MODELS: readonly ModelName[] = Object.freeze([...PLATFORM_MANAGED]);
 export const NULLABLE_BUSINESS_MODELS: readonly ModelName[] = Object.freeze([...NULLABLE_BUSINESS]);
 
 export type ScopeErrorCode =
@@ -166,7 +188,11 @@ export function classifyModels(fields: Record<string, ModelFields>): { unclassif
         misclassified.push(`${model}: has a branchId column but is not branch-scoped`);
       }
     }
-    if (UNSCOPED_MODELS.includes(model as ModelName) && scalars.includes("businessId")) {
+    if (
+      UNSCOPED_MODELS.includes(model as ModelName) &&
+      !PLATFORM_MANAGED_MODELS.includes(model as ModelName) &&
+      scalars.includes("businessId")
+    ) {
       misclassified.push(`${model}: has a businessId column but is listed as unscoped`);
     }
     if (NULLABLE_BUSINESS_MODELS.includes(model as ModelName) && !scalars.includes("businessId")) {

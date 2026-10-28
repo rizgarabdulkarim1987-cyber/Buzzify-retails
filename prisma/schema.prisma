@@ -44,6 +44,11 @@ model RtBusiness {
   locations RtLocation[]
   terminals RtTerminal[]
   staff     RtStaff[]
+
+  subscriptions    RtSubscription[]
+  subscriptionLog  RtSubscriptionEvent[]
+  subscriptionPays RtSubscriptionPayment[]
+  featureOverrides RtFeatureOverride[]
 }
 
 model RtBranch {
@@ -55,7 +60,7 @@ model RtBranch {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  business  RtBusiness   @relation(fields: [businessId], references: [id])
+  business  RtBusiness      @relation(fields: [businessId], references: [id])
   locations RtLocation[]
   terminals RtTerminal[]
   staff     RtStaffBranch[]
@@ -119,8 +124,8 @@ model RtStaff {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  business RtBusiness       @relation(fields: [businessId], references: [id])
-  user     User             @relation(fields: [userId], references: [id])
+  business RtBusiness      @relation(fields: [businessId], references: [id])
+  user     User            @relation(fields: [userId], references: [id])
   branches RtStaffBranch[]
 
   @@unique([businessId, userId])
@@ -226,4 +231,119 @@ model RtAuditLog {
 
   @@index([businessId, at])
   @@index([entity, entityId])
+}
+
+// Buzzify's own subscription tables. Platform-managed: no tenant action touches them (classified
+// UNSCOPED in scoped-db.ts although most carry a businessId), and kept apart from any shop sales tables.
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  GRACE
+  EXPIRED
+  CANCELLED
+}
+
+enum SubscriptionPaymentMethod {
+  CASH
+  BANK_TRANSFER
+  ZAINCASH
+  FIB
+  QI_CARD
+  OTHER
+}
+
+model RtPlan {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  maxBranches  Int
+  maxTerminals Int
+  maxUsers     Int
+  storageMb    Int
+  aiMonthly    Int
+  active       Boolean  @default(true)
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions RtSubscription[]
+}
+
+// At most one live (TRIAL, ACTIVE, GRACE) subscription per business: a partial unique index in the migration.
+model RtSubscription {
+  id                 String             @id @default(cuid())
+  businessId         String
+  planCode           String
+  status             SubscriptionStatus
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  graceDays          Int                @default(7)
+  cancelledAt        DateTime?
+  version            Int                @default(1)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  business RtBusiness              @relation(fields: [businessId], references: [id])
+  plan     RtPlan                  @relation(fields: [planCode], references: [code])
+  events   RtSubscriptionEvent[]
+  payments RtSubscriptionPayment[]
+
+  @@index([businessId, createdAt])
+}
+
+model RtSubscriptionEvent {
+  id             String              @id @default(cuid())
+  subscriptionId String
+  businessId     String
+  type           String
+  fromStatus     SubscriptionStatus?
+  toStatus       SubscriptionStatus
+  actorId        String?
+  occurredAt     DateTime            @default(now())
+  // Metadata only: never card, account or personal data.
+  data           Json
+
+  subscription RtSubscription @relation(fields: [subscriptionId], references: [id])
+  business     RtBusiness     @relation(fields: [businessId], references: [id])
+
+  @@index([subscriptionId, occurredAt])
+}
+
+model RtSubscriptionPayment {
+  id             String                    @id @default(cuid())
+  businessId     String
+  subscriptionId String
+  amountMinor    BigInt
+  currency       Currency
+  method         SubscriptionPaymentMethod
+  reference      String
+  paidAt         DateTime
+  coversFrom     DateTime
+  coversTo       DateTime
+  idempotencyKey String                    @unique
+  recordedById   String
+  note           String
+  createdAt      DateTime                  @default(now())
+
+  business     RtBusiness     @relation(fields: [businessId], references: [id])
+  subscription RtSubscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId, paidAt])
+}
+
+// A platform admin's manual grant or removal of a feature for one business. The reason is mandatory
+// (at least 10 characters, a CHECK constraint in the migration).
+model RtFeatureOverride {
+  id          String   @id @default(cuid())
+  businessId  String
+  feature     String
+  enabled     Boolean
+  reason      String
+  grantedById String
+  createdAt   DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, feature])
 }
