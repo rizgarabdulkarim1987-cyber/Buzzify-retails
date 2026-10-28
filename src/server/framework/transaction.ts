@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { decode, encode } from "./serialize";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { db } from "@/server/db";
 import { IdempotencyMismatchError } from "./errors";
@@ -11,35 +12,13 @@ import { IdempotencyMismatchError } from "./errors";
 
 type Tx = Prisma.TransactionClient;
 
-/** JSON round trip: what a value looks like once stored (Dates become strings, undefined disappears). */
-export function toJsonValue(value: unknown): unknown {
-  const text = JSON.stringify(value);
-  return text === undefined ? null : JSON.parse(text);
-}
-
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(value).sort()) out[k] = sortKeys((value as Record<string, unknown>)[k]);
-    return out;
-  }
-  return value;
-}
-
-/** sha256 of the JSON of `value` with object keys sorted at every level. */
-export function payloadHash(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(sortKeys(toJsonValue(value))))
-    .digest("hex");
-}
-
 export type AuditDraft = { entity: string; entityId: string; changes: Record<string, unknown> };
 
 export type WritePlan<O> = {
   /** Idempotency namespace: the businessId, or 'platform'. */
   scope: string;
   key: string;
+  /** canonicalHash of {action, actorId, input}: binds the key to one action, one actor, one payload. */
   payloadHash: string;
   /** Null for platform-level audit rows. */
   auditBusinessId: string | null;
@@ -64,7 +43,7 @@ type Stored = { payloadHash: string; result: unknown };
 
 function replay<O>(stored: Stored, hash: string): { value: O; replayed: true } {
   if (stored.payloadHash !== hash) throw new IdempotencyMismatchError();
-  return { value: (stored.result as { value: O }).value, replayed: true };
+  return { value: decode((stored.result as { value: unknown }).value) as O, replayed: true };
 }
 
 /**
@@ -96,7 +75,7 @@ export async function runIdempotentWrite<O>(
           action: plan.action,
           entity: audit.entity,
           entityId: audit.entityId,
-          changes: toJsonValue(audit.changes) as Prisma.InputJsonObject,
+          changes: encode(audit.changes) as Prisma.InputJsonObject,
         },
       });
       await tx.rtIdempotency.create({
@@ -104,7 +83,7 @@ export async function runIdempotentWrite<O>(
           scope: plan.scope,
           key: plan.key,
           payloadHash: plan.payloadHash,
-          result: { value: toJsonValue(value) } as Prisma.InputJsonObject,
+          result: { value: encode(value) } as Prisma.InputJsonObject,
         },
       });
       return { value, replayed: false };

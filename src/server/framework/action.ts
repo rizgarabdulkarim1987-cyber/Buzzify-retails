@@ -13,7 +13,8 @@ import {
   type Result,
 } from "./errors";
 import { gateOf } from "./gate";
-import { payloadHash, runIdempotentWrite, runRead, type AuditDraft } from "./transaction";
+import { SerializationError, canonicalHash } from "./serialize";
+import { runIdempotentWrite, runRead, type AuditDraft } from "./transaction";
 import { scopedDb } from "./scoped-db";
 
 export type { ErrorCode, Result } from "./errors";
@@ -75,6 +76,12 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
     const parsed = spec.input.safeParse(raw);
     if (!parsed.success) return failure("INVALID_INPUT");
     const input = parsed.data;
+    try {
+      canonicalHash(input); // rejects values that cannot be stored or hashed (NaN, Map, Set, ...)
+    } catch (err) {
+      if (err instanceof SerializationError) return failure("INVALID_INPUT");
+      throw err;
+    }
     if (spec.writes && !validKey(meta.idempotencyKey)) {
       return failure("INVALID_INPUT");
     }
@@ -94,7 +101,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
       const { value } = await runIdempotentWrite<O>({
         scope: meta.businessId,
         key: meta.idempotencyKey,
-        payloadHash: payloadHash(input),
+        payloadHash: canonicalHash({ action: spec.name, actorId: actor.userId, input }),
         auditBusinessId: meta.businessId,
         actorId: actor.userId,
         action: spec.name,

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { defineAction } from "@/server/framework/action";
+import { canonicalHash, decode, encode } from "@/server/framework/serialize";
 import { NotFoundError } from "@/server/framework/errors";
 import type { GateMode } from "@/server/framework/gate";
 import { updateVersioned } from "@/server/framework/versioned";
@@ -235,22 +236,131 @@ describe("defineAction", () => {
     expect(runs).toBe(0);
   });
 
-  it("the stored result survives a round trip as JSON", async () => {
+  it("the stored result survives a round trip: Dates come back as Dates", async () => {
     const w = await world();
+    const at = new Date("2026-01-02T03:04:05.000Z");
     const stamp = defineAction({
       name: "stamp",
       permission: null,
       input: z.object({}),
       writes: true,
-      run: async () => ({ at: new Date("2026-01-02T03:04:05.000Z"), nested: { list: [1, "x", null] }, none: undefined }),
+      run: async () => ({ at, nested: { list: [1, "x", null] }, none: undefined }),
     });
     const first = await stamp({}, w.meta("owner", "k1"));
     const second = await stamp({}, w.meta("owner", "k1"));
-    const expected = { at: "2026-01-02T03:04:05.000Z", nested: { list: [1, "x", null] } };
-    expect(second).toEqual({ ok: true, value: expected });
-    expect(first.ok).toBe(true);
+    expect(first).toEqual({ ok: true, value: { at, nested: { list: [1, "x", null] } } });
+    expect(second).toEqual(first);
+    expect((second as { value: { at: unknown } }).value.at).toBeInstanceOf(Date);
     const row = await db.rtIdempotency.findFirstOrThrow();
-    expect(row.result).toEqual({ value: expected });
+    expect(row.result).toEqual({ value: { at: { $date: "2026-01-02T03:04:05.000Z" }, nested: { list: [1, "x", null] } } });
+  });
+
+  it("the same key under another action returns IDEMPOTENCY_MISMATCH and the other action does not run", async () => {
+    const w = await world();
+    let otherRuns = 0;
+    const other = defineAction({
+      name: "branch.other",
+      permission: "staff.manage",
+      input: z.object({ branchId: z.string(), name: z.string().min(1), expectedVersion: z.number().int() }),
+      writes: true,
+      async run() {
+        otherRuns += 1;
+        return "other";
+      },
+    });
+    const input = { branchId: w.branchId, name: "A", expectedVersion: 1 };
+    const first = await renameBranch(input, w.meta("owner", "k1"));
+    expect(await other(input, w.meta("owner", "k1"))).toMatchObject({ ok: false, code: "IDEMPOTENCY_MISMATCH" });
+    expect(otherRuns).toBe(0);
+    expect(await counts()).toEqual({ audit: 1, idem: 1 });
+    expect(await renameBranch(input, w.meta("owner", "k1"))).toEqual(first);
+  });
+
+  it("the same key by another user of the same business returns IDEMPOTENCY_MISMATCH without leaking the result", async () => {
+    const w = await createBusinessWithStaff(db, {
+      branches: ["Main"],
+      staff: [
+        { key: "owner", role: "OWNER" },
+        { key: "manager", role: "MANAGER" },
+      ],
+    });
+    runs = 0;
+    const branchId = w.branches.Main!.id;
+    const meta = (who: string) => ({ userId: w.staff[who]!.user.id, businessId: w.business.id, idempotencyKey: "shared" });
+    const input = { branchId, name: "Owner's", expectedVersion: 1 };
+    expect(await renameBranch(input, meta("owner"))).toMatchObject({ ok: true });
+    const r = await renameBranch(input, meta("manager"));
+    expect(r).toMatchObject({ ok: false, code: "IDEMPOTENCY_MISMATCH" });
+    expect(JSON.stringify(r)).not.toContain("Owner's");
+    expect(runs).toBe(1);
+  });
+});
+
+describe("serialization", () => {
+  const echo = defineAction({
+    name: "echo",
+    permission: null,
+    input: z.object({ amount: z.bigint().optional(), label: z.unknown().optional(), when: z.date().optional() }),
+    writes: true,
+    run: async ({ input }) => ({ amount: input.amount, when: input.when, tags: { $bigint: "7" } }),
+    audit: (input) => ({ entity: "Echo", entityId: "1", changes: { amount: input.amount, when: input.when } }),
+  });
+
+  it("BigInt input works; in output it is a bigint on first run and on replay; audit changes store it", async () => {
+    const w = await world();
+    const when = new Date("2026-05-06T07:08:09.000Z");
+    const first = await echo({ amount: 123456789012345678901n, when }, w.meta("owner", "k1"));
+    const second = await echo({ amount: 123456789012345678901n, when }, w.meta("owner", "k1"));
+    expect(first).toEqual({
+      ok: true,
+      value: { amount: 123456789012345678901n, when, tags: { $bigint: "7" } },
+    });
+    expect(second).toEqual(first);
+    expect(typeof (second as { value: { amount: unknown } }).value.amount).toBe("bigint");
+    // A user object shaped like a tag stays a plain object after replay.
+    expect((second as { value: { tags: unknown } }).value.tags).toEqual({ $bigint: "7" });
+    const audit = await db.rtAuditLog.findFirstOrThrow();
+    expect(audit.changes).toEqual({
+      amount: { $bigint: "123456789012345678901" },
+      when: { $date: "2026-05-06T07:08:09.000Z" },
+    });
+    expect(decode(audit.changes)).toEqual({ amount: 123456789012345678901n, when });
+  });
+
+  it("hashes are stable and distinguish 1n, 2n, '1' and a tag-shaped object", async () => {
+    const hash = (v: unknown) => canonicalHash({ input: v });
+    expect(hash({ a: 1n, b: [1, { y: 2, x: 1 }] })).toBe(hash({ b: [1, { x: 1, y: 2 }], a: 1n }));
+    expect(hash({ a: 1n })).not.toBe(hash({ a: 2n }));
+    expect(hash({ a: 1n })).not.toBe(hash({ a: "1" }));
+    expect(hash({ a: 1n })).not.toBe(hash({ a: 1 }));
+    expect(hash({ a: 1n })).not.toBe(hash({ a: { $bigint: "1" } }));
+    expect(hash({ a: new Date(0) })).not.toBe(hash({ a: { $date: new Date(0).toISOString() } }));
+    expect(hash({ a: 1, b: undefined })).toBe(hash({ a: 1 }));
+    expect(decode(encode({ $bigint: "1", $date: "x" }))).toEqual({ $bigint: "1", $date: "x" });
+    expect(decode(encode({ $bigint: "1" }))).toEqual({ $bigint: "1" });
+  });
+
+  it("NaN, Infinity, Map and Set inputs are INVALID_INPUT without side effects", async () => {
+    const w = await world();
+    for (const label of [Number.NaN, Infinity, new Map(), new Set(), () => 1, Symbol("s")]) {
+      const r = await echo({ label }, w.meta("owner", "k1"));
+      expect(r, String(label)).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    }
+    expect(await counts()).toEqual({ audit: 0, idem: 0 });
+  });
+
+  it("an output that cannot be serialized rolls back with an internal error", async () => {
+    const w = await world();
+    const bad = defineAction({
+      name: "bad",
+      permission: null,
+      input: z.object({}),
+      writes: true,
+      run: async () => ({ m: new Map() }),
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(bad({}, w.meta("owner", "k1"))).rejects.toThrow(/[؀-ۿ]/);
+    expect(await counts()).toEqual({ audit: 0, idem: 0 });
   });
 });
 
