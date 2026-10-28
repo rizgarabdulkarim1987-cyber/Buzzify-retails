@@ -1,6 +1,6 @@
 import type { RtRole } from "@/generated/prisma/client";
 
-export const PERMISSIONS = [
+const PERMISSION_LIST = [
   "cost.view",
   "price.change",
   "discount.override",
@@ -17,11 +17,15 @@ export const PERMISSIONS = [
   "support.grant",
 ] as const;
 
-export type Permission = (typeof PERMISSIONS)[number];
+export type Permission = (typeof PERMISSION_LIST)[number];
 
-export const ROLE_PERMISSIONS: Record<RtRole, readonly Permission[]> = {
-  OWNER: PERMISSIONS,
-  MANAGER: [
+export const PERMISSIONS: readonly Permission[] = Object.freeze([...PERMISSION_LIST]);
+
+const frozen = (list: readonly Permission[]): readonly Permission[] => Object.freeze([...list]);
+
+export const ROLE_PERMISSIONS: Readonly<Record<RtRole, readonly Permission[]>> = Object.freeze({
+  OWNER: frozen(PERMISSION_LIST),
+  MANAGER: frozen([
     "price.change",
     "discount.override",
     "return.noInvoice",
@@ -32,13 +36,13 @@ export const ROLE_PERMISSIONS: Record<RtRole, readonly Permission[]> = {
     "staff.manage",
     "ai.use",
     "multiBranch.access",
-  ],
-  CASHIER: [],
-  STOCK: ["stock.receive", "stock.transfer"],
-  PURCHASING: ["stock.receive", "ai.use"],
-  ACCOUNTANT: ["cost.view", "data.export", "supplier.pay", "multiBranch.access"],
-  AUDITOR: ["multiBranch.access"],
-};
+  ]),
+  CASHIER: frozen([]),
+  STOCK: frozen(["stock.receive", "stock.transfer"]),
+  PURCHASING: frozen(["stock.receive", "ai.use"]),
+  ACCOUNTANT: frozen(["cost.view", "data.export", "supplier.pay", "multiBranch.access"]),
+  AUDITOR: frozen(["multiBranch.access"]),
+});
 
 export function permissionsOf(role: RtRole): ReadonlySet<Permission> {
   return new Set(ROLE_PERMISSIONS[role]);

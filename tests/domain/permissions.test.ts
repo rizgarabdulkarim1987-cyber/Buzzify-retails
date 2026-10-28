@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { can, permissionsOf, ROLE_PERMISSIONS } from "@/server/domain/permissions";
+import { can, permissionsOf, PERMISSIONS, ROLE_PERMISSIONS, type Permission } from "@/server/domain/permissions";
 import type { RtRole } from "@/generated/prisma/client";
 
 describe("permissions", () => {
@@ -26,5 +26,35 @@ describe("permissions", () => {
     const all = new Set(Object.values(ROLE_PERMISSIONS).flat());
     expect(permissionsOf("OWNER").size).toBe(14);
     expect(all.size).toBe(14);
+  });
+
+  it("pins the whole role matrix", () => {
+    const expected: Record<RtRole, Permission[]> = {
+      OWNER: [...PERMISSIONS],
+      MANAGER: ["price.change", "discount.override", "return.noInvoice", "refund", "count.adjust.approve", "stock.receive", "stock.transfer", "staff.manage", "ai.use", "multiBranch.access"],
+      CASHIER: [],
+      STOCK: ["stock.receive", "stock.transfer"],
+      PURCHASING: ["stock.receive", "ai.use"],
+      ACCOUNTANT: ["cost.view", "data.export", "supplier.pay", "multiBranch.access"],
+      AUDITOR: ["multiBranch.access"],
+    };
+    expect(Object.keys(ROLE_PERMISSIONS).sort()).toEqual(Object.keys(expected).sort());
+    for (const role of Object.keys(expected) as RtRole[]) {
+      expect([...permissionsOf(role)].sort()).toEqual([...expected[role]].sort());
+    }
+  });
+
+  it("the matrix is immutable at runtime and roles do not alias each other", () => {
+    const table = ROLE_PERMISSIONS as Record<RtRole, Permission[]>;
+    expect(() => table.CASHIER.push("cost.view")).toThrow(TypeError);
+    expect(() => table.OWNER.push("refund")).toThrow(TypeError);
+    expect(() => {
+      table.CASHIER = [];
+    }).toThrow(TypeError);
+    expect(() => (PERMISSIONS as Permission[]).push("refund")).toThrow(TypeError);
+    expect(Object.isFrozen(ROLE_PERMISSIONS)).toBe(true);
+    for (const list of Object.values(ROLE_PERMISSIONS)) expect(Object.isFrozen(list)).toBe(true);
+    expect(ROLE_PERMISSIONS.OWNER).not.toBe(PERMISSIONS);
+    expect(can("CASHIER", "cost.view")).toBe(false);
   });
 });

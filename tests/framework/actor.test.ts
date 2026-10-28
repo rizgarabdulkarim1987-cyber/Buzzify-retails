@@ -70,3 +70,43 @@ describe("resolveActor", () => {
     expect(rb).toMatchObject({ role: "STOCK", businessId: b.business.id, branchIds: [b.branches.B1!.id] });
   });
 });
+
+describe("RtStaffBranch composite foreign keys", () => {
+  it("accepts a branch of the staff's own business", async () => {
+    const f = await createBusinessWithStaff(db, { staff: [{ key: "s", role: "CASHIER" }] });
+    await expect(
+      db.rtStaffBranch.create({
+        data: { staffId: f.staff.s!.staffId, businessId: f.business.id, branchId: f.branches.Main!.id },
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("rejects a branch of another business", async () => {
+    const a = await createBusinessWithStaff(db, { staff: [{ key: "s", role: "CASHIER" }] });
+    const b = await createBusinessWithStaff(db, {});
+    await expect(
+      db.rtStaffBranch.create({
+        data: { staffId: a.staff.s!.staffId, businessId: a.business.id, branchId: b.branches.Main!.id },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+  });
+
+  it("rejects a businessId that differs from the staff's business", async () => {
+    const a = await createBusinessWithStaff(db, { staff: [{ key: "s", role: "CASHIER" }] });
+    const b = await createBusinessWithStaff(db, {});
+    await expect(
+      db.rtStaffBranch.create({
+        data: { staffId: a.staff.s!.staffId, businessId: b.business.id, branchId: b.branches.Main!.id },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+  });
+
+  it("rejects a branch that does not exist", async () => {
+    const f = await createBusinessWithStaff(db, { staff: [{ key: "s", role: "CASHIER" }] });
+    await expect(
+      db.rtStaffBranch.create({
+        data: { staffId: f.staff.s!.staffId, businessId: f.business.id, branchId: "no-such-branch" },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+  });
+});
