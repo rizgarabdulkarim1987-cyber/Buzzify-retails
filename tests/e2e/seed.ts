@@ -1,7 +1,7 @@
 /*
  * Seeds the e2e database through the app's own server code (Better Auth sign-up, the platform
- * provisioning action, the owner invitation acceptance). Rows that have no action yet (staff
- * assignment, terminals: later tasks) are inserted with the base client, as the vitest fixtures do.
+ * provisioning action, the owner invitation acceptance, the setup wizard's staff step). Rows that
+ * have no action yet (terminals: a later task) are inserted with the base client, as the vitest fixtures do.
  *
  * Run with DATABASE_URL pointing at the e2e database: `tsx tests/e2e/seed.ts` (global-setup does).
  */
@@ -47,6 +47,7 @@ async function main() {
   const { auth } = await import("@/server/auth/auth");
   const { provisionBusiness } = await import("@/server/admin/provision");
   const { acceptInvitation } = await import("@/server/admin/invitations");
+  const { completeSetupStep } = await import("@/server/setup/progress");
   const { MemoryMailer, setMailer } = await import("@/server/email/mailer");
   setMailer(new MemoryMailer());
 
@@ -89,11 +90,15 @@ async function main() {
   const longOwnerId = await signUp(LONG_OWNER);
   await provision(LONG_BUSINESS, [LONG_BRANCH], LONG_OWNER.email, longOwnerId);
 
-  // A cashier of branch A, and one terminal in branch A (no actions for these until later tasks).
+  // A cashier of branch A, added by the owner through the setup wizard (step 5).
   const branchA = await db.rtBranch.findFirstOrThrow({ where: { businessId, name: BRANCH_A } });
-  const cashierId = await signUp(CASHIER);
-  const staff = await db.rtStaff.create({ data: { businessId, userId: cashierId, role: "CASHIER" } });
-  await db.rtStaffBranch.create({ data: { businessId, staffId: staff.id, branchId: branchA.id } });
+  await signUp(CASHIER);
+  const added = await completeSetupStep(
+    { step: 5, data: { staff: [{ email: CASHIER.email, role: "CASHIER", branchIds: [branchA.id] }] } },
+    { userId: ownerId, businessId, idempotencyKey: "e2e-seed-cashier" },
+  );
+  if (!added.ok) throw new Error(`adding the cashier failed: ${JSON.stringify(added)}`);
+  // One terminal in branch A (no action for terminals until a later task).
   const location = await db.rtLocation.findFirstOrThrow({ where: { businessId, branchId: branchA.id } });
   await db.rtTerminal.create({ data: { businessId, branchId: branchA.id, locationId: location.id, name: TERMINAL_A } });
 

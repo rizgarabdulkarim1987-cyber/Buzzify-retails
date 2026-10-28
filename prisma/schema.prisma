@@ -53,6 +53,7 @@ model RtBusiness {
   capabilities  RtCapability[]
   invitations   RtInvitation[]
   supportGrants RtSupportGrant[]
+  setupProgress RtSetupProgress[]
 }
 
 model RtBranch {
@@ -449,4 +450,29 @@ model RtLoginAttempt {
   at  DateTime
 
   @@index([key, at])
+}
+// Setup wizard (Task 10). One row per (business, step); steps are 1..9 (CHECK in the migration).
+// Rows are created lazily by the first completed step; a missing row reads as PENDING.
+// Business-scoped (tenants read and write it through scopedDb).
+enum RtSetupStatus {
+  PENDING
+  DONE
+  SKIPPED
+}
+
+model RtSetupProgress {
+  id          String        @id @default(cuid())
+  businessId  String
+  step        Int
+  status      RtSetupStatus @default(PENDING)
+  // True when the step's data is sample/test data that must be removable before going live.
+  isTestData  Boolean       @default(false)
+  completedAt DateTime?
+  version     Int           @default(1)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, step])
 }

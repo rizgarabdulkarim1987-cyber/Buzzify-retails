@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { can } from "@/server/domain/permissions";
 import { getI18n } from "../../_lib/i18n";
 import { StateBlock } from "../../_ui/state";
 import { requireShell } from "../_shell";
@@ -21,11 +22,19 @@ export default async function RetailHomePage() {
     );
   }
   if (!shell.branch) redirect("/retail/select");
+  const canSetUp = shell.options?.ok === true && can(shell.options.value.role, "staff.manage");
 
   return (
     <main className="page">
       <div className="page-head">
-        <h1>{t.home.title}</h1>
+        <div className="title-row">
+          <h1>{t.home.title}</h1>
+          {canSetUp ? (
+            <Link href="/retail/setup" className="btn btn-secondary" data-testid="open-setup" style={{ marginInlineStart: "auto" }}>
+              {t.setup.openFromHome}
+            </Link>
+          ) : null}
+        </div>
       </div>
       <StateBlock
         kind="empty"

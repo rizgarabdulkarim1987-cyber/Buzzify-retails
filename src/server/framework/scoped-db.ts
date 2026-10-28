@@ -50,6 +50,8 @@ const SCOPE_RULES = {
   RtCapability: { business: "businessId" },
   // Support grants: the owner creates and revokes them through ordinary actions.
   RtSupportGrant: { business: "businessId" },
+  // Setup wizard progress (src/server/setup/progress.ts): one row per business and step.
+  RtSetupProgress: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**
