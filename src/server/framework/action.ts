@@ -118,6 +118,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
       if (mode === "CLOSED" || (spec.writes && mode !== "FULL" && !(spec.allowWhenReadOnly && mode === "READ_ONLY"))) {
         return failure("READ_ONLY");
       }
+      // Runs before the idempotent replay lookup, so a replay of an old success is also re-checked.
       await spec.precondition?.({ actor, input });
 
       if (!spec.writes) {

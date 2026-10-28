@@ -139,8 +139,9 @@ async function resolveWith(client: Client, grantId: string, userId: string, now:
  * (FORBIDDEN) when the grant is missing, someone else's, revoked, expired (the exact expiry
  * instant is already refused), or the business is closed/archived. `now` is injectable for tests.
  */
-export function resolveSupportActor(grantId: string, userId: string, now: Date = new Date()): Promise<SupportActor> {
-  return resolveWith(db, grantId, userId, now);
+export function resolveSupportActor(grantId: string, userId: string): Promise<SupportActor> {
+  // The clock is internal on purpose: a caller must never be able to choose "now" and revive an expired grant.
+  return resolveWith(db, grantId, userId, new Date());
 }
 
 const READ_OPERATIONS = new Set([
@@ -184,21 +185,22 @@ function readOnly<C extends object>(client: C): C {
 export type SupportReadContext = { actor: SupportActor; db: Prisma.TransactionClient };
 
 /**
- * Runs one support read. In ONE transaction: resolve the actor, refuse a scope the grant does not
- * include, write the `support.read` audit row (grant, scope, actor; never the data read), then
- * run `read` with the business-scoped, read-only client. If the audit row cannot be written the
- * transaction fails and `read` never runs. Being one transaction, a read that throws also rolls
- * its audit row back (the attempt is then not on record).
+ * Runs one support read in two transactions: (1) resolve the actor, refuse a scope the grant does
+ * not include, and commit the `support.read` audit row (grant, scope, actor; never the data read);
+ * if that fails `read` never runs; (2) re-resolve the grant and run `read` with the business-scoped,
+ * read-only client. A read that throws or is refused at step 2 keeps its audit row: the attempt is on
+ * record. The clock is internal (never a parameter).
  */
-export function runSupportRead<T>(
+export async function runSupportRead<T>(
   grantId: string,
   userId: string,
   scope: SupportScope,
   read: (ctx: SupportReadContext) => Promise<T>,
-  now: Date = new Date(),
 ): Promise<T> {
-  return db.$transaction(async (tx) => {
-    const actor = await resolveWith(tx, grantId, userId, now);
+  // Transaction 1: resolve the grant and COMMIT the audit row. If this fails the read never runs.
+  // The row stays even if the read below fails or the grant is revoked in between.
+  await db.$transaction(async (tx) => {
+    const actor = await resolveWith(tx, grantId, userId, new Date());
     if (!actor.scopes.includes(scope)) throw new SupportAccessError("SCOPE_NOT_GRANTED");
     await tx.rtAuditLog.create({
       data: {
@@ -210,6 +212,14 @@ export function runSupportRead<T>(
         changes: { grantId, scope: SCOPE_LABEL[scope], actorId: actor.userId, viaSupportGrantId: grantId },
       },
     });
-    return read({ actor, db: readOnly(scopedDb(actor, tx)) });
   });
+  // Transaction 2: re-resolve (a revoke or expiry since the audit is honoured) and run the read.
+  return db.$transaction(
+    async (tx) => {
+      const actor = await resolveWith(tx, grantId, userId, new Date());
+      if (!actor.scopes.includes(scope)) throw new SupportAccessError("SCOPE_NOT_GRANTED");
+      return read({ actor, db: readOnly(scopedDb(actor, tx)) });
+    },
+    { timeout: 30_000, maxWait: 5_000 },
+  );
 }

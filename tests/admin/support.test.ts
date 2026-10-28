@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { can } from "@/server/domain/permissions";
 import {
   grantSupport,
@@ -13,6 +13,10 @@ import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createPlan, createPlatformAdmin, createUser } from "../helpers/fixtures";
 
 const { db } = useTestDb();
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const REASON = "العميل طلب مراجعة المخزون";
 const HOUR = 3_600_000;
@@ -264,18 +268,24 @@ describe("resolveSupportActor", () => {
     const { a, admin, grantFor } = await world();
     const grantId = await grantFor(["STOCK_READ"], 2);
     const { expiresAt } = await db.rtSupportGrant.findUniqueOrThrow({ where: { id: grantId } });
-    const read = async (now: Date) => runSupportRead(grantId, admin.id, "STOCK_READ", async ({ db: tx }) => tx.rtBranch.count(), now);
+    const read = () => runSupportRead(grantId, admin.id, "STOCK_READ", async ({ db: tx }) => tx.rtBranch.count());
+    // Only Date is faked (timers stay real so the database driver keeps working).
+    const at = (ms: number) => vi.useFakeTimers({ toFake: ["Date"], now: ms });
 
     // One millisecond before expiry works; the exact instant and later are refused.
-    await expect(read(new Date(expiresAt.getTime() - 1))).resolves.toBe(1);
-    await expect(read(expiresAt)).rejects.toBeInstanceOf(SupportAccessError);
-    await expect(read(new Date(expiresAt.getTime() + 1))).rejects.toBeInstanceOf(SupportAccessError);
-    await expect(resolveSupportActor(grantId, admin.id, expiresAt)).rejects.toBeInstanceOf(SupportAccessError);
+    at(expiresAt.getTime() - 1);
+    await expect(read()).resolves.toBe(1);
+    at(expiresAt.getTime());
+    await expect(read()).rejects.toBeInstanceOf(SupportAccessError);
+    await expect(resolveSupportActor(grantId, admin.id)).rejects.toBeInstanceOf(SupportAccessError);
+    at(expiresAt.getTime() + 1);
+    await expect(read()).rejects.toBeInstanceOf(SupportAccessError);
+    vi.useRealTimers();
 
     // Revoke followed by an immediate read.
-    await expect(read(new Date())).resolves.toBe(1);
+    await expect(read()).resolves.toBe(1);
     await revokeSupport({ grantId }, a.owner());
-    await expect(read(new Date())).rejects.toBeInstanceOf(SupportAccessError);
+    await expect(read()).rejects.toBeInstanceOf(SupportAccessError);
     // Only the one successful pre-expiry read and the one pre-revoke read left audit rows.
     expect(await db.rtAuditLog.count({ where: { action: "support.read" } })).toBe(2);
   });
@@ -362,7 +372,7 @@ describe("runSupportRead", () => {
     expect(await db.rtAuditLog.count({ where: { action: "support.read" } })).toBe(1);
   });
 
-  it("a read that throws rolls its audit row back (one transaction)", async () => {
+  it("a read that throws still leaves its audit row", async () => {
     const { admin, grantFor } = await world();
     const grantId = await grantFor(["STOCK_READ"]);
     await expect(
@@ -370,7 +380,44 @@ describe("runSupportRead", () => {
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
-    expect(await db.rtAuditLog.count({ where: { action: "support.read" } })).toBe(0);
+    expect(await db.rtAuditLog.count({ where: { action: "support.read" } })).toBe(1);
+  });
+
+  it("the grant is re-resolved for the read: a revoke between audit and read is honoured", async () => {
+    const { admin, grantFor } = await world();
+    const grantId = await grantFor(["STOCK_READ"]);
+    // A trigger revokes the grant right after the audit row commits, i.e. between the two transactions.
+    await db.$executeRawUnsafe(`CREATE FUNCTION test_revoke_after_audit() RETURNS trigger AS $$
+      BEGIN UPDATE "RtSupportGrant" SET "revokedAt" = now() WHERE id = NEW."entityId"; RETURN NEW; END $$ LANGUAGE plpgsql`);
+    await db.$executeRawUnsafe(
+      `CREATE TRIGGER test_revoke_after_audit AFTER INSERT ON "RtAuditLog" FOR EACH ROW WHEN (NEW.action = 'support.read') EXECUTE FUNCTION test_revoke_after_audit()`,
+    );
+    try {
+      let ran = false;
+      await expect(
+        runSupportRead(grantId, admin.id, "STOCK_READ", async () => {
+          ran = true;
+        }),
+      ).rejects.toBeInstanceOf(SupportAccessError);
+      expect(ran).toBe(false);
+      expect(await db.rtAuditLog.count({ where: { action: "support.read" } })).toBe(1);
+    } finally {
+      await db.$executeRawUnsafe(`DROP TRIGGER test_revoke_after_audit ON "RtAuditLog"`);
+      await db.$executeRawUnsafe(`DROP FUNCTION test_revoke_after_audit()`);
+    }
+  });
+
+  it("the exported functions ignore any clock argument: expiry is judged on the real clock", async () => {
+    const { admin, grantFor } = await world();
+    const grantId = await grantFor(["STOCK_READ"], 1);
+    await db.rtSupportGrant.update({ where: { id: grantId }, data: { revokedAt: null } });
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * HOUR });
+    const resolve = resolveSupportActor as unknown as (...a: unknown[]) => Promise<unknown>;
+    const run = runSupportRead as unknown as (...a: unknown[]) => Promise<unknown>;
+    await expect(resolve(grantId, admin.id, new Date(0))).rejects.toBeInstanceOf(SupportAccessError);
+    await expect(run(grantId, admin.id, "STOCK_READ", async () => 1, new Date(0))).rejects.toBeInstanceOf(SupportAccessError);
+    expect(resolveSupportActor.length).toBeLessThanOrEqual(2);
+    expect(runSupportRead.length).toBeLessThanOrEqual(4);
   });
 
   it("refuses a scope the grant does not include, with no audit row", async () => {
@@ -398,6 +445,11 @@ describe("runSupportRead", () => {
       // Even an explicit attempt to widen the filter stays inside business A.
       const widened = await tx.rtBranch.findMany({ where: { OR: [{ businessId: b.business.id }, {}] } });
       const other = await tx.rtBranch.findFirst({ where: { businessId: b.business.id } });
+      // Relations reached through include / relation filters stay inside business A as well.
+      const withBusiness = await tx.rtBranch.findMany({ include: { business: { select: { id: true, name: true } } } });
+      const viaRelation = await tx.rtBranch.findMany({ where: { business: { id: b.business.id } } });
+      expect(withBusiness.every((r) => r.business.id === a.business.id)).toBe(true);
+      expect(viaRelation).toEqual([]);
       return { mine, widened, other };
     });
     expect(names.mine.every((r) => r.businessId === a.business.id)).toBe(true);
@@ -430,6 +482,8 @@ describe("runSupportRead", () => {
         "grant revoke": () => tx.rtSupportGrant.updateMany({ where: {}, data: { revokedAt: new Date() } }),
         queryRaw: () => (tx as unknown as { $queryRaw: (s: TemplateStringsArray) => Promise<unknown> }).$queryRaw`SELECT 1`,
         executeRaw: () => (tx as unknown as { $executeRaw: (s: TemplateStringsArray) => Promise<unknown> }).$executeRaw`DELETE FROM "RtBranch"`,
+        transaction: () => (tx as unknown as { $transaction: (f: () => Promise<unknown>) => Promise<unknown> }).$transaction(async () => 1),
+        extends: () => (tx as unknown as { $extends: (x: object) => Promise<unknown> }).$extends({}),
         executeRawUnsafe: () => tx.$executeRawUnsafe(`DELETE FROM "RtBranch"`),
       };
       for (const [name, attempt] of Object.entries(attempts)) {
