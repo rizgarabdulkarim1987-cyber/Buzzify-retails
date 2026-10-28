@@ -11,3 +11,6 @@ test-results/
 playwright-report/
 src/generated/
 graphify-out/
+
+AGENTS.md
+.next-e2e/
