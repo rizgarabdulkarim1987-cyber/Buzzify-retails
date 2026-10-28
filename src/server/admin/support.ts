@@ -15,8 +15,8 @@ export { SupportAccessError, SupportScope };
  * Time-boxed, audited support access. A platform admin has NO access to a business's data unless
  * its OWNER gave them a grant: named scopes, a reason, at most 72 hours, revocable at once.
  *
- * Reads happen only through runSupportRead: one transaction that resolves the grant, writes the
- * `support.read` audit row FIRST (no audit row, no read), then runs the caller's read with the
+ * Reads happen only through runSupportRead: a first transaction resolves the grant and commits the
+ * `support.read` audit row FIRST (no audit row, no read), then a second re-resolves the grant and runs the read with the
  * business-scoped client wrapped read-only. The actor is never the shop user in disguise: it
  * carries `viaSupportGrantId` so the UI can always show "support access".
  *
@@ -137,7 +137,7 @@ async function resolveWith(client: Client, grantId: string, userId: string, now:
 /**
  * The read-only actor a platform admin becomes under a live grant. Throws SupportAccessError
  * (FORBIDDEN) when the grant is missing, someone else's, revoked, expired (the exact expiry
- * instant is already refused), or the business is closed/archived. `now` is injectable for tests.
+ * instant is already refused), or the business is closed/archived.
  */
 export function resolveSupportActor(grantId: string, userId: string): Promise<SupportActor> {
   // The clock is internal on purpose: a caller must never be able to choose "now" and revive an expired grant.
