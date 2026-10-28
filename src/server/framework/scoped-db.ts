@@ -65,11 +65,19 @@ export const EVERY_MODEL_CLASSIFIED: [Unclassified] extends [never] ? true : { u
 
 /** The checked rules, widened for lookup by runtime model name. */
 type Rule = { business: string; branch?: string; creatable?: false };
+
+/**
+ * Own-property lookup. Every name-keyed lookup in this file goes through it (or a Map/Set), so
+ * inherited Object.prototype keys such as `constructor` or `__proto__` never match.
+ */
+function own<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
 const RULES: Readonly<Record<string, Rule | undefined>> = SCOPE_RULES;
 
 export const BUSINESS_SCOPED_MODELS: readonly ModelName[] = Object.freeze(Object.keys(SCOPE_RULES) as ModelName[]);
 export const BRANCH_SCOPED_MODELS: readonly ModelName[] = Object.freeze(
-  BUSINESS_SCOPED_MODELS.filter((m) => RULES[m]?.branch !== undefined),
+  BUSINESS_SCOPED_MODELS.filter((m) => own(RULES, m)?.branch !== undefined),
 );
 export const UNSCOPED_MODELS: readonly ModelName[] = Object.freeze([...UNSCOPED]);
 export const NULLABLE_BUSINESS_MODELS: readonly ModelName[] = Object.freeze([...NULLABLE_BUSINESS]);
@@ -110,9 +118,9 @@ export type ModelFields = { scalars: string[]; relations: Record<string, string>
 export function modelFields(client: unknown = db): Record<string, ModelFields> {
   const runtime = (client as { _runtimeDataModel?: RuntimeDataModel })._runtimeDataModel;
   if (!runtime?.models) throw new Error("scopedDb: the Prisma client exposes no runtime data model");
-  const out: Record<string, ModelFields> = {};
+  const out: Record<string, ModelFields> = Object.create(null);
   for (const [name, model] of Object.entries(runtime.models)) {
-    const fields: ModelFields = { scalars: [], relations: {} };
+    const fields: ModelFields = { scalars: [], relations: Object.create(null) };
     for (const f of model.fields) {
       if (f.kind === "object") fields.relations[f.name] = f.type;
       else fields.scalars.push(f.name);
@@ -125,7 +133,7 @@ export function modelFields(client: unknown = db): Record<string, ModelFields> {
 let cachedFields: Record<string, ModelFields> | undefined;
 function fieldsOf(model: string): ModelFields {
   cachedFields ??= modelFields();
-  const f = cachedFields[model];
+  const f = own(cachedFields, model);
   if (!f) throw new ScopeError("UNSCOPED_MODEL", model);
   return f;
 }
@@ -146,7 +154,7 @@ export function classifyModels(fields: Record<string, ModelFields>): { unclassif
       continue;
     }
     if (listed.length > 1) misclassified.push(`${model}: listed as ${listed.join(" and ")}`);
-    const rule = RULES[model];
+    const rule = own(RULES, model);
     if (rule) {
       for (const key of [rule.business, rule.branch]) {
         if (key !== undefined && !scalars.includes(key)) misclassified.push(`${model}: scope column ${key} is missing`);
@@ -163,7 +171,7 @@ export function classifyModels(fields: Record<string, ModelFields>): { unclassif
     }
   }
   for (const [name, list] of lists) {
-    for (const model of list) if (!fields[model]) misclassified.push(`${model}: listed as ${name} but is not a model`);
+    for (const model of list) if (!own(fields, model)) misclassified.push(`${model}: listed as ${name} but is not a model`);
   }
   return { unclassified, misclassified };
 }
@@ -211,7 +219,7 @@ function snapshot(actor: Actor): Scope {
 }
 
 function ruleOf(model: string): Rule {
-  const rule = RULES[model];
+  const rule = own(RULES, model);
   if (!rule) throw new ScopeError("UNSCOPED_MODEL", model);
   return rule;
 }
@@ -230,7 +238,7 @@ function mergeWhere(where: unknown, filter: Args): Args {
 }
 
 function checkTarget(scope: Scope, from: string, field: string, target: string): void {
-  const rule = RULES[target];
+  const rule = own(RULES, target);
   if (!rule) throw new ScopeError("UNSCOPED_RELATION", `${from}.${field} -> ${target}`);
   if (rule.branch !== undefined && scope.branchIds !== "ALL") {
     throw new ScopeError("BRANCH_RELATION", `${from}.${field} -> ${target}`);
@@ -246,7 +254,7 @@ function walkWhere(scope: Scope, model: string, where: unknown): void {
       walkWhere(scope, model, value);
       continue;
     }
-    const target = relations[key];
+    const target = own(relations, key);
     if (target === undefined) continue;
     checkTarget(scope, model, key, target);
     if (!isObject(value)) continue;
@@ -264,7 +272,7 @@ function walkOrderBy(scope: Scope, model: string, orderBy: unknown): void {
   if (!isObject(orderBy)) return;
   const { relations } = fieldsOf(model);
   for (const [key, value] of Object.entries(orderBy)) {
-    const target = relations[key];
+    const target = own(relations, key);
     if (target === undefined) continue;
     checkTarget(scope, model, key, target);
     walkOrderBy(scope, target, value);
@@ -281,14 +289,14 @@ function walkSelection(scope: Scope, model: string, selection: unknown): void {
       // every relation is checked (stricter than needed for to-one relations).
       const counted = isObject(value) && isObject(value.select) ? value.select : value === true ? relations : {};
       for (const [rel, sub] of Object.entries(counted)) {
-        const target = relations[rel];
+        const target = own(relations, rel);
         if (!sub || target === undefined) continue;
         checkTarget(scope, model, rel, target);
         if (isObject(sub)) walkWhere(scope, target, sub.where);
       }
       continue;
     }
-    const target = relations[key];
+    const target = own(relations, key);
     if (target === undefined) continue;
     checkTarget(scope, model, key, target);
     if (isObject(value)) walkArgs(scope, target, value);
@@ -305,7 +313,7 @@ function walkArgs(scope: Scope, model: string, args: Args): void {
 function checkDataKeys(model: string, data: Args): void {
   const { scalars, relations } = fieldsOf(model);
   for (const key of Object.keys(data)) {
-    if (relations[key] !== undefined) throw new ScopeError("NESTED_WRITE", `${model}.${key}`);
+    if (own(relations, key) !== undefined) throw new ScopeError("NESTED_WRITE", `${model}.${key}`);
     if (!scalars.includes(key)) throw new ScopeError("UNKNOWN_FIELD", `${model}.${key}`);
   }
 }
@@ -369,7 +377,8 @@ function scopeArgs(scope: Scope, model: string, operation: string, args: unknown
 // ---------------------------------------------------------------------------------------------
 // Clients.
 
-const DELEGATE_MODELS: Readonly<Record<string, string>> = Object.fromEntries(
+/** Delegate property name (camelCase) to model name. A Map, so inherited keys never match. */
+const DELEGATE_MODELS: ReadonlyMap<string, string> = new Map(
   Object.values(Prisma.ModelName).map((m) => [m.charAt(0).toLowerCase() + m.slice(1), m]),
 );
 
@@ -442,7 +451,7 @@ function guard(client: object, scope: Scope, kind: GuardKind): object {
     get(_t, prop) {
       if (prop === Symbol.toStringTag) return "ScopedDb";
       if (typeof prop !== "string") return undefined;
-      const model = DELEGATE_MODELS[prop];
+      const model = DELEGATE_MODELS.get(prop);
       if (model !== undefined) {
         let d = delegates.get(prop);
         if (!d) delegates.set(prop, (d = delegateFor(prop, model)));

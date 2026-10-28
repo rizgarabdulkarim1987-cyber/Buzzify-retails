@@ -246,6 +246,15 @@ describe.each(modes)("scopedDb through the %s", (_mode, run) => {
 
   it("nested writes are refused", async () => {
     const w = await world();
+    // Inherited Object.prototype names are not fields of the model.
+    await expectScopeError(
+      run(w.owner, (s) =>
+        s.rtLocation.create({
+          data: { businessId: w.one.business.id, branchId: w.one.branches.A!.id, name: "L", toString: "x" } as never,
+        }),
+      ),
+      "UNKNOWN_FIELD",
+    );
     await expectScopeError(
       run(w.owner, (s) =>
         s.rtBranch.create({
@@ -423,10 +432,28 @@ const INTERNAL_KEYS = [
   "then",
 ];
 
+/** Inherited Object.prototype keys: outside the allow-list, so undefined on every surface and delegate. */
+const PROTOTYPE_KEYS = [
+  "constructor",
+  "__proto__",
+  "toString",
+  "valueOf",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "__lookupGetter__",
+  "__lookupSetter__",
+  "__defineGetter__",
+  "__defineSetter__",
+  "prototype",
+];
+
 /** Every way a surface could hand back an unscoped client: none may be reachable. */
 async function expectNoEscape(surface: object, w: Awaited<ReturnType<typeof world>>) {
   const any = surface as Record<string | symbol, unknown>;
   for (const key of INTERNAL_KEYS) expect(any[key], key).toBeUndefined();
+  for (const key of PROTOTYPE_KEYS) expect(any[key], key).toBeUndefined();
   for (const sym of Object.getOwnPropertySymbols(Object.getPrototypeOf(db) ?? {})) expect(any[sym]).toBeUndefined();
   expect(Object.keys(surface)).toEqual([]);
   expect(Reflect.ownKeys(surface)).toEqual([]);
@@ -438,6 +465,7 @@ async function expectNoEscape(surface: object, w: Awaited<ReturnType<typeof worl
   for (const key of ["$parent", "$name", "fields", "_appliedParent", "constructor", "then"]) {
     expect(delegate[key], `rtLocation.${key}`).toBeUndefined();
   }
+  for (const key of PROTOTYPE_KEYS) expect(delegate[key], `rtLocation.${key}`).toBeUndefined();
   expect(Reflect.ownKeys(delegate)).toEqual([]);
   // Every reachable property, recursively one level down, yields nothing of another business or branch.
   const s = surface as Scoped;
