@@ -50,8 +50,9 @@ model RtBusiness {
   subscriptionPays RtSubscriptionPayment[]
   featureOverrides RtFeatureOverride[]
 
-  capabilities RtCapability[]
-  invitations  RtInvitation[]
+  capabilities  RtCapability[]
+  invitations   RtInvitation[]
+  supportGrants RtSupportGrant[]
 }
 
 model RtBranch {
@@ -161,6 +162,9 @@ model User {
   accounts      Account[]
   staff         RtStaff[]
   platformAdmin RtPlatformAdmin?
+
+  supportGrantsReceived RtSupportGrant[] @relation("SupportGrantee")
+  supportGrantsGiven    RtSupportGrant[] @relation("SupportGrantedBy")
 }
 
 model Session {
@@ -407,4 +411,32 @@ model RtInvitation {
   business RtBusiness @relation(fields: [businessId], references: [id])
 
   @@index([businessId, createdAt])
+}
+
+// What a support grant lets the grantee read. The database stores the dotted strings.
+enum SupportScope {
+  CATALOG_READ @map("catalog.read")
+  STOCK_READ   @map("stock.read")
+  SALES_READ   @map("sales.read")
+}
+
+// Time-boxed, read-only access to one business, given by its owner to one platform admin.
+// CHECKs in the migration: reason >= 10 chars, at least one scope, expiry after creation and at most 72 hours.
+model RtSupportGrant {
+  id          String         @id @default(cuid())
+  businessId  String
+  granteeId   String
+  scopes      SupportScope[]
+  reason      String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  grantedById String
+  createdAt   DateTime       @default(now())
+
+  business  RtBusiness @relation(fields: [businessId], references: [id])
+  grantee   User       @relation("SupportGrantee", fields: [granteeId], references: [id])
+  grantedBy User       @relation("SupportGrantedBy", fields: [grantedById], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([granteeId])
 }

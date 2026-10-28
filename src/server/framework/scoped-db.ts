@@ -48,6 +48,8 @@ const SCOPE_RULES = {
   RtStaff: { business: "businessId" },
   RtStaffBranch: { business: "businessId", branch: "branchId" },
   RtCapability: { business: "businessId" },
+  // Support grants: the owner creates and revokes them through ordinary actions.
+  RtSupportGrant: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**
@@ -125,7 +127,9 @@ export type ScopeErrorCode =
   | "NESTED_WRITE"
   | "UNKNOWN_FIELD"
   | "BRANCH_RELATION"
-  | "UNSCOPED_RELATION";
+  | "UNSCOPED_RELATION"
+  // Raised by the read-only wrapper a support actor gets (src/server/admin/support.ts).
+  | "READ_ONLY_ACTOR";
 
 export class ScopeError extends Error {
   override readonly name = "ScopeError";

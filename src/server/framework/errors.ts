@@ -79,6 +79,20 @@ export class RuleError extends Error {
   }
 }
 
+/**
+ * Support access refused (src/server/admin/support.ts): no such grant, someone else's grant,
+ * revoked, expired, a scope the grant does not include, a closed business, or no longer a
+ * platform admin. Always FORBIDDEN to the caller; `reason` is for logs and tests only.
+ */
+export class SupportAccessError extends Error {
+  override readonly name = "SupportAccessError";
+  constructor(
+    readonly reason: "NO_GRANT" | "NOT_GRANTEE" | "REVOKED" | "EXPIRED" | "SCOPE_NOT_GRANTED" | "BUSINESS_CLOSED" | "NOT_PLATFORM_ADMIN",
+  ) {
+    super(`SUPPORT_ACCESS_${reason}`);
+  }
+}
+
 /** The same idempotency key was used with a different payload. */
 export class IdempotencyMismatchError extends Error {
   override readonly name = "IdempotencyMismatchError";

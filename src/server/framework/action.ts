@@ -9,6 +9,7 @@ import {
   InternalActionError,
   NotFoundError,
   RuleError,
+  SupportAccessError,
   VersionConflictError,
   failure,
   type ErrorCode,
@@ -35,6 +36,16 @@ export type ActionSpec<I, O> = {
    * false: a read; no key, no audit, no idempotency row; refused only when the gate is CLOSED.
    */
   writes: boolean;
+  /**
+   * true: a write that is still allowed while the business is READ_ONLY (never when CLOSED).
+   * Only for actions that reduce exposure, such as revoking support access.
+   */
+  allowWhenReadOnly?: boolean;
+  /**
+   * Checks that need the base client (e.g. "is this user a platform admin"), run after the
+   * permission and gate checks and before the transaction. Throw RuleError("INVALID_INPUT") to refuse.
+   */
+  precondition?(ctx: { actor: Actor; input: I }): Promise<void>;
   /** `tx` is the business/branch scoped client of the running transaction. */
   run(ctx: { actor: Actor; tx: Prisma.TransactionClient; input: I }): Promise<O>;
   /** What to record in the audit row. Default: the action name as entity and the input as changes. */
@@ -49,6 +60,7 @@ function codeOf(err: unknown): ErrorCode | undefined {
   if (err instanceof IdempotencyMismatchError) return "IDEMPOTENCY_MISMATCH";
   if (err instanceof RuleError) return err.code;
   if (err instanceof ForbiddenError) return "FORBIDDEN";
+  if (err instanceof SupportAccessError) return "FORBIDDEN";
   return undefined;
 }
 
@@ -103,7 +115,10 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
       if (spec.permission !== null && !can(actor.role, spec.permission)) return failure("FORBIDDEN");
 
       const mode = await gateOf(meta.businessId, db);
-      if (mode === "CLOSED" || (spec.writes && mode !== "FULL")) return failure("READ_ONLY");
+      if (mode === "CLOSED" || (spec.writes && mode !== "FULL" && !(spec.allowWhenReadOnly && mode === "READ_ONLY"))) {
+        return failure("READ_ONLY");
+      }
+      await spec.precondition?.({ actor, input });
 
       if (!spec.writes) {
         const value = await runRead((tx) => spec.run({ actor, tx: scopedDb(actor, tx), input }));
