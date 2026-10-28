@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Currency {
+  IQD
+  USD
+}
+
+enum RtBusinessStatus {
+  SETUP
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum RtActivityType {
+  MARKET
+  CLOTHING
+  ELECTRONICS
+  BEAUTY
+  STATIONERY
+  MIXED
+}
+
+model RtBusiness {
+  id                String           @id @default(cuid())
+  name              String
+  activityType      RtActivityType
+  status            RtBusinessStatus @default(SETUP)
+  timezone          String           @default("Asia/Baghdad")
+  defaultCurrency   Currency
+  enabledCurrencies Currency[]
+  version           Int              @default(1)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  branches  RtBranch[]
+  locations RtLocation[]
+  terminals RtTerminal[]
+}
+
+model RtBranch {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  active     Boolean  @default(true)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business  RtBusiness   @relation(fields: [businessId], references: [id])
+  locations RtLocation[]
+  terminals RtTerminal[]
+
+  // Target of the composite foreign keys that keep child rows inside one business.
+  @@unique([businessId, id])
+}
+
+model RtLocation {
+  id         String   @id @default(cuid())
+  businessId String
+  branchId   String
+  name       String
+  sellable   Boolean  @default(true)
+  central    Boolean  @default(false)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business  RtBusiness   @relation(fields: [businessId], references: [id])
+  branch    RtBranch     @relation(fields: [businessId, branchId], references: [businessId, id])
+  terminals RtTerminal[]
+
+  // Target of the terminal's composite foreign key (same business AND same branch).
+  @@unique([businessId, branchId, id])
+}
+
+model RtTerminal {
+  id         String   @id @default(cuid())
+  businessId String
+  branchId   String
+  locationId String
+  name       String
+  active     Boolean  @default(true)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  branch   RtBranch   @relation(fields: [businessId, branchId], references: [businessId, id])
+  location RtLocation @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+}

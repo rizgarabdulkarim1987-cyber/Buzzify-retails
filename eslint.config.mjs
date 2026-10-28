@@ -5,5 +5,7 @@ import nextTs from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", ".data/**", "node_modules/**"]),
+  // useTestDb is a Vitest setup helper, not a React hook.
+  { files: ["tests/**"], rules: { "react-hooks/rules-of-hooks": "off" } },
+  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", ".data/**", "node_modules/**", "src/generated/**"]),
 ]);

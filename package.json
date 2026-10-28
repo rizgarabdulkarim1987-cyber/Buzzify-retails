@@ -11,7 +11,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:start": "tsx scripts/db.ts start",
+    "db:stop": "tsx scripts/db.ts stop",
+    "db:reset": "tsx scripts/db.ts reset"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",
