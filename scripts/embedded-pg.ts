@@ -8,6 +8,7 @@ import EmbeddedPostgres from "embedded-postgres";
 export const EMBEDDED_PORT = 54329;
 export const DATA_DIR = resolve(process.cwd(), ".data", "pg");
 export const DATABASES = ["retails_dev", "retails_test"] as const;
+const TEST_DATABASE = "retails_test";
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
 const USER = "postgres";
 const PASSWORD = "postgres";
@@ -52,27 +53,57 @@ async function initIfNeeded(): Promise<void> {
     user: USER,
     password: PASSWORD,
     port: EMBEDDED_PORT,
+    // Without these, initdb on Windows picks the OS code page (WIN1252), which cannot store Arabic.
+    initdbFlags: ["--encoding=UTF8", "--locale=C"],
     onLog: () => undefined,
     onError: console.error,
   });
   await server.initialise();
 }
 
-async function ensureDatabases(): Promise<void> {
+/**
+ * Creates missing databases as UTF8. A non-UTF8 database listed in `disposable` (test data) is
+ * dropped and recreated; any other one is left alone with a warning.
+ */
+async function ensureDatabases(databases: readonly string[], disposable: readonly string[]): Promise<void> {
   const client = new pg.Client({ connectionString: adminUrl() });
   await client.connect();
   try {
-    for (const name of DATABASES) {
-      const found = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [name]);
-      if (found.rowCount === 0) await client.query(`CREATE DATABASE "${name}"`);
+    for (const name of databases) {
+      const found = await client.query<{ encoding: string }>(
+        "SELECT pg_encoding_to_char(encoding) AS encoding FROM pg_database WHERE datname = $1",
+        [name],
+      );
+      let encoding: string | undefined = found.rows[0]?.encoding;
+      if (encoding !== undefined && encoding !== "UTF8") {
+        if (!disposable.includes(name)) {
+          console.warn(
+            `Database ${name} uses ${encoding} and cannot store Arabic text; run "npm run db:reset" to recreate it as UTF8 (this deletes its data).`,
+          );
+          continue;
+        }
+        // Test data is disposable: recreate a test database made before the UTF8 fix.
+        await client.query(`DROP DATABASE "${name}" WITH (FORCE)`);
+        encoding = undefined;
+      }
+      if (encoding === undefined) {
+        // template0 + C locale: UTF8 works whatever the cluster's own encoding and the OS locale are.
+        await client.query(`CREATE DATABASE "${name}" TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'`);
+      }
     }
   } finally {
     await client.end();
   }
 }
 
-/** Starts the embedded server as a detached background process (idempotent). */
-export async function startServer(): Promise<void> {
+/**
+ * Starts the embedded server as a detached background process (idempotent) and makes sure the
+ * given databases exist (default: all; the test setup asks only for the test database).
+ */
+export async function startServer(
+  databases: readonly string[] = DATABASES,
+  disposable: readonly string[] = [TEST_DATABASE],
+): Promise<void> {
   if (!(await isUp())) {
     await initIfNeeded();
     const log = join(DATA_DIR, "server.log");
@@ -85,7 +116,7 @@ export async function startServer(): Promise<void> {
       throw new Error(`Embedded Postgres failed to start (see ${log})`);
     }
   }
-  await ensureDatabases();
+  await ensureDatabases(databases, disposable);
 }
 
 export async function stopServer(): Promise<void> {

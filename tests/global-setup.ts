@@ -11,7 +11,11 @@ export default async function setup(): Promise<void> {
     throw new Error(`Refusing to run tests against non-local database host "${new URL(url).hostname}"`);
   }
   // Only the embedded server is ours to start; in CI the URL points at a service container.
-  if (isEmbeddedUrl(url)) await startServer();
+  // Only the test database: it is disposable, so one created before the UTF8 fix is recreated.
+  if (isEmbeddedUrl(url)) {
+    const name = decodeURIComponent(new URL(url).pathname.slice(1));
+    await startServer([name], [name]);
+  }
 
   const migrate = spawnSync(process.execPath, [prismaCli, "migrate", "deploy"], {
     env: { ...process.env, DATABASE_URL: url },
