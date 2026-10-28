@@ -55,7 +55,9 @@ a:hover {
 }
 
 :focus-visible {
-  outline: none;
+  /* Transparent normally; forced-colors mode paints it, since it drops box-shadow rings. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);
 }

@@ -4,13 +4,13 @@ import { useActionState } from "react";
 import { Notice } from "../_ui/state";
 import { signIn, type SignInState } from "./actions";
 
-type Labels = { email: string; password: string; submit: string; failed: string; loading: string };
+type Labels = { email: string; password: string; submit: string; failed: string; throttled: string; loading: string };
 
 export function LoginForm({ labels }: { labels: Labels }) {
-  const [state, action, pending] = useActionState<SignInState, FormData>(signIn, { failed: false, email: "" });
+  const [state, action, pending] = useActionState<SignInState, FormData>(signIn, { failed: null, email: "" });
   return (
     <form action={action} className="form">
-      {state.failed ? <Notice tone="danger">{labels.failed}</Notice> : null}
+      {state.failed ? <Notice tone="danger">{state.failed === "THROTTLED" ? labels.throttled : labels.failed}</Notice> : null}
       <label className="field">
         <span>{labels.email}</span>
         <input

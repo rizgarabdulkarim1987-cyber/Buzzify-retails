@@ -440,3 +440,13 @@ model RtSupportGrant {
   @@index([businessId, createdAt])
   @@index([granteeId])
 }
+
+// Failed sign-in attempts, for throttling (src/server/auth/login-throttle.ts). `key` is a sha256 of
+// "email:<normalized email>" or "ip:<client address>", never the raw value. Not business data.
+model RtLoginAttempt {
+  id  String   @id @default(cuid())
+  key String
+  at  DateTime
+
+  @@index([key, at])
+}

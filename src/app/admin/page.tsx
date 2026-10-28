@@ -85,6 +85,10 @@ export default async function AdminPage() {
             </section>
           </div>
         </main>
+      ) : result.code !== "FORBIDDEN" ? (
+        <main className="page">
+          <StateBlock kind="alert" title={t.common.errorTitle} body={t.errors[result.code]} testId="state-error" />
+        </main>
       ) : (
         <main className="page">
           <StateBlock

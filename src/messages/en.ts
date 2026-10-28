@@ -27,6 +27,7 @@ export const en: Messages = {
     password: "Password",
     submit: "Sign in",
     failed: "The email or password is incorrect.",
+    throttled: "Too many sign-in attempts. Wait a quarter of an hour, then try again.",
   },
   header: {
     business: "Business",
@@ -99,6 +100,7 @@ export const en: Messages = {
     submit: "Create business and send invitation",
     submitting: "Creating…",
     created: "The business was created and the owner invitation was sent.",
+    alreadySubmitted: "This form was already submitted. Refresh the page before creating another business.",
   },
   status: {
     SETUP: "Setting up",

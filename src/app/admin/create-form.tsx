@@ -38,7 +38,13 @@ export function CreateBusinessForm({ t, plans, idempotencyKey }: Props) {
     >
       <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
       {state.status === "failed" ? (
-        <Notice tone="danger">{state.code === "INTERNAL" ? t.internalError : t.errors[state.code]}</Notice>
+        <Notice tone="danger">
+          {state.code === "INTERNAL"
+            ? t.internalError
+            : state.code === "IDEMPOTENCY_MISMATCH"
+              ? f.alreadySubmitted
+              : t.errors[state.code]}
+        </Notice>
       ) : null}
       {state.status === "created" ? <Notice tone="success">{f.created}</Notice> : null}
       {plans.length === 0 ? <Notice tone="danger">{f.noPlans}</Notice> : null}

@@ -1,12 +1,14 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { isPlatformAdmin } from "@/server/admin/platform-admin";
 import { getSessionUserId } from "@/server/auth/auth";
 import { getI18n } from "../_lib/i18n";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { LoginForm } from "./login-form";
 
 export default async function LoginPage() {
-  if (await getSessionUserId(await headers())) redirect("/retail/home");
+  const userId = await getSessionUserId(await headers());
+  if (userId) redirect((await isPlatformAdmin(userId)) ? "/admin" : "/retail/home");
   const { locale, t } = await getI18n();
   return (
     <main className="auth-page">
@@ -31,6 +33,7 @@ export default async function LoginPage() {
               password: t.auth.password,
               submit: t.auth.submit,
               failed: t.auth.failed,
+              throttled: t.auth.throttled,
               loading: t.common.loading,
             }}
           />

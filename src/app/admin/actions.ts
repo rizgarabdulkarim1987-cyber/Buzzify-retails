@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { provisionBusiness } from "@/server/admin/provision";
 import { getSessionUserId } from "@/server/auth/auth";
-import { InternalActionError, type ErrorCode } from "@/server/framework/errors";
+import { IdempotencyMismatchError, InternalActionError, type ErrorCode } from "@/server/framework/errors";
 
 export type CreateBusinessState =
   | { status: "idle" }
@@ -42,6 +42,8 @@ export async function createBusiness(_prev: CreateBusinessState, formData: FormD
     const result = await provisionBusiness(input, { userId, idempotencyKey: String(formData.get("idempotencyKey") ?? "") });
     if (!result.ok) return { status: "failed", code: result.code };
   } catch (err) {
+    // The framework already turns a reused key into IDEMPOTENCY_MISMATCH; kept here so a change there never crashes the form.
+    if (err instanceof IdempotencyMismatchError) return { status: "failed", code: "IDEMPOTENCY_MISMATCH" };
     if (err instanceof InternalActionError) return { status: "failed", code: "INTERNAL" };
     throw err;
   }

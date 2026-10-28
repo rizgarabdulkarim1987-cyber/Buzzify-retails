@@ -73,6 +73,8 @@ const UNSCOPED = [
   // Owner invitations: carry a businessId, but hold token hashes and are only touched by platform
   // actions and acceptInvitation (src/server/admin). A tenant must never list or read them.
   "RtInvitation",
+  // Failed sign-in attempts (hashed keys, no businessId); only src/server/auth/login-throttle.ts touches them.
+  "RtLoginAttempt",
 ] as const satisfies readonly ModelName[];
 
 /** The UNSCOPED models that may carry a businessId column (platform-managed; the framework reads them with the base client). */

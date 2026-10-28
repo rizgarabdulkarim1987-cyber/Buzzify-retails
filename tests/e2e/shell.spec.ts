@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { ar } from "../../src/messages/ar";
+import { en } from "../../src/messages/en";
 import {
   BRANCH_A,
   BRANCH_B,
@@ -51,7 +53,7 @@ test("an 80-character business name does not overflow the header at 375px width"
   await signIn(page, LONG_OWNER.email);
   await expect(page).toHaveURL(/\/retail\/select/);
   // The long branch has no terminal: one button chooses it.
-  await page.getByRole("button", { name: "العمل في هذا الفرع" }).click();
+  await page.getByRole("button", { name: ar.select.chooseBranch }).click();
   await expect(page).toHaveURL(/\/retail\/home/);
 
   const name = page.getByTestId("header-business");
@@ -87,7 +89,7 @@ test("an 80-character business name does not overflow the header at 375px width"
   expect(layout.everyHeaderPartInside).toBe(true);
   // Still a compact two-row bar, not a wrapped wall of text.
   expect(layout.headerHeight).toBeLessThan(140);
-  await expect(page.getByRole("button", { name: "تسجيل الخروج" })).toBeInViewport();
+  await expect(page.getByRole("button", { name: ar.common.signOut })).toBeInViewport();
 });
 
 test("switching the language to English turns the page left-to-right", async ({ page }) => {
@@ -96,7 +98,7 @@ test("switching the language to English turns the page left-to-right", async ({ 
   await page.getByTestId("locale-switcher").selectOption("en");
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Choose where you work");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(en.select.title);
   await page.getByTestId("locale-switcher").selectOption("ar");
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
 });
