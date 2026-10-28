@@ -49,14 +49,17 @@ const SCOPE_RULES = {
   RtStaffBranch: { business: "businessId", branch: "branchId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
-/** Models without a businessId column. Never reachable through scopedDb (base client only). */
-const UNSCOPED = ["User", "Session", "Account", "Verification"] as const satisfies readonly ModelName[];
+/**
+ * Models without a businessId column (Better Auth tables; RtIdempotency, keyed by a scope string
+ * that is the businessId or 'platform'). Never reachable through scopedDb (base client only).
+ */
+const UNSCOPED = ["User", "Session", "Account", "Verification", "RtIdempotency"] as const satisfies readonly ModelName[];
 
 /**
- * Models whose businessId is nullable (rows that may belong to no business, e.g. idempotency
- * keys). Never reachable through scopedDb; the framework reads them with the base client.
+ * Models whose businessId is nullable (rows that may belong to no business, e.g. audit
+ * entries of platform actions). Never reachable through scopedDb; the framework reads them with the base client.
  */
-const NULLABLE_BUSINESS = [] as const satisfies readonly ModelName[];
+const NULLABLE_BUSINESS = ["RtAuditLog"] as const satisfies readonly ModelName[];
 
 type Classified = keyof typeof SCOPE_RULES | (typeof UNSCOPED)[number] | (typeof NULLABLE_BUSINESS)[number];
 type Unclassified = Exclude<ModelName, Classified>;

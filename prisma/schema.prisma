@@ -199,3 +199,31 @@ model Verification {
 
   @@index([identifier])
 }
+
+// Action framework tables. Neither has a (non-null) businessId column, so both are classified
+// in scoped-db.ts (UNSCOPED / NULLABLE_BUSINESS) and only the framework touches them.
+model RtIdempotency {
+  id          String   @id @default(cuid())
+  // The businessId, or the literal 'platform' for platform-level actions.
+  scope       String
+  key         String
+  payloadHash String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@unique([scope, key])
+}
+
+model RtAuditLog {
+  id         String   @id @default(cuid())
+  businessId String?
+  actorId    String
+  action     String
+  entity     String
+  entityId   String
+  changes    Json
+  at         DateTime @default(now())
+
+  @@index([businessId, at])
+  @@index([entity, entityId])
+}
