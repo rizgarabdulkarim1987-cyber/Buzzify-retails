@@ -65,6 +65,8 @@ const SCOPE_RULES = {
   // Catalog import staging (Task 8/9): batches of an uploaded file and their rows.
   RtImportBatch: { business: "businessId" },
   RtImportRow: { business: "businessId" },
+  // Saved import column maps (Task 9), per business.
+  RtImportMappingPreset: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**

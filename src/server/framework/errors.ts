@@ -27,7 +27,9 @@ export type ErrorCode =
   | "LAST_VARIANT"
   | "IMPORT_TOO_LARGE"
   | "IMPORT_TOO_MANY_ROWS"
-  | "IMPORT_UNREADABLE";
+  | "IMPORT_UNREADABLE"
+  | "IMPORT_NOT_VALIDATED"
+  | "IMPORT_ALREADY_COMMITTED";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -69,6 +71,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   IMPORT_TOO_LARGE: "الملف كبير جداً. الحد الأقصى 5 ميجابايت.",
   IMPORT_TOO_MANY_ROWS: "الملف يحتوي على صفوف أكثر من المسموح. الحد الأقصى 10000 صف، قسّم الملف إلى عدة ملفات.",
   IMPORT_UNREADABLE: "تعذّرت قراءة الملف. استخدم ملف CSV أو Excel بصيغة xlsx، دون حماية بكلمة مرور.",
+  IMPORT_NOT_VALIDATED: "راجع الملف (المعاينة) أولاً، ثم احفظ.",
+  IMPORT_ALREADY_COMMITTED: "حُفظت سطور من هذا الملف في الكتالوج، فلا يمكن حذفه ولا تغيير تخطيط أعمدته.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

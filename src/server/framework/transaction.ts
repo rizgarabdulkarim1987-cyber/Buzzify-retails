@@ -34,6 +34,8 @@ export type WritePlan<O> = {
    * secret (an invitation token): a replay then returns this redacted value. Default: the value.
    */
   storedValue?(value: O): O;
+  /** Transaction timeout in ms (Prisma's default is 5000). For bulk work such as the catalog import. */
+  timeoutMs?: number;
 };
 
 /** Fixed-alphabet lock name for (scope, key): hashing keeps odd characters out of the SQL parameter. */
@@ -95,7 +97,7 @@ export async function runIdempotentWrite<O>(
         },
       });
       return { value, replayed: false };
-    });
+    }, plan.timeoutMs ? { timeout: plan.timeoutMs } : undefined);
 
   try {
     return await attempt();
@@ -110,6 +112,6 @@ export async function runIdempotentWrite<O>(
 }
 
 /** Runs a read inside a transaction (one consistent snapshot); no audit, no idempotency row. */
-export function runRead<O>(work: (tx: Tx) => Promise<O>, client: PrismaClient = db): Promise<O> {
-  return client.$transaction(work);
+export function runRead<O>(work: (tx: Tx) => Promise<O>, client: PrismaClient = db, timeoutMs?: number): Promise<O> {
+  return client.$transaction(work, timeoutMs ? { timeout: timeoutMs } : undefined);
 }

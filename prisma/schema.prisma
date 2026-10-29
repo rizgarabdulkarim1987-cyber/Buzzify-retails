@@ -66,6 +66,7 @@ model RtBusiness {
   catalogCounter RtCatalogCounter?
   importBatches  RtImportBatch[]
   importRows     RtImportRow[]
+  importPresets  RtImportMappingPreset[]
 }
 
 model RtBranch {
@@ -755,10 +756,29 @@ model RtImportRow {
   matchedVariantId String?
   diff             Json?
   resolution       String?
+  // The validated row (serializeRowResult's `normalized`), what commit applies. Null until validated.
+  normalized       Json?
+  // 0-based columns whose xlsx cell was stored as a number (validateRows' numericCells).
+  numericCols      Int[]           @default([])
 
   business RtBusiness    @relation(fields: [businessId], references: [id])
   batch    RtImportBatch @relation(fields: [businessId, batchId], references: [businessId, id], onDelete: Cascade)
   variant  RtVariant?    @relation(fields: [businessId, matchedVariantId], references: [businessId, id], onDelete: SetNull)
 
   @@unique([businessId, batchId, rowNumber])
+}
+
+// A saved column map for the import (Task 9), reusable on the next upload. Per business; the name
+// is unique within the business. `mapping` is a Mapping (known column -> 0-based file column or null).
+model RtImportMappingPreset {
+  id          String   @id @default(cuid())
+  businessId  String
+  name        String
+  mapping     Json
+  createdById String
+  createdAt   DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, name])
 }

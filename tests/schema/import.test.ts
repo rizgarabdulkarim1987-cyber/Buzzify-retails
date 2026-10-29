@@ -74,8 +74,24 @@ describe("import staging schema", () => {
     expect(after).toMatchObject({ matchedVariantId: null, businessId: a.id });
   });
 
+  it("a mapping preset name is unique within its business only", async () => {
+    const a = (await createBusinessWithStaff(db)).business;
+    const other = (await createBusinessWithStaff(db)).business;
+    const data = { name: "النظام القديم", mapping: { name: 1 }, createdById: "u1" };
+    await db.rtImportMappingPreset.create({ data: { ...data, businessId: a.id } });
+    await db.rtImportMappingPreset.create({ data: { ...data, businessId: other.id } });
+    expect(await failure(db.rtImportMappingPreset.create({ data: { ...data, businessId: a.id } }))).toContain("Unique");
+  });
+
+  it("a staged row keeps its numeric columns and has no normalized value until validated", async () => {
+    const { business } = await createBusinessWithStaff(db);
+    const b = await batch(business.id);
+    const row = await db.rtImportRow.create({ data: { businessId: business.id, batchId: b.id, rowNumber: 1, raw: ["1"], status: "SKIPPED", numericCols: [0] } });
+    expect(row).toMatchObject({ numericCols: [0], normalized: null });
+  });
+
   it("is classified as business-scoped, never branch-scoped, and not readable by support", () => {
-    for (const m of ["RtImportBatch", "RtImportRow"]) {
+    for (const m of ["RtImportBatch", "RtImportRow", "RtImportMappingPreset"]) {
       expect(BUSINESS_SCOPED_MODELS).toContain(m);
       expect(BRANCH_SCOPED_MODELS).not.toContain(m);
       for (const models of Object.values(SCOPE_MODELS)) expect(models).not.toContain(m);

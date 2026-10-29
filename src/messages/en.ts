@@ -241,6 +241,8 @@ export const en: Messages = {
     IMPORT_TOO_LARGE: "The file is too large. The maximum is 5 MB.",
     IMPORT_TOO_MANY_ROWS: "The file has more rows than allowed. The maximum is 10000 rows; split it into several files.",
     IMPORT_UNREADABLE: "The file could not be read. Use a CSV file or an Excel xlsx file, without password protection.",
+    IMPORT_NOT_VALIDATED: "Preview (validate) the file first, then save it.",
+    IMPORT_ALREADY_COMMITTED: "Rows of this file were already saved to the catalog, so it cannot be deleted and its column mapping cannot change.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

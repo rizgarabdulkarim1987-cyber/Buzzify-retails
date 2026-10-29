@@ -54,6 +54,8 @@ export type ActionSpec<I, O> = {
    * statement then sees what the earlier caller committed.
    */
   run(ctx: { actor: Actor; tx: Prisma.TransactionClient; input: I; lockBusiness: (name: string) => Promise<void> }): Promise<O>;
+  /** Transaction timeout in ms (default Prisma's 5000). Only for bulk work (the catalog import). */
+  timeoutMs?: number;
   /** What to record in the audit row. Default: the action name as entity and the input as changes. */
   audit?(input: I, value: O): AuditDraft;
 };
@@ -135,7 +137,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
       await spec.precondition?.({ actor, input });
 
       if (!spec.writes) {
-        const value = await runRead((tx) => spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) }));
+        const value = await runRead((tx) => spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) }), db, spec.timeoutMs);
         return { ok: true, value };
       }
 
@@ -146,6 +148,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
         auditBusinessId: meta.businessId,
         actorId: actor.userId,
         action: spec.name,
+        timeoutMs: spec.timeoutMs,
         async run(tx) {
           const result = await spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) });
           const audit = spec.audit?.(input, result) ?? {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { Currency, RtTrackingMode } from "@/generated/prisma/enums";
@@ -61,7 +62,7 @@ export const MAX_SKU_LENGTH = 64;
 export const SKU_PREFIX = "P";
 const SKU_DIGITS = 6;
 
-const TAXONOMY_LOCK = "catalog.taxonomy";
+export const TAXONOMY_LOCK = "catalog.taxonomy";
 export const productLock = (productId: string) => `catalog.product:${productId}`;
 
 // ---------------------------------------------------------------------------------------------
@@ -262,23 +263,34 @@ async function insertBarcode(tx: Tx, businessId: string, unitId: string, code: s
 const formatSku = (n: number) => `${SKU_PREFIX}${String(n).padStart(SKU_DIGITS, "0")}`;
 
 /**
- * The next free generated SKU. The counter row is incremented atomically (its row lock queues
- * concurrent creators until commit), so a number is handed out once; numbers whose SKU a manual
- * entry already took are skipped.
+ * The next `count` free generated SKUs. The counter row is incremented atomically (its row lock
+ * queues concurrent creators until commit), so a number is handed out once; numbers whose SKU a
+ * manual entry already took (in the database, or in `reserved`: manual SKUs about to be inserted
+ * by the same caller) are skipped and more are drawn.
  */
-async function nextSku(tx: Tx, businessId: string): Promise<string> {
+export async function nextSkusCore(tx: Tx, businessId: string, count: number, reserved: ReadonlySet<string> = new Set()): Promise<string[]> {
+  const out: string[] = [];
+  if (count <= 0) return out;
   await tx.rtCatalogCounter.createMany({ data: [{ businessId }], skipDuplicates: true });
-  for (let attempt = 0; attempt < 1000; attempt += 1) {
+  for (let attempt = 0; attempt < 1000 && out.length < count; attempt += 1) {
+    const want = count - out.length;
     const row = await tx.rtCatalogCounter.update({
       where: { businessId },
-      data: { nextSku: { increment: 1 } },
+      data: { nextSku: { increment: want } },
       select: { nextSku: true },
     });
-    const candidate = formatSku(row.nextSku - 1);
-    const used = await tx.rtVariant.findFirst({ where: { sku: candidate }, select: { id: true } });
-    if (!used) return candidate;
+    const candidates = Array.from({ length: want }, (_, i) => formatSku(row.nextSku - want + i));
+    const used = await tx.rtVariant.findMany({ where: { sku: { in: candidates } }, select: { sku: true } });
+    const taken = new Set(used.map((u) => u.sku));
+    for (const c of candidates) if (!taken.has(c) && !reserved.has(c)) out.push(c);
   }
-  throw new Error("nextSku: no free SKU after 1000 attempts");
+  if (out.length < count) throw new Error("nextSkusCore: no free SKU after 1000 attempts");
+  return out;
+}
+
+async function nextSku(tx: Tx, businessId: string): Promise<string> {
+  const [sku] = await nextSkusCore(tx, businessId, 1);
+  return sku!;
 }
 
 async function assertSkuFree(tx: Tx, value: string): Promise<void> {
@@ -286,11 +298,22 @@ async function assertSkuFree(tx: Tx, value: string): Promise<void> {
   if (used) throw new RuleError("SKU_TAKEN");
 }
 
+/** The product's searchText: its names and the SKUs of its active variants, normalized. */
+export function productSearchText(names: readonly string[], activeSkus: readonly string[]): string {
+  return normalizeSearchText([...names, ...activeSkus].join(" "));
+}
+
+/** A variant's searchText: the product names, its SKU, its option values and its active barcodes, normalized. */
+export function variantSearchText(names: readonly string[], sku: string, options: unknown, activeCodes: readonly string[]): string {
+  const optionValues = options && typeof options === "object" && !Array.isArray(options) ? Object.values(options).map(String) : [];
+  return normalizeSearchText([...names, sku, ...optionValues, ...activeCodes].join(" "));
+}
+
 /**
  * Rebuilds the normalized searchText of the product (names + active variants' SKUs) and of every
  * one of its variants (names + SKU + options + active barcodes). Call under the product lock.
  */
-async function refreshSearchText(tx: Tx, productId: string): Promise<void> {
+export async function refreshSearchText(tx: Tx, productId: string): Promise<void> {
   // One level per query (see getProduct): no nested to-many selects inside a transaction.
   const product = await tx.rtProduct.findFirst({ where: { id: productId }, select: { nameAr: true, nameCkb: true, nameEn: true } });
   if (!product) throw new NotFoundError();
@@ -305,15 +328,13 @@ async function refreshSearchText(tx: Tx, productId: string): Promise<void> {
     select: { code: true, unit: { select: { variantId: true } } },
   });
   const names = [product.nameAr, product.nameCkb, product.nameEn].filter((n): n is string => !!n);
-  const text = (parts: string[]) => normalizeSearchText(parts.join(" "));
   await tx.rtProduct.updateMany({
     where: { id: productId },
-    data: { searchText: text([...names, ...variants.filter((v) => v.archivedAt === null).map((v) => v.sku)]) },
+    data: { searchText: productSearchText(names, variants.filter((v) => v.archivedAt === null).map((v) => v.sku)) },
   });
   for (const v of variants) {
-    const optionValues = v.options && typeof v.options === "object" && !Array.isArray(v.options) ? Object.values(v.options).map(String) : [];
     const own = codes.filter((c) => c.unit.variantId === v.id).map((c) => c.code);
-    await tx.rtVariant.updateMany({ where: { id: v.id }, data: { searchText: text([...names, v.sku, ...optionValues, ...own]) } });
+    await tx.rtVariant.updateMany({ where: { id: v.id }, data: { searchText: variantSearchText(names, v.sku, v.options, own) } });
   }
 }
 
@@ -400,6 +421,102 @@ async function insertVariant(
     }
   }
   return { variantId, baseUnitId: base.id, sku: skuValue };
+}
+
+/** One new product for insertProductsCore: a single variant, its base unit and optionally one larger unit. */
+export type NewCatalogItem = {
+  nameAr: string;
+  nameCkb: string | null;
+  nameEn: string | null;
+  categoryId: string | null;
+  brandId: string | null;
+  /** Already resolved: a free manual SKU or one from nextSkusCore. */
+  sku: string;
+  baseUnit: { name: string; barcodes: string[] };
+  /** A larger unit (factor >= 2) carrying its own barcodes. */
+  pack: { name: string; factor: number; barcodes: string[] } | null;
+  /** DEFAULT-list price from now on, of the pack when there is one, else of the base unit. */
+  price: PriceInput | null;
+};
+
+/**
+ * Bulk creation for the catalog import: the same rows createProduct makes (product, variant, base
+ * unit with factor 1, optional larger unit, barcodes, DEFAULT prices, searchText), written with a
+ * handful of multi-row INSERTs instead of ~20 statements per product. The caller holds the locks
+ * (taxonomy when ids are set, the SKU counter via nextSkusCore), has checked that every SKU and
+ * barcode is free and every category/brand is active, the currencies enabled and price.change.
+ * Barcodes are inserted in code order so two concurrent bulk inserts take index locks in one order.
+ * A unique violation (a code or SKU committed by someone else meanwhile) propagates as the raw
+ * database error; the transaction is then aborted and the caller decides (retry the slice).
+ */
+export async function insertProductsCore(
+  tx: Tx,
+  businessId: string,
+  items: readonly NewCatalogItem[],
+): Promise<{ productId: string; variantId: string }[]> {
+  if (items.length === 0) return [];
+  const rows = items.map((item) => {
+    for (const code of [...item.baseUnit.barcodes, ...(item.pack?.barcodes ?? [])]) normalizeBarcode(code);
+    if (item.pack) checkFactor(item.pack.factor);
+    const names = [item.nameAr, item.nameCkb, item.nameEn].filter((n): n is string => !!n);
+    const codes = [...item.baseUnit.barcodes, ...(item.pack?.barcodes ?? [])];
+    return {
+      item,
+      productId: randomUUID(),
+      variantId: randomUUID(),
+      baseUnitId: randomUUID(),
+      packUnitId: item.pack ? randomUUID() : null,
+      productText: productSearchText(names, [item.sku]),
+      variantText: variantSearchText(names, item.sku, null, codes),
+    };
+  });
+  await tx.rtProduct.createMany({
+    data: rows.map((r) => ({
+      id: r.productId,
+      businessId,
+      nameAr: r.item.nameAr,
+      nameCkb: r.item.nameCkb,
+      nameEn: r.item.nameEn,
+      categoryId: r.item.categoryId,
+      brandId: r.item.brandId,
+      searchText: r.productText,
+    })),
+  });
+  await tx.rtVariant.createMany({
+    data: rows.map((r) => ({ id: r.variantId, businessId, productId: r.productId, sku: r.item.sku, searchText: r.variantText })),
+  });
+  await tx.rtUnit.createMany({
+    data: rows.flatMap((r) => [
+      { id: r.baseUnitId, businessId, variantId: r.variantId, name: r.item.baseUnit.name, factor: 1, isBase: true, quantityScale: 0 },
+      ...(r.item.pack && r.packUnitId
+        ? [{ id: r.packUnitId, businessId, variantId: r.variantId, name: r.item.pack.name, factor: r.item.pack.factor, isBase: false, quantityScale: 0 }]
+        : []),
+    ]),
+  });
+  const codes = rows
+    .flatMap((r) => [
+      ...r.item.baseUnit.barcodes.map((code) => ({ businessId, unitId: r.baseUnitId, code })),
+      ...(r.packUnitId ? (r.item.pack?.barcodes ?? []).map((code) => ({ businessId, unitId: r.packUnitId!, code })) : []),
+    ])
+    .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  if (codes.length > 0) await tx.rtBarcode.createMany({ data: codes });
+  const priced = rows.filter((r) => r.item.price !== null);
+  if (priced.length > 0) {
+    const lists = await ensureDefaultLists(tx, businessId);
+    const validFrom = new Date();
+    await tx.rtPrice.createMany({
+      data: priced.map((r) => ({
+        businessId,
+        unitId: r.packUnitId ?? r.baseUnitId,
+        priceListId: lists.DEFAULT,
+        currency: r.item.price!.currency,
+        amountMinor: r.item.price!.amountMinor,
+        validFrom,
+        validTo: null,
+      })),
+    });
+  }
+  return rows.map((r) => ({ productId: r.productId, variantId: r.variantId }));
 }
 
 const productSelect = {
