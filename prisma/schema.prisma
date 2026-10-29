@@ -54,6 +54,16 @@ model RtBusiness {
   invitations   RtInvitation[]
   supportGrants RtSupportGrant[]
   setupProgress RtSetupProgress[]
+
+  categories     RtCategory[]
+  brands         RtBrand[]
+  products       RtProduct[]
+  variants       RtVariant[]
+  units          RtUnit[]
+  barcodes       RtBarcode[]
+  priceLists     RtPriceList[]
+  prices         RtPrice[]
+  catalogCounter RtCatalogCounter?
 }
 
 model RtBranch {
@@ -136,6 +146,8 @@ model RtStaff {
   @@unique([businessId, userId])
   // Target of RtStaffBranch's composite foreign key (staff stays in the same business).
   @@unique([businessId, id])
+  // Looking up a signed-in user's memberships across businesses.
+  @@index([userId])
 }
 
 model RtStaffBranch {
@@ -475,4 +487,214 @@ model RtSetupProgress {
   business RtBusiness @relation(fields: [businessId], references: [id])
 
   @@unique([businessId, step])
+}
+
+// Catalog (R1). Business-level: shared by every branch, so no branchId anywhere. Every child row
+// reaches its parent through a composite (businessId, id) foreign key, so it can never point at
+// another business's row. Rows are archived (archivedAt), never deleted. Hand-written in the
+// migration (Prisma cannot express them): CHECKs, the single-base-unit partial unique index and the
+// price-period exclusion constraint (btree_gist).
+
+enum RtTrackingMode {
+  NONE
+  BATCH
+  SERIAL
+}
+
+enum RtPriceListKind {
+  DEFAULT
+  WHOLESALE
+}
+
+// A category tree (optional parent in the same business). Arabic name required, Kurdish and English optional.
+model RtCategory {
+  id         String    @id @default(cuid())
+  businessId String
+  parentId   String?
+  nameAr     String
+  nameCkb    String?
+  nameEn     String?
+  archivedAt DateTime?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business RtBusiness   @relation(fields: [businessId], references: [id])
+  parent   RtCategory?  @relation("RtCategoryTree", fields: [businessId, parentId], references: [businessId, id], onDelete: Restrict)
+  children RtCategory[] @relation("RtCategoryTree")
+  products RtProduct[]
+
+  @@unique([businessId, id])
+  @@index([businessId, parentId])
+}
+
+model RtBrand {
+  id         String    @id @default(cuid())
+  businessId String
+  nameAr     String
+  nameCkb    String?
+  nameEn     String?
+  archivedAt DateTime?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business RtBusiness  @relation(fields: [businessId], references: [id])
+  products RtProduct[]
+
+  @@unique([businessId, id])
+}
+
+// The model a customer recognises (e.g. "Almarai milk 1L", "Polo shirt"). CHECKs in the migration:
+// tracksExpiry only with trackingMode BATCH; expiryAlertDays > 0 when set.
+model RtProduct {
+  id              String         @id @default(cuid())
+  businessId      String
+  nameAr          String
+  nameCkb         String?
+  nameEn          String?
+  descriptionAr   String?
+  descriptionCkb  String?
+  descriptionEn   String?
+  categoryId      String?
+  brandId         String?
+  trackingMode    RtTrackingMode @default(NONE)
+  soldByWeight    Boolean        @default(false)
+  tracksExpiry    Boolean        @default(false)
+  expiryAlertDays Int?
+  // Normalised search text (all names), kept up to date by the catalog actions.
+  searchText      String         @default("")
+  archivedAt      DateTime?
+  version         Int            @default(1)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  business RtBusiness  @relation(fields: [businessId], references: [id])
+  category RtCategory? @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: Restrict)
+  brand    RtBrand?    @relation(fields: [businessId, brandId], references: [businessId, id], onDelete: Restrict)
+  variants RtVariant[]
+
+  @@unique([businessId, id])
+  @@index([businessId, categoryId])
+  @@index([businessId, brandId])
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+// The sellable item (one per size/colour, or the single default variant of a market product).
+// The SKU is unique per business and never changes.
+model RtVariant {
+  id         String    @id @default(cuid())
+  businessId String
+  productId  String
+  sku        String
+  options    Json?
+  searchText String    @default("")
+  archivedAt DateTime?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  product  RtProduct  @relation(fields: [businessId, productId], references: [businessId, id])
+  units    RtUnit[]
+
+  @@unique([businessId, sku])
+  @@unique([businessId, id])
+  @@index([businessId, productId])
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+// A unit a variant is counted and sold in (piece, carton of 24, kg). `factor` converts to the base
+// unit. In the migration: factor > 0; isBase implies factor = 1; at most one base unit per variant
+// (partial unique index; that every variant has one is the catalog actions' job); quantityScale 0..3.
+model RtUnit {
+  id            String    @id @default(cuid())
+  businessId    String
+  variantId     String
+  name          String
+  factor        Int
+  isBase        Boolean   @default(false)
+  // Decimal places a quantity may have (0 = whole units, 3 = grams of a kg).
+  quantityScale Int       @default(0)
+  archivedAt    DateTime?
+  version       Int       @default(1)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  business RtBusiness  @relation(fields: [businessId], references: [id])
+  variant  RtVariant   @relation(fields: [businessId, variantId], references: [businessId, id])
+  barcodes RtBarcode[]
+  prices   RtPrice[]
+
+  @@unique([businessId, id])
+  @@index([businessId, variantId])
+}
+
+// A barcode is text (leading zeros kept) and unique within the business across every unit and
+// variant, archived ones included: an archived code stays reserved because old invoices name it.
+model RtBarcode {
+  id         String    @id @default(cuid())
+  businessId String
+  unitId     String
+  code       String
+  archivedAt DateTime?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  unit     RtUnit     @relation(fields: [businessId, unitId], references: [businessId, id])
+
+  @@unique([businessId, code])
+  @@index([businessId, unitId])
+}
+
+// At most one list of each kind per business. A unit without a WHOLESALE price falls back to DEFAULT.
+model RtPriceList {
+  id         String          @id @default(cuid())
+  businessId String
+  name       String
+  kind       RtPriceListKind
+  version    Int             @default(1)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  prices   RtPrice[]
+
+  @@unique([businessId, kind])
+  @@unique([businessId, id])
+}
+
+// A dated price, [validFrom, validTo) with validTo null for the open period. Never edited in
+// place: a change closes the current row and opens a new one. In the migration: amountMinor >= 0,
+// validTo > validFrom, and no two periods of one (unit, list, currency) overlap (EXCLUDE USING gist),
+// which also allows at most one open period.
+model RtPrice {
+  id          String    @id @default(cuid())
+  businessId  String
+  unitId      String
+  priceListId String
+  currency    Currency
+  amountMinor BigInt
+  validFrom   DateTime
+  validTo     DateTime?
+  version     Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  business  RtBusiness  @relation(fields: [businessId], references: [id])
+  unit      RtUnit      @relation(fields: [businessId, unitId], references: [businessId, id])
+  priceList RtPriceList @relation(fields: [businessId, priceListId], references: [businessId, id])
+
+  @@index([businessId, unitId, priceListId, currency, validFrom])
+}
+
+// The per-business SKU sequence (atomic increment when a SKU is generated).
+model RtCatalogCounter {
+  id         String @id @default(cuid())
+  businessId String @unique
+  nextSku    Int    @default(1)
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
 }

@@ -52,6 +52,16 @@ const SCOPE_RULES = {
   RtSupportGrant: { business: "businessId" },
   // Setup wizard progress (src/server/setup/progress.ts): one row per business and step.
   RtSetupProgress: { business: "businessId" },
+  // Catalog (R1): business-level, shared by every branch (no branchId).
+  RtCategory: { business: "businessId" },
+  RtBrand: { business: "businessId" },
+  RtProduct: { business: "businessId" },
+  RtVariant: { business: "businessId" },
+  RtUnit: { business: "businessId" },
+  RtBarcode: { business: "businessId" },
+  RtPriceList: { business: "businessId" },
+  RtPrice: { business: "businessId" },
+  RtCatalogCounter: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**
