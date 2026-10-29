@@ -31,7 +31,12 @@ export type ErrorCode =
   | "IMPORT_NOT_VALIDATED"
   | "IMPORT_ALREADY_COMMITTED"
   | "CATALOG_EMPTY"
-  | "TRIAL_IN_USE";
+  | "TRIAL_IN_USE"
+  | "STOCK_NEGATIVE"
+  | "TEST_ITEM"
+  | "SERIAL_NOT_SUPPORTED"
+  | "STOCK_RULE"
+  | "DOCUMENT_POSTED";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -77,6 +82,11 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   IMPORT_ALREADY_COMMITTED: "حُفظت سطور من هذا الملف في الكتالوج، فلا يمكن حذفه ولا تغيير تخطيط أعمدته.",
   CATALOG_EMPTY: "لا تكتمل خطوة الكتالوج قبل إضافة صنف فعلي واحد على الأقل (أصناف التجربة لا تُحسب) أو استيراد ملف بنجاح.",
   TRIAL_IN_USE: "لا يمكن حذف أصناف التجربة لأن بعضها مستخدم في عمليات مسجّلة (مبيعات أو مخزون).",
+  STOCK_NEGATIVE: "الكمية المتوفرة في المخزون لا تكفي لهذه العملية.",
+  TEST_ITEM: "أصناف التجربة لا تدخل المخزون. أضف الصنف الفعلي ثم أعد المحاولة.",
+  SERIAL_NOT_SUPPORTED: "تتبّع الأرقام التسلسلية غير مدعوم في المخزون حالياً، فلا يمكن إدخال هذا الصنف أو تعديل رصيده.",
+  STOCK_RULE: "بيانات المخزون غير مقبولة: تحقق من الكمية والوحدة والدفعة وتاريخ الانتهاء والتكلفة والعملة.",
+  DOCUMENT_POSTED: "هذا المستند مُرحَّل، فلا يمكن تعديله أو حذفه. للتصحيح أنشئ مستنداً عكسياً.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

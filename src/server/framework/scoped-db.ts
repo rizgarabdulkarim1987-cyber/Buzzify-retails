@@ -67,6 +67,15 @@ const SCOPE_RULES = {
   RtImportRow: { business: "businessId" },
   // Saved import column maps (Task 9), per business.
   RtImportMappingPreset: { business: "businessId" },
+  // Stock (R2). Documents, movements and balances belong to a branch's location: branch-scoped, so
+  // a branch-limited actor only reaches its own branches. Lines follow their document (reached by
+  // documentId); batches and the document counter are business-level.
+  RtBatch: { business: "businessId" },
+  RtStockDocument: { business: "businessId", branch: "branchId" },
+  RtStockLine: { business: "businessId" },
+  RtStockMovement: { business: "businessId", branch: "branchId" },
+  RtStockBalance: { business: "businessId", branch: "branchId" },
+  RtStockCounter: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**

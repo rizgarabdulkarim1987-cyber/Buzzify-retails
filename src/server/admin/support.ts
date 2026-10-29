@@ -42,8 +42,9 @@ type ModelName = Prisma.ModelName;
 
 /**
  * The models each support scope may read. Default deny: a model not listed here (RtStaff,
- * RtSetupProgress, RtSupportGrant, RtCapability, RtBusiness, RtBranch, RtCatalogCounter, and any
- * model added to the schema later) cannot be read by a support actor, whatever scopes the grant has.
+ * RtSetupProgress, RtSupportGrant, RtCapability, RtBusiness, RtBranch, RtCatalogCounter,
+ * RtStockCounter, and any model added to the schema later) cannot be read by a support actor,
+ * whatever scopes the grant has.
  */
 export const SCOPE_MODELS: Readonly<Record<SupportScope, readonly ModelName[]>> = Object.freeze({
   CATALOG_READ: Object.freeze([
@@ -56,8 +57,9 @@ export const SCOPE_MODELS: Readonly<Record<SupportScope, readonly ModelName[]>> 
     "RtPriceList",
     "RtPrice",
   ] as const),
-  // R2 (stock) and R3 (sales) fill these in with their models; empty until then, so nothing is readable.
-  STOCK_READ: Object.freeze([] as const),
+  // Stock (R2): batches, documents and lines, the movement ledger and balances. Not the document counter.
+  STOCK_READ: Object.freeze(["RtBatch", "RtStockDocument", "RtStockLine", "RtStockMovement", "RtStockBalance"] as const),
+  // R3 (sales) fills this in with its models; empty until then, so nothing is readable.
   SALES_READ: Object.freeze([] as const),
 });
 

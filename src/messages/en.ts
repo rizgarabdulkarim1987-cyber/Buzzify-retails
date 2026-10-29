@@ -575,6 +575,11 @@ export const en: Messages = {
     IMPORT_ALREADY_COMMITTED: "Rows of this file were already saved to the catalog, so it cannot be deleted and its column mapping cannot change.",
     CATALOG_EMPTY: "The catalog step is complete once at least one real product exists (trial items do not count) or a file was imported.",
     TRIAL_IN_USE: "The trial items cannot be removed because some are used in recorded transactions (sales or stock).",
+    STOCK_NEGATIVE: "There is not enough stock for this operation.",
+    TEST_ITEM: "Trial items cannot hold stock. Add the real item and try again.",
+    SERIAL_NOT_SUPPORTED: "Serial-number tracking is not supported in stock yet, so this item cannot be received or adjusted.",
+    STOCK_RULE: "This stock entry is not valid: check the quantity, unit, batch, expiry date, cost and currency.",
+    DOCUMENT_POSTED: "This document is posted, so it cannot be edited or deleted. To correct it, create a reversal.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

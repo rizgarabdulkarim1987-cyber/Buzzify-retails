@@ -67,6 +67,13 @@ model RtBusiness {
   importBatches  RtImportBatch[]
   importRows     RtImportRow[]
   importPresets  RtImportMappingPreset[]
+
+  batches        RtBatch[]
+  stockDocuments RtStockDocument[]
+  stockLines     RtStockLine[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
+  stockCounter   RtStockCounter?
 }
 
 model RtBranch {
@@ -82,6 +89,10 @@ model RtBranch {
   locations RtLocation[]
   terminals RtTerminal[]
   staff     RtStaffBranch[]
+
+  stockDocuments RtStockDocument[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
 
   // Target of the composite foreign keys that keep child rows inside one business.
   @@unique([businessId, id])
@@ -101,6 +112,10 @@ model RtLocation {
   business  RtBusiness   @relation(fields: [businessId], references: [id])
   branch    RtBranch     @relation(fields: [businessId, branchId], references: [businessId, id])
   terminals RtTerminal[]
+
+  stockDocuments RtStockDocument[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
 
   // Target of the terminal's composite foreign key (same business AND same branch).
   @@unique([businessId, branchId, id])
@@ -605,6 +620,11 @@ model RtVariant {
   units      RtUnit[]
   importRows RtImportRow[]
 
+  batches        RtBatch[]
+  stockLines     RtStockLine[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
+
   @@unique([businessId, sku])
   @@unique([businessId, id])
   @@index([businessId, productId])
@@ -633,6 +653,7 @@ model RtUnit {
   barcodes     RtBarcode[]
   prices       RtPrice[]
   rtImportRows RtImportRow[]
+  stockLines   RtStockLine[]
 
   @@unique([businessId, id])
   @@index([businessId, variantId])
@@ -714,6 +735,13 @@ enum ImportBatchStatus {
   FAILED
 }
 
+// What an import batch loads: catalog rows (R1) or opening stock (R2). Each import flow only
+// lists and commits batches of its own kind.
+enum ImportBatchKind {
+  CATALOG
+  OPENING_STOCK
+}
+
 enum ImportRowStatus {
   OK
   REJECTED
@@ -729,6 +757,7 @@ model RtImportBatch {
   id          String            @id @default(cuid())
   businessId  String
   status      ImportBatchStatus @default(STAGED)
+  kind        ImportBatchKind   @default(CATALOG)
   fileName    String
   fileHash    String
   columns     Json
@@ -741,8 +770,9 @@ model RtImportBatch {
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 
-  business RtBusiness    @relation(fields: [businessId], references: [id])
-  rows     RtImportRow[]
+  business       RtBusiness        @relation(fields: [businessId], references: [id])
+  rows           RtImportRow[]
+  stockDocuments RtStockDocument[]
 
   @@unique([businessId, id])
   @@index([businessId, createdAt])
@@ -789,4 +819,193 @@ model RtImportMappingPreset {
   business RtBusiness @relation(fields: [businessId], references: [id])
 
   @@unique([businessId, name])
+}
+
+// Stock (R2). Quantities are BigInt in base units x 1000; values are BigInt minor units of the
+// business's default currency. Every row reaches its parents through composite foreign keys that
+// start with businessId (and branchId for a location), so it never points at another business's
+// row; a batch reference also carries variantId, so a row's batch is always of the row's variant.
+// Hand-written in the migration (Prisma cannot express them): the CHECKs below, NULLS NOT DISTINCT
+// on the two unique keys with a nullable column, and the trigger that makes RtStockMovement
+// append-only.
+
+enum RtStockDocumentKind {
+  OPENING
+  RECEIPT
+  ADJUSTMENT
+  WRITE_OFF
+  REVERSAL
+}
+
+enum RtStockDocumentStatus {
+  DRAFT
+  POSTED
+}
+
+// A batch of a variant: an optional lot code and an optional expiry date (a date, no time). One row
+// per (variant, code, expiryDate) with NULLs equal (NULLS NOT DISTINCT), so "no code, no date" is a
+// single batch too. In the migration: a code is never blank.
+model RtBatch {
+  id         String    @id @default(cuid())
+  businessId String
+  variantId  String
+  code       String?
+  expiryDate DateTime? @db.Date
+  createdAt  DateTime  @default(now())
+
+  business  RtBusiness        @relation(fields: [businessId], references: [id])
+  variant   RtVariant         @relation(fields: [businessId, variantId], references: [businessId, id])
+  lines     RtStockLine[]
+  movements RtStockMovement[]
+  balances  RtStockBalance[]
+
+  @@unique([businessId, id])
+  // Target of the (businessId, variantId, batchId) foreign keys: a batch of the row's own variant.
+  @@unique([businessId, variantId, id])
+  // NULLS NOT DISTINCT in the migration.
+  @@unique([businessId, variantId, code, expiryDate])
+}
+
+// A stock document. Posting writes its movements; a posted document never changes (the actions
+// refuse with DOCUMENT_POSTED) and is corrected by a REVERSAL that names it. `number` is given at
+// posting from RtStockCounter, unique per business (drafts have none). In the migration: a POSTED
+// document has a number and postedAt; number >= 1; reversesDocumentId is set exactly for a
+// REVERSAL and never names the document itself. A document is reversed at most once (unique).
+// importBatchId: the opening-stock import batch an OPENING document came from (Task 7).
+model RtStockDocument {
+  id                 String                @id @default(cuid())
+  businessId         String
+  branchId           String
+  locationId         String
+  kind               RtStockDocumentKind
+  status             RtStockDocumentStatus @default(DRAFT)
+  number             Int?
+  supplierRef        String?
+  note               String?
+  reason             String?
+  reversesDocumentId String?
+  importBatchId      String?
+  postedAt           DateTime?
+  postedById         String?
+  version            Int                   @default(1)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  business    RtBusiness        @relation(fields: [businessId], references: [id])
+  branch      RtBranch          @relation(fields: [businessId, branchId], references: [businessId, id])
+  location    RtLocation        @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+  reverses    RtStockDocument?  @relation("RtStockReversal", fields: [businessId, reversesDocumentId], references: [businessId, id], onDelete: Restrict)
+  reversedBy  RtStockDocument?  @relation("RtStockReversal")
+  importBatch RtImportBatch?    @relation(fields: [businessId, importBatchId], references: [businessId, id], onDelete: Restrict)
+  lines       RtStockLine[]
+  movements   RtStockMovement[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, number])
+  @@unique([businessId, reversesDocumentId])
+  @@index([businessId, createdAt])
+  @@index([businessId, importBatchId])
+}
+
+// A document line as entered: `enteredQuantity` is the text typed in `unitId`, `quantity` the same
+// amount in base units x 1000. A cost is entered per unit in `currency` with `rateMicro` (business
+// currency per 1 unit of `currency`, x 10^6) and converted to `valueMinor` in the business's
+// currency. batchCode/expiryDate are as typed; batchId is resolved when posting. Deleted with its
+// (draft) document; a line with movements cannot be deleted. In the migration: lineNo >= 1,
+// quantity > 0, costs and values >= 0, rate > 0, a cost has a currency.
+model RtStockLine {
+  id              String    @id @default(cuid())
+  businessId      String
+  documentId      String
+  lineNo          Int
+  variantId       String
+  unitId          String
+  batchCode       String?
+  expiryDate      DateTime? @db.Date
+  batchId         String?
+  quantity        BigInt
+  enteredQuantity String
+  currency        Currency?
+  unitCostMinor   BigInt?
+  rateMicro       BigInt?
+  valueMinor      BigInt?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  business  RtBusiness        @relation(fields: [businessId], references: [id])
+  document  RtStockDocument   @relation(fields: [businessId, documentId], references: [businessId, id], onDelete: Cascade)
+  variant   RtVariant         @relation(fields: [businessId, variantId], references: [businessId, id])
+  unit      RtUnit            @relation(fields: [businessId, unitId], references: [businessId, id])
+  batch     RtBatch?          @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
+  movements RtStockMovement[]
+
+  @@unique([businessId, id])
+  // Target of the movement's (businessId, documentId, lineId) key: a line of the movement's own document.
+  @@unique([businessId, documentId, id])
+  @@unique([businessId, documentId, lineNo])
+  @@index([businessId, variantId])
+}
+
+// The stock ledger: append-only (a trigger in the migration refuses UPDATE and DELETE; no
+// updatedAt). In the migration: qtyDelta <> 0, and the value moves the same way as the quantity
+// (or is 0).
+model RtStockMovement {
+  id              String   @id @default(cuid())
+  businessId      String
+  branchId        String
+  locationId      String
+  documentId      String
+  lineId          String
+  variantId       String
+  batchId         String?
+  qtyDelta        BigInt
+  valueDeltaMinor BigInt
+  createdAt       DateTime @default(now())
+
+  business RtBusiness      @relation(fields: [businessId], references: [id])
+  branch   RtBranch        @relation(fields: [businessId, branchId], references: [businessId, id])
+  location RtLocation      @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+  document RtStockDocument @relation(fields: [businessId, documentId], references: [businessId, id])
+  line     RtStockLine     @relation(fields: [businessId, documentId, lineId], references: [businessId, documentId, id])
+  variant  RtVariant       @relation(fields: [businessId, variantId], references: [businessId, id])
+  batch    RtBatch?        @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
+
+  @@index([businessId, variantId, createdAt])
+  @@index([businessId, documentId])
+}
+
+// The current stock of a (location, variant, batch), kept in step with the movements in the same
+// transaction and rebuildable from them. One row per (location, variant, batch) with NULLs equal
+// (NULLS NOT DISTINCT): a single "no batch" row. In the migration: qty >= 0. valueMinor has no
+// CHECK: a batch row's value can drop below zero because an outflow takes the variant's average
+// cost across its batches (spec 6b.2); the variant's total stays >= 0.
+model RtStockBalance {
+  id         String   @id @default(cuid())
+  businessId String
+  branchId   String
+  locationId String
+  variantId  String
+  batchId    String?
+  qty        BigInt
+  valueMinor BigInt
+  updatedAt  DateTime @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  branch   RtBranch   @relation(fields: [businessId, branchId], references: [businessId, id])
+  location RtLocation @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+  variant  RtVariant  @relation(fields: [businessId, variantId], references: [businessId, id])
+  batch    RtBatch?   @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
+
+  // NULLS NOT DISTINCT in the migration.
+  @@unique([businessId, locationId, variantId, batchId])
+  @@index([businessId, variantId])
+}
+
+// The per-business document number sequence (incremented when a document is posted).
+model RtStockCounter {
+  id         String @id @default(cuid())
+  businessId String @unique
+  nextNumber Int    @default(1)
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
 }

@@ -558,7 +558,15 @@ describe("model classification", () => {
     expect(BUSINESS_SCOPED_MODELS).toEqual(
       expect.arrayContaining(["RtBusiness", "RtBranch", "RtLocation", "RtTerminal", "RtStaff", "RtStaffBranch", "RtCapability"]),
     );
-    expect([...BRANCH_SCOPED_MODELS].sort()).toEqual(["RtBranch", "RtLocation", "RtStaffBranch", "RtTerminal"]);
+    expect([...BRANCH_SCOPED_MODELS].sort()).toEqual([
+      "RtBranch",
+      "RtLocation",
+      "RtStaffBranch",
+      "RtStockBalance",
+      "RtStockDocument",
+      "RtStockMovement",
+      "RtTerminal",
+    ]);
   });
 
   it("the classification check fails for an unlisted model", () => {
