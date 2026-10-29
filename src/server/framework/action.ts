@@ -46,11 +46,24 @@ export type ActionSpec<I, O> = {
    * permission and gate checks and before the transaction. Throw RuleError("INVALID_INPUT") to refuse.
    */
   precondition?(ctx: { actor: Actor; input: I }): Promise<void>;
-  /** `tx` is the business/branch scoped client of the running transaction. */
-  run(ctx: { actor: Actor; tx: Prisma.TransactionClient; input: I }): Promise<O>;
+  /**
+   * `tx` is the business/branch scoped client of the running transaction.
+   * `lockBusiness(name)` takes a transaction-scoped advisory lock on (this business, name), released
+   * at commit or rollback. Call it first when the run does check-then-write on shared state (a tree,
+   * a uniqueness rule): callers with the same name queue up, and under READ COMMITTED each later
+   * statement then sees what the earlier caller committed.
+   */
+  run(ctx: { actor: Actor; tx: Prisma.TransactionClient; input: I; lockBusiness: (name: string) => Promise<void> }): Promise<O>;
   /** What to record in the audit row. Default: the action name as entity and the input as changes. */
   audit?(input: I, value: O): AuditDraft;
 };
+
+/** Advisory lock keyed on (businessId, name) on the base transaction client (the scoped one refuses raw SQL). */
+function businessLocker(businessId: string, tx: Prisma.TransactionClient) {
+  return async (name: string): Promise<void> => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`business-lock:${businessId}:${name}`}, 0))`;
+  };
+}
 
 /** Maps the typed errors the framework understands to a result code; undefined for anything else. */
 function codeOf(err: unknown): ErrorCode | undefined {
@@ -122,7 +135,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
       await spec.precondition?.({ actor, input });
 
       if (!spec.writes) {
-        const value = await runRead((tx) => spec.run({ actor, tx: scopedDb(actor, tx), input }));
+        const value = await runRead((tx) => spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) }));
         return { ok: true, value };
       }
 
@@ -134,7 +147,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
         actorId: actor.userId,
         action: spec.name,
         async run(tx) {
-          const result = await spec.run({ actor, tx: scopedDb(actor, tx), input });
+          const result = await spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) });
           const audit = spec.audit?.(input, result) ?? {
             entity: spec.name,
             entityId: "",

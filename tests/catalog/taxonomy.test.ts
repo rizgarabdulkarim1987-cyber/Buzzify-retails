@@ -24,6 +24,7 @@ async function business(label: string) {
     branches: ["A"],
     staff: [
       { key: "owner", role: "OWNER" },
+      { key: "manager", role: "MANAGER", branches: ["A"] },
       { key: "stock", role: "STOCK", branches: ["A"] },
       { key: "cashier", role: "CASHIER", branches: ["A"] },
     ],
@@ -243,5 +244,117 @@ describe("brands", () => {
     // The name of an archived brand is free again.
     expect(await createBrand({ nameAr: "المراعي" }, a.as("stock"))).toMatchObject({ ok: true });
     expect(await db.rtAuditLog.count({ where: { businessId: a.business.id, action: { startsWith: "catalog.brand" } } })).toBe(5);
+  });
+});
+
+describe("taxonomy hardening", () => {
+  it("owner and manager can write; a cashier is refused on every write", async () => {
+    const { a } = await world();
+    expect(await createCategory({ nameAr: "للمالك" }, a.as("owner"))).toMatchObject({ ok: true });
+    const m = await createCategory({ nameAr: "للمدير" }, a.as("manager"));
+    expect(m).toMatchObject({ ok: true });
+    expect(await createBrand({ nameAr: "علامة المدير" }, a.as("manager"))).toMatchObject({ ok: true });
+    const c = await cat(a, "قسم");
+    const br = await createBrand({ nameAr: "علامة" }, a.as("stock"));
+    if (!br.ok) throw new Error("brand");
+    const refused = [
+      await moveCategory({ id: c.id, parentId: null, expectedVersion: 1 }, a.as("cashier")),
+      await archiveCategory({ id: c.id, expectedVersion: 1 }, a.as("cashier")),
+      await createBrand({ nameAr: "x" }, a.as("cashier")),
+      await renameBrand({ id: br.value.id, nameAr: "x", expectedVersion: 1 }, a.as("cashier")),
+      await archiveBrand({ id: br.value.id, expectedVersion: 1 }, a.as("cashier")),
+    ];
+    for (const r of refused) expect(r).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(await db.rtCategory.findUniqueOrThrow({ where: { id: c.id } })).toMatchObject({ archivedAt: null, version: 1 });
+  });
+
+  it("a CLOSED business refuses writes and reads", async () => {
+    const { a } = await world();
+    await db.rtBusiness.update({ where: { id: a.business.id }, data: { status: "ARCHIVED" } });
+    expect(await createCategory({ nameAr: "x" }, a.as("stock"))).toMatchObject({ ok: false, code: "READ_ONLY" });
+    expect(await listCategories({}, a.as("stock"))).toMatchObject({ ok: false, code: "READ_ONLY" });
+    expect(await listBrands({}, a.as("stock"))).toMatchObject({ ok: false, code: "READ_ONLY" });
+  });
+
+  it("a refused rename or move leaves the row unchanged", async () => {
+    const { a } = await world();
+    const p = await cat(a, "أب");
+    await cat(a, "اسم", p.id);
+    const other = await cat(a, "اسم");
+    expect(await renameCategory({ id: other.id, nameAr: "غيره", expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: true });
+    const dup = await cat(a, "اسم آخر", p.id);
+    expect(await renameCategory({ id: dup.id, nameAr: "اسم", nameEn: "changed", expectedVersion: 1 }, a.as("stock"))).toMatchObject({ code: "DUPLICATE_NAME" });
+    expect(await db.rtCategory.findUniqueOrThrow({ where: { id: dup.id } })).toMatchObject({ nameAr: "اسم آخر", nameEn: null, version: 1, parentId: p.id });
+    const root = await cat(a, "اسم آخر");
+    expect(await moveCategory({ id: root.id, parentId: p.id, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ code: "DUPLICATE_NAME" });
+    expect(await db.rtCategory.findUniqueOrThrow({ where: { id: root.id } })).toMatchObject({ parentId: null, version: 1 });
+  });
+
+  it("rejects names that normalize to nothing", async () => {
+    const { a } = await world();
+    expect(await createCategory({ nameAr: "ـــ" }, a.as("stock"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(await createBrand({ nameAr: "ـ ـ" }, a.as("stock"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(await createBrand({ nameAr: "علامة", nameEn: "ـ" }, a.as("stock"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+  });
+
+  it("a corrupted tree (cycle in the data) is refused, never an endless loop", async () => {
+    const { a } = await world();
+    const x = await cat(a, "س");
+    const y = await cat(a, "ص", x.id);
+    await db.rtCategory.update({ where: { id: x.id }, data: { parentId: y.id } });
+    const z = await cat(a, "ع");
+    expect(await moveCategory({ id: x.id, parentId: z.id, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(await moveCategory({ id: z.id, parentId: y.id, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+  });
+
+  it("concurrent opposite moves: exactly one succeeds and no cycle forms", async () => {
+    const { a } = await world();
+    for (let round = 0; round < 4; round += 1) {
+      const x = await cat(a, `س${round}`);
+      const y = await cat(a, `ص${round}`);
+      const r = await Promise.all([
+        moveCategory({ id: x.id, parentId: y.id, expectedVersion: 1 }, a.as("stock")),
+        moveCategory({ id: y.id, parentId: x.id, expectedVersion: 1 }, a.as("manager")),
+      ]);
+      expect(r.filter((v) => v.ok)).toHaveLength(1);
+      expect(r.filter((v) => !v.ok)).toHaveLength(1);
+      const rows = await db.rtCategory.findMany({ where: { businessId: a.business.id } });
+      expect(rows.filter((c) => c.parentId !== null)).toHaveLength(round + 1);
+    }
+  });
+
+  it("concurrent same-name creates produce one row", async () => {
+    const { a } = await world();
+    for (let round = 0; round < 4; round += 1) {
+      const r = await Promise.all([
+        createCategory({ nameAr: `واحد${round}` }, a.as("stock")),
+        createCategory({ nameAr: ` واحد${round}` }, a.as("manager")),
+        createBrand({ nameAr: `علامة${round}` }, a.as("stock")),
+        createBrand({ nameAr: `علامة${round}` }, a.as("manager")),
+      ]);
+      expect(r.filter((v) => v.ok)).toHaveLength(2);
+      expect(await db.rtCategory.count({ where: { businessId: a.business.id } })).toBe(round + 1);
+      expect(await db.rtBrand.count({ where: { businessId: a.business.id } })).toBe(round + 1);
+    }
+  });
+
+  it("concurrent writes that together reach depth 5: one is refused", async () => {
+    const { a } = await world();
+    for (let round = 0; round < 4; round += 1) {
+      const l1 = await cat(a, `م1${round}`);
+      const l2 = await cat(a, "م2", l1.id);
+      const l3 = await cat(a, "م3", l2.id);
+      const lone = await cat(a, `منفرد${round}`);
+      const r = await Promise.all([
+        moveCategory({ id: lone.id, parentId: l3.id, expectedVersion: 1 }, a.as("stock")),
+        createCategory({ nameAr: "تحت", parentId: lone.id }, a.as("manager")),
+      ]);
+      expect(r.filter((v) => v.ok)).toHaveLength(1);
+      expect(r.find((v) => !v.ok)).toMatchObject({ code: "INVALID_INPUT" });
+      const rows = await db.rtCategory.findMany({ where: { businessId: a.business.id } });
+      const byId = new Map(rows.map((c) => [c.id, c]));
+      const depth = (id: string): number => 1 + (byId.get(id)!.parentId ? depth(byId.get(id)!.parentId!) : 0);
+      expect(Math.max(...rows.map((c) => depth(c.id)))).toBeLessThanOrEqual(4);
+    }
   });
 });

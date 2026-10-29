@@ -12,8 +12,13 @@ import { updateVersioned } from "@/server/framework/versioned";
  * (all by defineAction). Reads are open to any active member.
  *
  * Archiving hides a row from the lists (unless includeArchived) and frees its name for reuse.
- * Names are compared with normalizeSearchText. Uniqueness is checked inside the transaction; two
- * simultaneous creates of the same name could both pass (no database constraint backs it).
+ * Names are compared with normalizeSearchText.
+ *
+ * Concurrency: the checks (cycle, depth, duplicate name) read the whole tree/list and then write,
+ * and READ COMMITTED alone would let two callers each pass on the old state. So every write calls
+ * lockBusiness("catalog.taxonomy") first: writers of one business queue behind one advisory lock
+ * (released at commit/rollback), and the reads after the lock see what the previous writer committed.
+ * Brands share that lock. Reads do not lock.
  */
 
 type Tx = Prisma.TransactionClient;
@@ -23,11 +28,14 @@ export const MAX_NAME_LENGTH = 120;
 
 const id = z.string().min(1).max(64);
 const version = z.number().int().min(1);
-const nameAr = z.string().trim().min(1).max(MAX_NAME_LENGTH);
+/** A name that is not empty after the search normalization (tatweel-only and the like are refused). */
+const hasContent = (v: string) => normalizeSearchText(v) !== "";
+const nameAr = z.string().trim().min(1).max(MAX_NAME_LENGTH).refine(hasContent);
 const optionalName = z
   .string()
   .trim()
   .max(MAX_NAME_LENGTH)
+  .refine((v) => v === "" || hasContent(v))
   .nullish()
   .transform((v) => (v ? v : null));
 
@@ -47,66 +55,80 @@ export type BrandItem = TaxonomyItem;
 const itemSelect = { id: true, nameAr: true, nameCkb: true, nameEn: true, archivedAt: true, version: true } as const;
 const categorySelect = { ...itemSelect, parentId: true } as const;
 
+const LOCK = "catalog.taxonomy";
 const key = (name: string) => normalizeSearchText(name);
 
 // ---------------------------------------------------------------------------------------------
 // Categories
 
 type TreeRow = { id: string; parentId: string | null; nameAr: string; archivedAt: Date | null };
+type Tree = { rows: Map<string, TreeRow>; children: Map<string, string[]> };
 
 /** Every category of the business (active and archived), for tree checks in memory. */
-async function loadTree(tx: Tx): Promise<Map<string, TreeRow>> {
-  const rows = await tx.rtCategory.findMany({ select: { id: true, parentId: true, nameAr: true, archivedAt: true } });
-  return new Map(rows.map((r) => [r.id, r]));
+async function loadTree(tx: Tx): Promise<Tree> {
+  const list = await tx.rtCategory.findMany({ select: { id: true, parentId: true, nameAr: true, archivedAt: true } });
+  const rows = new Map(list.map((r) => [r.id, r]));
+  const children = new Map<string, string[]>();
+  for (const r of list) {
+    if (r.parentId !== null) children.set(r.parentId, [...(children.get(r.parentId) ?? []), r.id]);
+  }
+  return { rows, children };
 }
 
-/** Levels from the root down to (and including) this row; 1 for a root category. */
-function depthOf(tree: Map<string, TreeRow>, rowId: string): number {
+/** Levels from the root down to (and including) this row; 1 for a root. A cycle in the data is refused. */
+function depthOf(tree: Tree, rowId: string): number {
+  const seen = new Set<string>();
   let depth = 0;
-  for (let cur: string | null = rowId; cur !== null && depth <= MAX_CATEGORY_DEPTH + 1; ) {
+  for (let cur: string | null = rowId; cur !== null; cur = tree.rows.get(cur)?.parentId ?? null) {
+    if (seen.has(cur)) throw new RuleError("INVALID_INPUT");
+    seen.add(cur);
     depth += 1;
-    cur = tree.get(cur)?.parentId ?? null;
   }
   return depth;
 }
 
 /** Levels in the subtree below this row (0 when it has no children), archived rows included. */
-function heightBelow(tree: Map<string, TreeRow>, rowId: string): number {
+function heightBelow(tree: Tree, rowId: string): number {
+  const seen = new Set<string>([rowId]);
   let height = 0;
-  const walk = (parent: string, level: number) => {
-    for (const r of tree.values()) {
-      if (r.parentId === parent) {
-        height = Math.max(height, level);
-        walk(r.id, level + 1);
-      }
+  let level = tree.children.get(rowId) ?? [];
+  while (level.length > 0) {
+    height += 1;
+    const next: string[] = [];
+    for (const c of level) {
+      if (seen.has(c)) throw new RuleError("INVALID_INPUT");
+      seen.add(c);
+      next.push(...(tree.children.get(c) ?? []));
     }
-  };
-  walk(rowId, 1);
+    level = next;
+  }
   return height;
 }
 
-function isSelfOrDescendant(tree: Map<string, TreeRow>, rowId: string, candidate: string): boolean {
-  for (let cur: string | null = candidate, guard = 0; cur !== null && guard <= tree.size; guard += 1) {
+function isSelfOrDescendant(tree: Tree, rowId: string, candidate: string): boolean {
+  const seen = new Set<string>();
+  for (let cur: string | null = candidate; cur !== null; cur = tree.rows.get(cur)?.parentId ?? null) {
     if (cur === rowId) return true;
-    cur = tree.get(cur)?.parentId ?? null;
+    if (seen.has(cur)) throw new RuleError("INVALID_INPUT");
+    seen.add(cur);
   }
   return false;
 }
 
 /** The new parent must exist, be active, and leave room for `subtreeLevels` (the moved row's own level counts). */
-function checkParent(tree: Map<string, TreeRow>, parentId: string | null, subtreeLevels: number) {
+function checkParent(tree: Tree, parentId: string | null, subtreeLevels: number) {
   if (parentId === null) {
     if (subtreeLevels > MAX_CATEGORY_DEPTH) throw new RuleError("INVALID_INPUT");
     return;
   }
-  const parent = tree.get(parentId);
+  const parent = tree.rows.get(parentId);
   if (!parent || parent.archivedAt !== null) throw new NotFoundError();
   if (depthOf(tree, parentId) + subtreeLevels > MAX_CATEGORY_DEPTH) throw new RuleError("INVALID_INPUT");
 }
 
-function assertFreeSibling(tree: Map<string, TreeRow>, parentId: string | null, name: string, selfId: string | null) {
+function assertFreeSibling(tree: Tree, parentId: string | null, name: string, selfId: string | null) {
   const wanted = key(name);
-  for (const r of tree.values()) {
+  for (const r of tree.rows.values()) {
     if (r.archivedAt === null && r.parentId === parentId && r.id !== selfId && key(r.nameAr) === wanted) {
       throw new RuleError("DUPLICATE_NAME");
     }
@@ -120,7 +142,8 @@ export const createCategory = defineAction({
   permission: "catalog.manage",
   input: z.object({ parentId: id.nullish().transform((v) => v ?? null), ...names }).strict(),
   writes: true,
-  async run({ actor, tx, input }): Promise<CategoryItem> {
+  async run({ actor, tx, input, lockBusiness }): Promise<CategoryItem> {
+    await lockBusiness(LOCK);
     const tree = await loadTree(tx);
     checkParent(tree, input.parentId, 1);
     assertFreeSibling(tree, input.parentId, input.nameAr, null);
@@ -144,9 +167,10 @@ export const renameCategory = defineAction({
   permission: "catalog.manage",
   input: z.object({ id, ...names, expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }): Promise<CategoryItem> {
+  async run({ tx, input, lockBusiness }): Promise<CategoryItem> {
+    await lockBusiness(LOCK);
     const tree = await loadTree(tx);
-    const row = tree.get(input.id);
+    const row = tree.rows.get(input.id);
     if (!row || row.archivedAt !== null) throw new NotFoundError();
     await updateVersioned(tx.rtCategory, { id: input.id, archivedAt: null }, input.expectedVersion, {
       nameAr: input.nameAr,
@@ -165,9 +189,10 @@ export const moveCategory = defineAction({
   permission: "catalog.manage",
   input: z.object({ id, parentId: id.nullable(), expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }): Promise<CategoryItem> {
+  async run({ tx, input, lockBusiness }): Promise<CategoryItem> {
+    await lockBusiness(LOCK);
     const tree = await loadTree(tx);
-    const row = tree.get(input.id);
+    const row = tree.rows.get(input.id);
     if (!row || row.archivedAt !== null) throw new NotFoundError();
     await updateVersioned(tx.rtCategory, { id: input.id, archivedAt: null }, input.expectedVersion, { parentId: input.parentId });
     if (input.parentId !== null && isSelfOrDescendant(tree, input.id, input.parentId)) throw new RuleError("INVALID_INPUT");
@@ -184,7 +209,8 @@ export const archiveCategory = defineAction({
   permission: "catalog.manage",
   input: z.object({ id, expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }): Promise<CategoryItem> {
+  async run({ tx, input, lockBusiness }): Promise<CategoryItem> {
+    await lockBusiness(LOCK);
     const row = await tx.rtCategory.findFirst({ where: { id: input.id, archivedAt: null }, select: { id: true } });
     if (!row) throw new NotFoundError();
     await updateVersioned(tx.rtCategory, { id: input.id, archivedAt: null }, input.expectedVersion, { archivedAt: new Date() });
@@ -229,7 +255,8 @@ export const createBrand = defineAction({
   permission: "catalog.manage",
   input: z.object(names).strict(),
   writes: true,
-  async run({ actor, tx, input }): Promise<BrandItem> {
+  async run({ actor, tx, input, lockBusiness }): Promise<BrandItem> {
+    await lockBusiness(LOCK);
     await assertFreeBrandName(tx, input.nameAr, null);
     return tx.rtBrand.create({
       data: { businessId: actor.businessId, nameAr: input.nameAr, nameCkb: input.nameCkb, nameEn: input.nameEn },
@@ -245,7 +272,8 @@ export const renameBrand = defineAction({
   permission: "catalog.manage",
   input: z.object({ id, ...names, expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }): Promise<BrandItem> {
+  async run({ tx, input, lockBusiness }): Promise<BrandItem> {
+    await lockBusiness(LOCK);
     const row = await tx.rtBrand.findFirst({ where: { id: input.id, archivedAt: null }, select: { id: true } });
     if (!row) throw new NotFoundError();
     await updateVersioned(tx.rtBrand, { id: input.id, archivedAt: null }, input.expectedVersion, {
@@ -259,12 +287,14 @@ export const renameBrand = defineAction({
   audit: (input) => brandAudit(input.id, { input }),
 });
 
+/** Deliberately allowed while products use the brand; product create/update (Task 5) rejects an archived brandId. */
 export const archiveBrand = defineAction({
   name: "catalog.brand.archive",
   permission: "catalog.manage",
   input: z.object({ id, expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }): Promise<BrandItem> {
+  async run({ tx, input, lockBusiness }): Promise<BrandItem> {
+    await lockBusiness(LOCK);
     const row = await tx.rtBrand.findFirst({ where: { id: input.id, archivedAt: null }, select: { id: true } });
     if (!row) throw new NotFoundError();
     await updateVersioned(tx.rtBrand, { id: input.id, archivedAt: null }, input.expectedVersion, { archivedAt: new Date() });
