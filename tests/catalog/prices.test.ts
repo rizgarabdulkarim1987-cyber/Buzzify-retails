@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { archiveProduct, archiveUnit, createProduct } from "@/server/catalog/products";
 import { getPriceAt, listPriceLists, listUnitPrices, setPrice, suggestedUnitPrice } from "@/server/catalog/prices";
-import { resolvePrice } from "@/server/catalog/price-core";
+import { mapPriceConstraintError, resolvePrice } from "@/server/catalog/price-core";
 import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createPlan } from "../helpers/fixtures";
 
@@ -70,6 +70,20 @@ async function lists(w: Shop) {
   return Object.fromEntries(r.value.map((l) => [l.kind, l.id])) as { DEFAULT: string; WHOLESALE: string };
 }
 
+/** Inserts a price row directly (setPrice refuses back-dated prices, so history is seeded). */
+async function seed(w: Shop, unitId: string, kind: "DEFAULT" | "WHOLESALE", currency: "IQD" | "USD", amountMinor: bigint, validFrom: Date, validTo: Date | null = null) {
+  await db.rtPriceList.createMany({
+    data: [
+      { businessId: w.business.id, kind: "DEFAULT", name: "d" },
+      { businessId: w.business.id, kind: "WHOLESALE", name: "w" },
+    ],
+    skipDuplicates: true,
+  });
+  const list = await db.rtPriceList.findFirstOrThrow({ where: { businessId: w.business.id, kind } });
+  const row = await db.rtPrice.create({ data: { businessId: w.business.id, unitId, priceListId: list.id, currency, amountMinor, validFrom, validTo } });
+  return { ok: true as const, value: { id: row.id } };
+}
+
 type Tracked<T> = { promise: Promise<T>; done: () => boolean };
 function tracked<T>(p: Promise<T>): Tracked<T> {
   let settled = false;
@@ -84,7 +98,7 @@ describe("dated prices", () => {
   it("changing a price closes the old row and the old date still returns the old price", async () => {
     const { a } = await world();
     const p = await juice(a);
-    const first = await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(10) }, a.as("manager"));
+    const first = await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(10));
     expect(first).toMatchObject({ ok: true });
     const l = await lists(a);
     const second = await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 750n }, a.as("owner"));
@@ -110,7 +124,7 @@ describe("dated prices", () => {
   it("a historical instant before the first price returns null", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(3) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(3));
     const l = await lists(a);
     const r = await getPriceAt({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", at: daysAgo(30) }, a.as("cashier"));
     expect(r).toEqual({ ok: true, value: null });
@@ -121,7 +135,7 @@ describe("dated prices", () => {
   it("a future validFrom schedules a price and the current one stays until then", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(2) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(2));
     const l = await lists(a);
     const when = daysAhead(7);
     const sched = await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 900n, validFrom: when }, a.as("manager"));
@@ -159,7 +173,7 @@ describe("dated prices", () => {
     const { a } = await world();
     const p = await juice(a);
     const start = daysAgo(5);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: start }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, start);
     const l = await lists(a);
     for (const validFrom of [daysAgo(6), start]) {
       const r = await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 1n, validFrom }, a.as("manager"));
@@ -173,10 +187,70 @@ describe("dated prices", () => {
     expect(await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 1n, validFrom: daysAhead(365 * 20) }, a.as("manager"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
   });
 
+  it("a price can not be back-dated: history is never rewritten", async () => {
+    const { a } = await world();
+    const p = await juice(a);
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(10));
+    const l = await lists(a);
+    const base = { unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD" as const, amountMinor: 900n };
+    const r = await setPrice({ ...base, validFrom: daysAgo(5) }, a.as("manager"));
+    expect(r).toMatchObject({ ok: false, code: "INVALID_INPUT", details: { reason: "IN_PAST" } });
+    const at = (d: Date) => getPriceAt({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", at: d }, a.as("cashier"));
+    expect(await at(daysAgo(3))).toMatchObject({ ok: true, value: { amountMinor: 500n } });
+    expect(await db.rtPrice.findMany({ where: { unitId: p.baseUnitId } })).toMatchObject([{ amountMinor: 500n, validTo: null, version: 1 }]);
+
+    // A moment ago (UI latency, clock skew) is clamped to now: the old price keeps the past.
+    const t0 = Date.now();
+    const ok = await setPrice({ ...base, validFrom: new Date(t0 - 30_000) }, a.as("manager"));
+    expect(ok).toMatchObject({ ok: true });
+    if (!ok.ok) return;
+    expect(ok.value.validFrom.getTime()).toBeGreaterThanOrEqual(t0);
+    expect(await at(new Date(t0 - 20_000))).toMatchObject({ ok: true, value: { amountMinor: 500n } });
+    // Just over a minute ago is refused.
+    expect(await setPrice({ ...base, amountMinor: 1n, validFrom: new Date(Date.now() - 61_000) }, a.as("manager"))).toMatchObject({ ok: false, code: "INVALID_INPUT", details: { reason: "IN_PAST" } });
+  });
+
+  it("a first price can not be back-dated either", async () => {
+    const { a } = await world();
+    const p = await juice(a);
+    const r = await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, a.as("manager"));
+    expect(r).toMatchObject({ ok: false, code: "INVALID_INPUT", details: { reason: "IN_PAST" } });
+    expect(await db.rtPrice.count({ where: { businessId: a.business.id } })).toBe(0);
+  });
+
+  it("rapid consecutive writes with no validFrom all work, even when the latest row starts a few ms ahead", async () => {
+    const { a } = await world();
+    const p = await juice(a);
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 1n, new Date(Date.now() + 3));
+    const l = await lists(a);
+    for (const amountMinor of [2n, 3n, 4n]) {
+      expect(await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor }, a.as("manager"))).toMatchObject({ ok: true });
+    }
+    const rows = await db.rtPrice.findMany({ where: { unitId: p.baseUnitId }, orderBy: { validFrom: "asc" } });
+    expect(rows.map((r) => r.amountMinor)).toEqual([1n, 2n, 3n, 4n]);
+    expect(rows.filter((r) => r.validTo === null)).toHaveLength(1);
+  });
+
+  it("a database constraint violation becomes VERSION_CONFLICT or INVALID_INPUT, never an internal error", async () => {
+    const { a } = await world();
+    const p = await juice(a);
+    // Corrupt-looking history the application lookup cannot see (closed, but covering the future):
+    // the new open row overlaps it and the EXCLUDE constraint refuses.
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 1n, daysAgo(1), daysAhead(5));
+    expect(await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 2n }, a.as("manager"))).toMatchObject({ ok: false, code: "VERSION_CONFLICT" });
+    expect(await db.rtPrice.count({ where: { unitId: p.baseUnitId } })).toBe(1);
+    // The mapper itself, for the shapes a driver can raise.
+    const exclusion = Object.assign(new Error("conflicting key value violates exclusion constraint"), { cause: { originalCode: "23P01" } });
+    expect(() => mapPriceConstraintError(exclusion)).toThrow(expect.objectContaining({ name: "VersionConflictError" }));
+    expect(() => mapPriceConstraintError({ code: "23514" })).toThrow(expect.objectContaining({ code: "INVALID_INPUT" }));
+    const other = new Error("boom");
+    expect(() => mapPriceConstraintError(other)).toThrow(other);
+  });
+
   it("carton suggestion is factor times the base price per currency and is not applied automatically", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(1));
     const l = await lists(a);
     const sug = (currency: "IQD" | "USD", unitId = p.cartonId) => suggestedUnitPrice({ unitId, currency }, a.as("cashier"));
     expect(await sug("IQD")).toMatchObject({ ok: true, value: { amountMinor: 12_000n, factor: 24, baseAmountMinor: 500n } });
@@ -194,9 +268,9 @@ describe("dated prices", () => {
   it("raising the base price does not change the carton price", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(3) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(3));
     const l = await lists(a);
-    await setPrice({ unitId: p.cartonId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 11_000n, validFrom: daysAgo(3) }, a.as("manager"));
+    await seed(a, p.cartonId, "DEFAULT", "IQD", 11_000n, daysAgo(3));
     await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 650n }, a.as("manager"));
     const carton = await getPriceAt({ unitId: p.cartonId, priceListId: l.DEFAULT, currency: "IQD", at: new Date() }, a.as("cashier"));
     expect(carton).toMatchObject({ ok: true, value: { amountMinor: 11_000n } });
@@ -208,9 +282,9 @@ describe("dated prices", () => {
   it("dinar and dollar prices coexist for one unit", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 1500n, validFrom: daysAgo(2) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 1500n, daysAgo(2));
     const l = await lists(a);
-    expect(await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "USD", amountMinor: 100n, validFrom: daysAgo(2) }, a.as("manager"))).toMatchObject({ ok: true });
+    expect(await seed(a, p.baseUnitId, "DEFAULT", "USD", 100n, daysAgo(2))).toMatchObject({ ok: true });
     // Changing the dinar price leaves the dollar one alone.
     await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 2000n }, a.as("manager"));
     const now = new Date();
@@ -225,12 +299,11 @@ describe("dated prices", () => {
   it("a unit with no wholesale price falls back to the default list", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(2) }, a.as("manager"));
-    const l = await lists(a);
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(2));
     const resolve = (unitId: string, wholesale: boolean, currency: "IQD" | "USD" = "IQD") =>
       db.$transaction((tx) => resolvePrice(tx, { unitId, currency, at: new Date(), wholesale }));
     expect(await resolve(p.baseUnitId, true)).toMatchObject({ amountMinor: 500n, listKind: "DEFAULT" });
-    await setPrice({ unitId: p.baseUnitId, priceListId: l.WHOLESALE, currency: "IQD", amountMinor: 420n, validFrom: daysAgo(1) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "WHOLESALE", "IQD", 420n, daysAgo(1));
     expect(await resolve(p.baseUnitId, true)).toMatchObject({ amountMinor: 420n, listKind: "WHOLESALE" });
     // Retail never looks at the wholesale list.
     expect(await resolve(p.baseUnitId, false)).toMatchObject({ amountMinor: 500n, listKind: "DEFAULT" });
@@ -257,18 +330,18 @@ describe("dated prices", () => {
   it("a stale price edit gives VERSION_CONFLICT", async () => {
     const { a } = await world();
     const p = await juice(a);
-    const first = await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, expectedCurrentPriceId: null }, a.as("manager"));
+    const first = await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, expectedLatestPriceId: null }, a.as("manager"));
     expect(first).toMatchObject({ ok: true });
     if (!first.ok) return;
     const l = await lists(a);
     const base = { unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD" as const };
     // Two people both saw the first price; the second save is stale.
-    const mine = await setPrice({ ...base, amountMinor: 600n, expectedCurrentPriceId: first.value.id }, a.as("manager"));
+    const mine = await setPrice({ ...base, amountMinor: 600n, expectedLatestPriceId: first.value.id }, a.as("manager"));
     expect(mine).toMatchObject({ ok: true });
-    const theirs = await setPrice({ ...base, amountMinor: 700n, expectedCurrentPriceId: first.value.id }, a.as("owner"));
+    const theirs = await setPrice({ ...base, amountMinor: 700n, expectedLatestPriceId: first.value.id }, a.as("owner"));
     expect(theirs).toMatchObject({ ok: false, code: "VERSION_CONFLICT" });
     // "I saw no price yet" is stale as soon as one exists.
-    expect(await setPrice({ ...base, amountMinor: 700n, expectedCurrentPriceId: null }, a.as("owner"))).toMatchObject({ ok: false, code: "VERSION_CONFLICT" });
+    expect(await setPrice({ ...base, amountMinor: 700n, expectedLatestPriceId: null }, a.as("owner"))).toMatchObject({ ok: false, code: "VERSION_CONFLICT" });
     const open = await db.rtPrice.findMany({ where: { unitId: p.baseUnitId, validTo: null } });
     expect(open).toHaveLength(1);
     expect(open[0]).toMatchObject({ amountMinor: 600n });
@@ -284,8 +357,8 @@ describe("price rules, isolation and safety", () => {
     const { a, b } = await world();
     const pa = await juice(a);
     const pb = await juice(b);
-    await setPrice({ unitId: pb.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, b.as("manager"));
-    await setPrice({ unitId: pa.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, a.as("manager"));
+    await seed(b, pb.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(1));
+    await seed(a, pa.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(1));
     const la = await lists(a);
     const lb = await lists(b);
     // A's manager names B's unit, or B's list.
@@ -305,7 +378,7 @@ describe("price rules, isolation and safety", () => {
   it("every write is refused in READ_ONLY, reads still work", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(1));
     const l = await lists(a);
     await db.rtBusiness.update({ where: { id: a.business.id }, data: { status: "SUSPENDED" } });
     expect(await setPrice({ unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD", amountMinor: 900n }, a.as("owner"))).toMatchObject({ ok: false, code: "READ_ONLY" });
@@ -317,7 +390,7 @@ describe("price rules, isolation and safety", () => {
   it("an archived unit, variant or product can not be priced", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(1));
     const l = await lists(a);
     const archived = await archiveUnit({ id: p.cartonId, expectedVersion: 1 }, a.as("manager"));
     expect(archived).toMatchObject({ ok: true });
@@ -335,7 +408,7 @@ describe("price rules, isolation and safety", () => {
     const p = await juice(a);
     expect(await listPriceLists({}, a.as("owner"))).toEqual({ ok: true, value: [] });
     expect(await db.rtPriceList.count({ where: { businessId: a.business.id } })).toBe(0);
-    expect(await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 0n, validFrom: daysAgo(1) }, a.as("manager"))).toMatchObject({ ok: true });
+    expect(await seed(a, p.baseUnitId, "DEFAULT", "IQD", 0n, daysAgo(1))).toMatchObject({ ok: true });
     const listed = await listPriceLists({}, a.as("owner"));
     expect(listed.ok && listed.value.map((x) => x.kind).sort()).toEqual(["DEFAULT", "WHOLESALE"]);
     const l = await lists(a);
@@ -380,7 +453,7 @@ describe("concurrency: one product lock for every price change", () => {
   it("concurrent setPrice on one unit leaves exactly one open period", async () => {
     const { a } = await world();
     const p = await juice(a);
-    await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, a.as("manager"));
+    await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(1));
     const l = await lists(a);
     const base = { unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD" as const };
     const calls = await holdingProductLock(
@@ -401,10 +474,10 @@ describe("concurrency: one product lock for every price change", () => {
   it("two stale editors racing: exactly one wins, the other gets VERSION_CONFLICT", async () => {
     const { a } = await world();
     const p = await juice(a);
-    const first = await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 500n, validFrom: daysAgo(1) }, a.as("manager"));
+    const first = await seed(a, p.baseUnitId, "DEFAULT", "IQD", 500n, daysAgo(1));
     if (!first.ok) throw new Error("setup");
     const l = await lists(a);
-    const base = { unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD" as const, expectedCurrentPriceId: first.value.id };
+    const base = { unitId: p.baseUnitId, priceListId: l.DEFAULT, currency: "IQD" as const, expectedLatestPriceId: first.value.id };
     const calls = await holdingProductLock(
       a,
       p.productId,

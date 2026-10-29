@@ -50,6 +50,11 @@ const LIST_NAMES = { DEFAULT: "الأسعار الافتراضية", WHOLESALE: 
  * concurrency: INSERT ... ON CONFLICT DO NOTHING on the unique (businessId, kind).
  */
 export async function ensureDefaultLists(tx: Tx, businessId: string): Promise<PriceListIds> {
+  // The common case (the lists exist): one cheap read, no INSERT.
+  const existing = await tx.rtPriceList.findMany({ select: { id: true, kind: true } });
+  const have: Partial<PriceListIds> = {};
+  for (const r of existing) have[r.kind] = r.id;
+  if (have.DEFAULT && have.WHOLESALE) return have as PriceListIds;
   await tx.rtPriceList.createMany({
     data: [
       { businessId, kind: "DEFAULT", name: LIST_NAMES.DEFAULT },
@@ -74,8 +79,8 @@ export type PriceInput = {
   /** null: now (the real clock, read after the latest row is found). */
   validFrom: Date | null;
   /**
-   * Stale-edit guard. undefined: none. Otherwise the id of the latest row of the key that the
-   * caller saw (null: it saw no price); anything else gives VERSION_CONFLICT.
+   * Stale-edit guard. undefined: none. Otherwise the id of the NEWEST row of the key (it may be a
+   * scheduled one) that the caller saw (null: it saw no price); anything else gives VERSION_CONFLICT.
    */
   expectedLatestId?: string | null;
 };
@@ -87,45 +92,86 @@ export type AppliedPrice = {
   previousAmountMinor: bigint | null;
 };
 
-/** Where a validFrom may lie: not before 2000 and not more than ten years ahead. */
-export const MIN_VALID_FROM = new Date("2000-01-01T00:00:00Z");
+/** How far ahead a validFrom may be (the past is bounded by PAST_GRACE_MS). */
 export const MAX_VALID_FROM_AHEAD_MS = 10 * 366 * 86_400_000;
+
+/** How far in the past an explicit validFrom may be and still count as "now" (UI latency, clock skew). */
+export const PAST_GRACE_MS = 60_000;
+/** A latest row that starts at most this far ahead of now is treated as "just now" (see applyPrice). */
+export const NUDGE_MS = 5;
+
+function mentions(value: unknown, ...needles: string[]): boolean {
+  const seen = new Set<unknown>();
+  const walk = (x: unknown, depth: number): boolean => {
+    if (depth > 6 || x === null || x === undefined) return false;
+    if (typeof x === "string") return needles.some((n) => x.includes(n));
+    if (typeof x !== "object" || seen.has(x)) return false;
+    seen.add(x);
+    if (x instanceof Error && walk(x.message, depth + 1)) return true;
+    return Object.values(x as Record<string, unknown>).some((c) => walk(c, depth + 1));
+  };
+  return walk(value, 0);
+}
+
+/**
+ * Turns the price table's own constraint refusals into the action's error codes (rethrows anything
+ * else): the EXCLUDE constraint (23P01, overlapping periods: someone else changed this price) is a
+ * VERSION_CONFLICT; the CHECKs (23514: validTo after validFrom, amount >= 0) are INVALID_INPUT.
+ */
+export function mapPriceConstraintError(err: unknown): never {
+  if (mentions(err, "23P01", "RtPrice_no_overlap")) throw new VersionConflictError();
+  if (mentions(err, "23514", "RtPrice_valid_to_after_from", "RtPrice_amount_nonneg")) throw new RuleError("INVALID_INPUT");
+  throw err;
+}
 
 /**
  * Makes `amountMinor` the price of (unit, list, currency) from `validFrom` on: closes the latest
  * period of the key (the open one) at validFrom and opens a new row [validFrom, infinity).
  * Rules (the caller holds the product lock, so the read below cannot go stale):
- * - expectedLatestId set and different from the latest row: VERSION_CONFLICT.
- * - validFrom must be strictly after the latest row's validFrom (INVALID_INPUT otherwise,
- *   details.reason "BEFORE_LATEST"): history is never rewritten and a scheduled row is never
- *   replaced; a later price chains behind it. validFrom null (now) that lands on the very
- *   millisecond the latest row started moves one millisecond on, so two quick edits both work.
- * - No row exists yet: any validFrom is fine (a first price may be back-dated or scheduled).
+ * - History is never rewritten: an explicit validFrom older than now - PAST_GRACE_MS is refused
+ *   (INVALID_INPUT, details.reason IN_PAST), for a first price too. One within the grace window
+ *   is clamped to now. A future validFrom schedules the price. The clock is the server's only.
+ * - expectedLatestId set and different from the latest row's id: VERSION_CONFLICT.
+ * - validFrom must be strictly after the latest row's validFrom (INVALID_INPUT, details.reason
+ *   BEFORE_LATEST), so a scheduled row is never replaced; a later price chains behind it. When the
+ *   price starts "now" and the latest row started at most NUDGE_MS ahead of now (or at the same
+ *   millisecond) the new row starts 1 ms after it instead, so rapid consecutive writes all work.
+ * - A database constraint refusal is mapped by mapPriceConstraintError.
  * Returns what was replaced, for the audit trail.
  */
 export async function applyPrice(tx: Tx, p: PriceInput): Promise<AppliedPrice> {
   if (p.amountMinor < 0n || p.amountMinor > MAX_PRICE_MINOR) throw new RuleError("INVALID_INPUT");
   const key = { unitId: p.unitId, priceListId: p.priceListId, currency: p.currency };
+  const now = new Date();
+  let validFrom = p.validFrom ?? now;
+  if (validFrom.getTime() < now.getTime() - PAST_GRACE_MS) throw new RuleError("INVALID_INPUT", { reason: "IN_PAST" });
+  const immediate = validFrom.getTime() <= now.getTime();
+  if (immediate) validFrom = now;
   const open = await tx.rtPrice.findFirst({
     where: { ...key, validTo: null },
     select: { id: true, validFrom: true, amountMinor: true },
   });
   if (p.expectedLatestId !== undefined && (open?.id ?? null) !== p.expectedLatestId) throw new VersionConflictError();
-  let validFrom = p.validFrom ?? new Date();
-  if (open) {
-    if (p.validFrom === null && open.validFrom.getTime() === validFrom.getTime()) validFrom = new Date(validFrom.getTime() + 1);
-    if (open.validFrom.getTime() >= validFrom.getTime()) throw new RuleError("INVALID_INPUT", { reason: "BEFORE_LATEST" });
-    const { count } = await tx.rtPrice.updateMany({
-      where: { id: open.id, validTo: null },
-      data: { validTo: validFrom, version: { increment: 1 } },
+  try {
+    if (open) {
+      const ahead = open.validFrom.getTime() - validFrom.getTime();
+      if (immediate && ahead >= 0 && ahead <= NUDGE_MS) validFrom = new Date(open.validFrom.getTime() + 1);
+      if (open.validFrom.getTime() >= validFrom.getTime()) throw new RuleError("INVALID_INPUT", { reason: "BEFORE_LATEST" });
+      const { count } = await tx.rtPrice.updateMany({
+        where: { id: open.id, validTo: null },
+        data: { validTo: validFrom, version: { increment: 1 } },
+      });
+      if (count === 0) throw new VersionConflictError();
+    }
+    const row = await tx.rtPrice.create({
+      data: { businessId: p.businessId, ...key, amountMinor: p.amountMinor, validFrom, validTo: null },
+      select: { id: true },
     });
-    if (count === 0) throw new VersionConflictError();
+    return { id: row.id, validFrom, replacedPriceId: open?.id ?? null, previousAmountMinor: open?.amountMinor ?? null };
+  } catch (err) {
+    if (err instanceof RuleError || err instanceof VersionConflictError) throw err;
+    return mapPriceConstraintError(err);
   }
-  const row = await tx.rtPrice.create({
-    data: { businessId: p.businessId, ...key, amountMinor: p.amountMinor, validFrom, validTo: null },
-    select: { id: true },
-  });
-  return { id: row.id, validFrom, replacedPriceId: open?.id ?? null, previousAmountMinor: open?.amountMinor ?? null };
 }
 
 export type ResolvedPrice = {

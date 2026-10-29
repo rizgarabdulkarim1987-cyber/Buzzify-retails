@@ -4,7 +4,6 @@ import { defineAction } from "@/server/framework/action";
 import { NotFoundError, RuleError } from "@/server/framework/errors";
 import {
   MAX_VALID_FROM_AHEAD_MS,
-  MIN_VALID_FROM,
   applyPrice,
   assertCurrencyEnabled,
   derivedUnitPrice,
@@ -24,8 +23,10 @@ import { activeUnit, lockProductOfUnit } from "./products";
  *   unit)) first, the same lock as every other catalog change, so two edits of one unit queue up
  *   and each reads the other's committed rows. That lock is the "lock on the current row": it also
  *   covers a missing row (a first price), which a row lock could not.
- * - validFrom omitted = now, from the server clock only (no clock parameter). The accepted range is
- *   2000-01-01 to ten years ahead (INVALID_INPUT outside it).
+ * - validFrom omitted = now, from the server clock only (no clock parameter). History is never
+ *   rewritten: an explicit validFrom older than 60 s is refused (INVALID_INPUT, reason IN_PAST),
+ *   for a first price too; one within the last 60 s is clamped to now; a future one (at most ten
+ *   years ahead) schedules the price.
  * - SCHEDULING RULE. Per (unit, list, currency) the rows form one chain. The latest row is the
  *   open one (validTo null); it is either current or, if its validFrom is in the future, scheduled.
  *   A new price must start strictly AFTER the latest row's validFrom, else INVALID_INPUT with
@@ -37,12 +38,14 @@ import { activeUnit, lockProductOfUnit } from "./products";
  *   has started. A first price (no row yet) may be back-dated or scheduled freely.
  * - Amount 0 is allowed (a free item, a giveaway; the database allows >= 0). Negative or above
  *   MAX_PRICE_MINOR: INVALID_INPUT. The currency must be enabled for the business.
- * - Stale-edit guard: the optional expectedCurrentPriceId is the id of the latest price row of this
- *   (unit, list, currency) that the editor was looking at (null: "there was no price"). If another
- *   change happened since, VERSION_CONFLICT and nothing is written. Omitted: no guard, the last
- *   save simply becomes a new dated row (nothing is ever overwritten).
- * - The list is named by priceListId or, for a business that has no lists yet, by listKind; the
- *   lists are created on demand under the lock (ensureDefaultLists). Reads never create anything.
+ * - Stale-edit guard: the optional expectedLatestPriceId is the id of the NEWEST row (it may be a
+ *   scheduled one) of this (unit, list, currency) that the editor was looking at, null meaning
+ *   "there was no price". The UI must send the newest row's id from listUnitPrices (the first row
+ *   of that key). If another change happened since, VERSION_CONFLICT and nothing is written.
+ *   Omitted: no guard, the last save simply becomes a new dated row (nothing is overwritten).
+ * - The list is named by priceListId or by listKind (either one, always accepted: listKind is how
+ *   a business with no lists yet names one). The two lists are created on demand under the lock
+ *   (ensureDefaultLists reads first and only inserts when one is missing). Reads create nothing.
  * - The unit must be active, its variant and product too. Ids of other businesses are NOT_FOUND.
  */
 
@@ -57,7 +60,7 @@ const setPriceInput = z
     currency,
     amountMinor: money,
     validFrom: z.date().optional(),
-    expectedCurrentPriceId: id.nullable().optional(),
+    expectedLatestPriceId: id.nullable().optional(),
   })
   .strict()
   .refine((v) => (v.priceListId === undefined) !== (v.listKind === undefined));
@@ -80,10 +83,7 @@ export const setPrice = defineAction({
     await lockProductOfUnit(tx, lockBusiness, input.unitId);
     const unit = await tx.rtUnit.findFirst({ where: { id: input.unitId, ...activeUnit }, select: { id: true } });
     if (!unit) throw new NotFoundError();
-    if (input.validFrom) {
-      const t = input.validFrom.getTime();
-      if (t < MIN_VALID_FROM.getTime() || t > Date.now() + MAX_VALID_FROM_AHEAD_MS) throw new RuleError("INVALID_INPUT");
-    }
+    if (input.validFrom && input.validFrom.getTime() > Date.now() + MAX_VALID_FROM_AHEAD_MS) throw new RuleError("INVALID_INPUT");
     await assertCurrencyEnabled(tx, input.currency);
     const lists = await ensureDefaultLists(tx, actor.businessId);
     let priceListId: string;
@@ -100,7 +100,7 @@ export const setPrice = defineAction({
       currency: input.currency,
       amountMinor: input.amountMinor,
       validFrom: input.validFrom ?? null,
-      expectedLatestId: input.expectedCurrentPriceId,
+      expectedLatestId: input.expectedLatestPriceId,
     });
     return { ...applied, amountMinor: input.amountMinor };
   },
