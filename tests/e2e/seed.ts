@@ -18,8 +18,11 @@ import {
   LONG_BRANCH,
   LONG_BUSINESS,
   LONG_OWNER,
+  LONG_PRODUCT_BARCODE,
+  LONG_PRODUCT_NAME,
   OWNER,
   PASSWORD,
+  SUGAR,
   TERMINAL_A,
   E2E_SECRET,
 } from "./fixtures";
@@ -101,6 +104,32 @@ async function main() {
   // One terminal in branch A (no action for terminals until a later task).
   const location = await db.rtLocation.findFirstOrThrow({ where: { businessId, branchId: branchA.id } });
   await db.rtTerminal.create({ data: { businessId, branchId: branchA.id, locationId: location.id, name: TERMINAL_A } });
+
+  // Two catalog products for the catalog screens (created through the real action, as the owner).
+  const { createProduct } = await import("@/server/catalog/products");
+  const seedProduct = async (input: Record<string, unknown>, k: string) => {
+    const made = await createProduct(input, { userId: ownerId, businessId, idempotencyKey: k });
+    if (!made.ok) throw new Error(`seeding a product failed: ${JSON.stringify(made)}`);
+  };
+  await seedProduct(
+    {
+      nameAr: SUGAR.nameAr,
+      trackingMode: "BATCH",
+      tracksExpiry: true,
+      expiryAlertDays: 30,
+      baseUnit: { name: "قطعة", barcodes: [SUGAR.barcode] },
+      price: { currency: "IQD", amountMinor: SUGAR.priceIqd },
+    },
+    "e2e-seed-sugar",
+  );
+  await seedProduct(
+    {
+      nameAr: LONG_PRODUCT_NAME,
+      baseUnit: { name: "قطعة", barcodes: [LONG_PRODUCT_BARCODE] },
+      price: { currency: "IQD", amountMinor: "3500" },
+    },
+    "e2e-seed-long",
+  );
 
   await db.$disconnect();
   console.log("e2e seed ready");

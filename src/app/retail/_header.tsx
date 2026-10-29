@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Locale, Messages } from "@/messages";
-import { BranchIcon, SignOutIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
+import { BranchIcon, PackageIcon, SignOutIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { signOut } from "../session-actions";
 
@@ -30,6 +30,9 @@ export function ShellHeader({ locale, t, business, branch, terminal, user }: Pro
         </div>
         <div className="bar-actions">
           <LocaleSwitcher locale={locale} label={t.locale.label} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} />
+          <Link href="/retail/catalog" className="bar-button" aria-label={t.catalog.title} title={t.catalog.title} data-testid="nav-catalog">
+            <PackageIcon />
+          </Link>
           <Link href="/retail/select" className="bar-button" aria-label={t.header.switchBranch} title={t.header.switchBranch}>
             <SwitchIcon />
           </Link>

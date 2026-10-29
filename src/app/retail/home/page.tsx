@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { can } from "@/server/domain/permissions";
 import { getI18n } from "../../_lib/i18n";
+import { PackageIcon } from "../../_ui/icons";
 import { StateBlock } from "../../_ui/state";
 import { requireShell } from "../_shell";
 
@@ -36,6 +37,13 @@ export default async function RetailHomePage() {
           ) : null}
         </div>
       </div>
+      <nav aria-label={t.catalog.title} className="home-links">
+        <Link href="/retail/catalog" className="business-link" data-testid="open-catalog">
+          <PackageIcon />
+          <strong>{t.catalog.title}</strong>
+          <span className="muted">{t.catalog.homeCardBody}</span>
+        </Link>
+      </nav>
       <StateBlock
         kind="empty"
         title={t.home.emptyTitle}

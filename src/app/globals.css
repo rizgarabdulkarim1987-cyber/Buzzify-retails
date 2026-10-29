@@ -886,3 +886,465 @@ textarea.input {
   flex: 0 1 auto;
   font-weight: 600;
 }
+
+/* Catalog --------------------------------------------------------------------------------------- */
+
+.title-row > h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.catalog-add {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.catalog {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.catalog-tools {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.catalog-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.input-icon {
+  position: relative;
+}
+
+.input-icon .icon {
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  inset-block-start: 50%;
+  translate: 0 -50%;
+  color: var(--color-ink-3);
+  pointer-events: none;
+}
+
+.input-icon .input {
+  padding-inline-start: 2.5rem;
+}
+
+.catalog-list[aria-busy="true"] {
+  opacity: 0.6;
+}
+
+.page-narrow {
+  max-width: 44rem;
+}
+
+.catalog-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catalog-row-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-3);
+  align-items: center;
+  min-height: 3.5rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+  color: var(--color-ink);
+  text-decoration: none;
+  transition: border-color var(--duration) var(--ease-out);
+}
+
+.catalog-row-link:hover {
+  border-color: var(--color-accent-line);
+  color: var(--color-ink);
+}
+
+.catalog-row[data-archived="true"] .catalog-row-link {
+  background: var(--color-panel);
+}
+
+/* Two lines at most, then an ellipsis; a name with no spaces still breaks inside the row. */
+.catalog-row-name {
+  grid-column: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.catalog-row-meta {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+}
+
+.catalog-sku {
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+.catalog-row-price {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.catalog-row-price[data-empty="true"] {
+  color: var(--color-ink-3);
+  font-weight: 400;
+  font-size: var(--text-sm);
+}
+
+.catalog-more {
+  display: flex;
+  justify-content: center;
+}
+
+/* Quick entry ----------------------------------------------------------------------------------- */
+
+.qe {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.qe-barcode {
+  font-size: var(--text-lg);
+  letter-spacing: 0.02em;
+}
+
+.qe-combo-box {
+  position: relative;
+}
+
+.qe-options {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 100%;
+  z-index: 5;
+  display: grid;
+  gap: 0;
+  max-height: 15rem;
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+  list-style: none;
+}
+
+.qe-options li {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.qe-options li[data-active="true"] {
+  background: var(--color-accent-soft);
+}
+
+.qe-options li[data-kind="create"] {
+  color: var(--color-accent-hover);
+  font-weight: 600;
+}
+
+.qe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* A fixed slot: a message appearing never moves the fields a scanner is about to fill. */
+.qe-status {
+  min-height: 3.25rem;
+}
+
+.qe-added h2 {
+  margin-block-end: var(--space-3);
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+.qe-added-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qe-added-link {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  text-decoration: none;
+}
+
+.qe-added-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.qe-added-meta {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* Product screen -------------------------------------------------------------------------------- */
+
+.product-note {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.narrow {
+  max-width: 12rem;
+}
+
+.product-variants,
+.unit-list {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.variant {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.variant-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.variant-head h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-lg);
+}
+
+.variant-sku {
+  unicode-bidi: isolate;
+}
+
+.unit {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.unit[data-archived="true"] {
+  background: var(--color-panel);
+}
+
+.unit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.unit .unit-title,
+.unit-block h5,
+.add-unit h4 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+.unit .unit-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.unit-block {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.unit-edit,
+.inline-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.unit-edit .field,
+.inline-add .field {
+  flex: 1 1 10rem;
+}
+
+.unit-edit .narrow {
+  flex: 0 1 8rem;
+}
+
+.barcode-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.barcode-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+  border-block-end: 1px solid var(--color-line);
+}
+
+.barcode-list li[data-archived="true"] {
+  color: var(--color-ink-3);
+  text-decoration: line-through;
+}
+
+.barcode-code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+  unicode-bidi: isolate;
+}
+
+.btn-small {
+  padding-inline: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.btn-danger {
+  border-color: var(--color-danger-line);
+  color: var(--color-danger);
+}
+
+.btn-danger:hover {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.btn-danger-solid,
+.btn-danger-solid:hover {
+  border-color: var(--color-danger);
+  background: var(--color-danger);
+  color: var(--color-surface);
+}
+
+.confirm {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger-line);
+  border-radius: var(--radius);
+  background: var(--color-danger-soft);
+  font-size: var(--text-sm);
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.price-row {
+  display: grid;
+  gap: var(--space-2);
+  padding-block: var(--space-3);
+  border-block-end: 1px solid var(--color-line);
+}
+
+.price-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.price-currency {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.price-amount {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-lg);
+}
+
+.price-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: var(--space-3);
+}
+
+.price-form-actions,
+.price-form .hint {
+  grid-column: 1 / -1;
+}
+
+.price-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.price-with-currency {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.product-danger {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.home-links {
+  display: grid;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+}
+
+.home-links .business-link .muted {
+  flex: 1 1 12rem;
+  min-width: 0;
+}

@@ -1,6 +1,6 @@
 /* Seed data shared by tests/e2e/seed.ts and the e2e specs (test-only values). */
 
-export const E2E_PORT = 3100;
+export const E2E_PORT = Number(process.env.E2E_PORT ?? 3100);
 export const E2E_DATABASE_URL =
   process.env.E2E_DATABASE_URL ?? "postgresql://postgres:postgres@localhost:54329/retails_e2e";
 export const E2E_SECRET = "e2e-secret-e2e-secret-e2e-secret-0123";
@@ -20,3 +20,11 @@ export const TERMINAL_A = "كاشير ١";
 /** Exactly 80 characters, Arabic with Arabic-Indic digits, no edge spaces. */
 export const LONG_BUSINESS = "مجموعة أسواق الرافدين الكبرى للمواد الغذائية والمنزلية والإلكترونيات ٢٠٢٦ بغداد ".repeat(2).slice(0, 79) + "ع";
 export const LONG_BRANCH = "فرع شارع فلسطين قرب ساحة بيروت مقابل المجمع التجاري الكبير";
+
+/** Catalog rows seeded for the business (tests/e2e/catalog.spec.ts). */
+export const SUGAR = { nameAr: "سكر ناعم ١ كغم", barcode: "6281000000017", priceIqd: "1250" };
+/** Exactly 120 characters, Arabic, no edge spaces. */
+export const LONG_PRODUCT_NAME = (
+  "علبة حليب مجفف كامل الدسم مدعمة بالفيتامينات والمعادن مناسبة للأطفال والكبار تحفظ في مكان بارد وجاف بعيدا عن أشعة الشمس المباشرة والرطوبة العالية جدا "
+).repeat(2).slice(0, 119) + "ا";
+export const LONG_PRODUCT_BARCODE = "6281000000024";

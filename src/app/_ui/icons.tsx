@@ -94,3 +94,18 @@ export const InboxIcon = () => (
     <path d="M4 13.5V18a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 18v-4.5h-4.5l-1 2h-5l-1-2z" />
   </Icon>
 );
+
+export const SearchIcon = () => (
+  <Icon>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="m20 20-4.2-4.2" />
+  </Icon>
+);
+
+export const PackageIcon = () => (
+  <Icon>
+    <path d="m12 3 8 4.2v9.6L12 21l-8-4.2V7.2z" />
+    <path d="m4 7.2 8 4.3 8-4.3" />
+    <path d="M12 11.5V21" />
+  </Icon>
+);
