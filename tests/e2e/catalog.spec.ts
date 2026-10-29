@@ -209,3 +209,35 @@ test("digits in any script work, a past price date is refused, an archived produ
   await expect(page.getByTestId("product-save")).toBeVisible();
   await expect(page.getByTestId("product-unarchive")).toHaveCount(0);
 });
+
+test("a change made while the page data is still reloading never uses the old version", async ({ page }) => {
+  await signIn(page, OWNER.email);
+  await page.goto("/retail/catalog/new");
+  await expect(page.getByTestId("qe-barcode")).toBeFocused();
+  await page.keyboard.type("7200000000018");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("منتج سباق النسخ");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("1000");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("qe-added-item")).toHaveCount(1);
+  await page.getByTestId("qe-added-item").getByRole("link").click();
+  await expect(page.getByTestId("product-name-ar")).toHaveValue("منتج سباق النسخ");
+
+  // Slow down the page-data reload (the RSC request after a change), not the change itself.
+  await page.route("**/*", async (route) => {
+    const h = route.request().headers();
+    if (h["rsc"] === "1" && !h["next-action"]) await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+
+  await page.getByTestId("product-name-ar").fill("منتج سباق النسخ ٢");
+  await page.getByTestId("product-save").click();
+  await expect(page.getByText(ar.catalog.product.saved)).toBeVisible();
+  // Right away, before the reload lands: archive. It must wait for the new version, not fail as stale.
+  await page.getByTestId("product-archive").click();
+  await page.getByRole("button", { name: ar.catalog.product.confirm }).click();
+  await expect(page.getByTestId("product-unarchive")).toBeVisible();
+  await expect(page.getByText(ar.errors.VERSION_CONFLICT)).toHaveCount(0);
+});

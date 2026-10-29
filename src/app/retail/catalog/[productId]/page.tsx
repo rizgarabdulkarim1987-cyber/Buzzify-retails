@@ -91,6 +91,7 @@ export default async function ProductPage({ params, searchParams }: { params: Pa
     expiryAlertDays: p.expiryAlertDays,
     soldByWeight: p.soldByWeight,
     archived: p.archivedAt !== null,
+    isTestData: p.isTestData,
     variants: await Promise.all(
       p.variants.map(async (v) => ({
         id: v.id,

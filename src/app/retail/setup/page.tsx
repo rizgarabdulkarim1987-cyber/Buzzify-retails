@@ -121,6 +121,7 @@ export default async function SetupPage() {
                 testProducts={overview.value.catalog.testProducts}
                 canImport={role !== null && can(role, "catalog.import")}
                 canManage={role !== null && can(role, "catalog.manage")}
+                canRemoveTrial={role !== null && can(role, "catalog.manage") && can(role, "staff.manage")}
                 disabled={readOnly}
                 t={formT}
               />

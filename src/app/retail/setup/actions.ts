@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getSessionUserId } from "@/server/auth/auth";
 import { IdempotencyMismatchError, InternalActionError, type ErrorCode } from "@/server/framework/errors";
-import { archiveTestProducts } from "@/server/catalog/products";
+import { removeTestProducts } from "@/server/catalog/products";
 import { completeSetupStep } from "@/server/setup/progress";
 import { isId } from "../../_lib/workplace";
 
@@ -83,18 +83,18 @@ export async function submitSetupStep(_prev: SetupStepState, formData: FormData)
   return { status: "saved" };
 }
 
-export type TrialArchiveState = { status: "archived"; count: number } | { status: "failed"; code: ErrorCode | "INTERNAL" };
+export type TrialRemoveState = { status: "removed"; count: number } | { status: "failed"; code: ErrorCode | "INTERNAL" };
 
-/** Setup step 4: archives every trial item (isTestData) of the business before launch. */
-export async function archiveTrialItems(key: string, business: string): Promise<TrialArchiveState> {
+/** Setup step 4: deletes every trial item (isTestData) of the business before launch, freeing its barcodes and SKUs. */
+export async function removeTrialItems(key: string, business: string): Promise<TrialRemoveState> {
   const userId = await getSessionUserId(await headers());
   if (!userId) return { status: "failed", code: "FORBIDDEN" };
   if (!isId(business)) return { status: "failed", code: "INVALID_INPUT" };
   try {
-    const result = await archiveTestProducts({}, { userId, businessId: business, idempotencyKey: key });
+    const result = await removeTestProducts({}, { userId, businessId: business, idempotencyKey: key });
     if (!result.ok) return { status: "failed", code: result.code };
     revalidatePath("/retail/setup");
-    return { status: "archived", count: result.value.archived };
+    return { status: "removed", count: result.value.removed };
   } catch (err) {
     if (err instanceof IdempotencyMismatchError) return { status: "failed", code: "IDEMPOTENCY_MISMATCH" };
     if (err instanceof InternalActionError) return { status: "failed", code: "INTERNAL" };

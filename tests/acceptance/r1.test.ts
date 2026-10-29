@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { readdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { setBusinessStatus } from "@/server/admin/lifecycle";
-import * as importModule from "@/server/catalog/import/actions";
 import {
   MAX_BASE64_LENGTH,
   commitImport,
@@ -12,14 +14,9 @@ import {
   stageImport,
   validateImport,
 } from "@/server/catalog/import/actions";
-import * as pricesModule from "@/server/catalog/prices";
 import { getPriceAt, setPrice } from "@/server/catalog/prices";
-import * as productsModule from "@/server/catalog/products";
-import { addBarcode, addUnit, addVariant, archiveBarcode, archiveTestProducts, createProduct, getProduct, updateProduct } from "@/server/catalog/products";
-import * as searchModule from "@/server/catalog/search";
+import { addBarcode, addUnit, addVariant, archiveBarcode, createProduct, getProduct, updateProduct } from "@/server/catalog/products";
 import { searchCatalog } from "@/server/catalog/search";
-import * as contextModule from "@/server/catalog/context";
-import * as taxonomyModule from "@/server/catalog/taxonomy";
 import { actionInfoOf, type ActionMeta } from "@/server/framework/action";
 import { gateOf } from "@/server/framework/gate";
 import { useTestDb } from "../helpers/db";
@@ -510,7 +507,7 @@ const SAMPLES: Record<string, unknown> = {
   "catalog.product.update": { id: FAKE, expectedVersion: 1, nameAr: "صنف" },
   "catalog.product.archive": { id: FAKE, expectedVersion: 1 },
   "catalog.product.unarchive": { id: FAKE, expectedVersion: 1 },
-  "catalog.product.archiveTestData": {},
+  "catalog.product.removeTestData": {},
   "catalog.variant.add": { productId: FAKE, options: { المقاس: "L" }, baseUnit: { name: "حبة", barcodes: [] } },
   "catalog.variant.archive": { variantId: FAKE, expectedVersion: 1 },
   "catalog.unit.add": { variantId: FAKE, name: "كرتون", factor: 12, barcodes: [] },
@@ -525,9 +522,9 @@ const SAMPLES: Record<string, unknown> = {
   "catalog.import.delete": { batchId: FAKE },
   "catalog.import.preset.save": { name: "تخطيط", mapping: MAPPING },
   "catalog.import.preset.delete": { id: FAKE },
-  // The plain wrappers (several transactions, each a defined action) below.
+  // The plain wrappers (several transactions, each a defined action), found below.
   commitImport: { batchId: FAKE, onChange: "SKIP" },
-  archiveTestProducts: {},
+  removeTestProducts: {},
 };
 
 function sampleInput(name: string): unknown {
@@ -537,12 +534,23 @@ function sampleInput(name: string): unknown {
 
 type WriteAction = { name: string; allowWhenReadOnly: boolean; call: (raw: unknown, meta: ActionMeta) => Promise<{ ok: boolean }> };
 
-const MODULES = [taxonomyModule, productsModule, pricesModule, importModule, searchModule, contextModule];
+/** Every source module under src/server/catalog (a new file is picked up without editing this test). */
+const CATALOG_DIR = fileURLToPath(new URL("../../src/server/catalog", import.meta.url));
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) return sourceFiles(full);
+    return /\.tsx?$/.test(e.name) && !/\.(test|d)\.tsx?$/.test(e.name) ? [full] : [];
+  });
+}
+const MODULES: { file: string; exports: Record<string, unknown> }[] = await Promise.all(
+  sourceFiles(CATALOG_DIR).map(async (file) => ({ file: relative(CATALOG_DIR, file), exports: (await import(file)) as Record<string, unknown> })),
+);
 
 function writeActions(): WriteAction[] {
   const out: WriteAction[] = [];
   for (const mod of MODULES) {
-    for (const value of Object.values(mod)) {
+    for (const value of Object.values(mod.exports)) {
       const info = actionInfoOf(value);
       if (info?.writes) {
         out.push({ name: info.name, allowWhenReadOnly: info.allowWhenReadOnly, call: value as WriteAction["call"] });
@@ -553,8 +561,32 @@ function writeActions(): WriteAction[] {
   return out.sort((x, y) => x.name.localeCompare(y.name));
 }
 
-/** Exported functions that run defined actions in a loop (resumable bulk work): checked by hand. */
-const PLAIN_WRAPPERS: [string, (raw: unknown, meta: ActionMeta) => Promise<{ ok: boolean }>][] = [
-  ["commitImport", commitImport],
-  ["archiveTestProducts", archiveTestProducts],
-];
+/**
+ * Exported functions that run defined actions in a loop (resumable bulk work, keyed from the
+ * caller's idempotency key): any exported plain function whose body reads `idempotencyKey`.
+ * Each must have a sample, so it is checked like the actions.
+ */
+function plainWrappers(): [string, (raw: unknown, meta: ActionMeta) => Promise<{ ok: boolean }>][] {
+  const out: [string, (raw: unknown, meta: ActionMeta) => Promise<{ ok: boolean }>][] = [];
+  for (const mod of MODULES) {
+    for (const [name, value] of Object.entries(mod.exports)) {
+      if (typeof value !== "function" || actionInfoOf(value)) continue;
+      if (!value.toString().includes("idempotencyKey")) continue;
+      sampleInput(name);
+      out.push([name, value as (raw: unknown, meta: ActionMeta) => Promise<{ ok: boolean }>]);
+    }
+  }
+  return out.sort(([x], [y]) => x.localeCompare(y));
+}
+const PLAIN_WRAPPERS = plainWrappers();
+
+describe("the enumeration itself", () => {
+  it("finds every catalog module, its writes and its plain wrappers", () => {
+    const files = MODULES.map((m) => m.file.replaceAll("\\", "/"));
+    for (const f of ["products.ts", "prices.ts", "taxonomy.ts", "search.ts", "context.ts", "import/actions.ts"]) expect(files).toContain(f);
+    expect(PLAIN_WRAPPERS.map(([n]) => n)).toEqual(["commitImport", "removeTestProducts"]);
+    const names = new Set(writeActions().map((w) => w.name));
+    // Every sample is used: a renamed or removed action does not leave a stale entry.
+    for (const k of Object.keys(SAMPLES)) expect(names.has(k) || PLAIN_WRAPPERS.some(([n]) => n === k), k).toBe(true);
+  });
+});

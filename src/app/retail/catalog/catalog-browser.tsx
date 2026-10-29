@@ -196,6 +196,11 @@ export function CatalogBrowser({ locale, t, canManage, categories, brands, initi
                   {hit.tracksExpiry ? <span className="badge" data-tone="warn">{t.catalog.list.badgeExpiry}</span> : null}
                   {hit.soldByWeight ? <span className="badge">{t.catalog.list.badgeLoose}</span> : null}
                   {hit.archived ? <span className="badge" data-tone="danger">{t.catalog.list.archived}</span> : null}
+                  {hit.isTestData ? (
+                    <span className="badge" data-tone="warn" data-testid="catalog-row-trial">
+                      {t.catalog.list.trial}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="catalog-row-price" data-testid="catalog-row-price" data-empty={hit.unitPrice ? undefined : "true"}>
                   {hit.unitPrice

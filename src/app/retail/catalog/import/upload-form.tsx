@@ -28,7 +28,7 @@ function readBase64(file: File): Promise<string> {
  * Picks a .csv/.xlsx file, reads it in the browser and stages it (the server parses it; the bytes
  * themselves are never stored). On success the wizard of the new batch opens.
  */
-export function UploadForm({ t, fromSetup }: { t: Messages; fromSetup: boolean }) {
+export function UploadForm({ t, fromSetup, trialOption }: { t: Messages; fromSetup: boolean; /** Shown only from setup, to staff.manage holders. */ trialOption: boolean }) {
   const ti = t.catalog.import;
   const router = useRouter();
   const hydrated = useHydrated();
@@ -53,7 +53,7 @@ export function UploadForm({ t, fromSetup }: { t: Messages; fromSetup: boolean }
         setError(ti.readFailed);
         return;
       }
-      const r = await stageImportAction(key.current, { fileName: file.name, contentBase64: content, isTestData: fromSetup && trial });
+      const r = await stageImportAction(key.current, { fileName: file.name, contentBase64: content, isTestData: trialOption && trial });
       if (!r.ok) {
         setError(failureMessage(t, r));
         key.current = newKey();
@@ -102,7 +102,7 @@ export function UploadForm({ t, fromSetup }: { t: Messages; fromSetup: boolean }
       <p className="import-tip" id={`${id}-tip`}>
         {ti.barcodeTip}
       </p>
-      {fromSetup ? (
+      {trialOption ? (
         <label className="check">
           <input type="checkbox" checked={trial} onChange={(e) => setTrial(e.target.checked)} disabled={!hydrated || busy} data-testid="import-trial" />
           {ti.trialLabel}

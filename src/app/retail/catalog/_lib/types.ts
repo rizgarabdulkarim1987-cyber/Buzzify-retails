@@ -19,6 +19,7 @@ export type HitDto = {
   tracksExpiry: boolean;
   soldByWeight: boolean;
   archived: boolean;
+  isTestData: boolean;
   matchedBarcode?: string;
   matchedUnitName?: string;
   unitPrice?: { currency: Currency; amountMinor: string };
@@ -70,5 +71,7 @@ export type ProductDto = {
   expiryAlertDays: number | null;
   soldByWeight: boolean;
   archived: boolean;
+  /** A trial item (setup wizard). */
+  isTestData: boolean;
   variants: VariantDto[];
 };

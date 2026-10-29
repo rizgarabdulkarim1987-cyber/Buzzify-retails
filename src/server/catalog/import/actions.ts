@@ -10,6 +10,7 @@ import { NotFoundError, RuleError, VersionConflictError, failure } from "@/serve
 import { applyPrice, ensureDefaultLists } from "../price-core";
 import {
   TAXONOMY_LOCK,
+  assertMayMarkTrial,
   insertProductsCore,
   nextSkusCore,
   productLock,
@@ -143,6 +144,7 @@ export const stageImport = defineAction({
     })
     .strict(),
   async run({ actor, tx, input }): Promise<StagedImport> {
+    assertMayMarkTrial(actor, input.isTestData);
     if (input.contentBase64.length > MAX_BASE64_LENGTH) throw new RuleError("IMPORT_TOO_LARGE");
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.contentBase64)) throw new RuleError("IMPORT_UNREADABLE");
     const bytes = new Uint8Array(Buffer.from(input.contentBase64, "base64"));
@@ -755,6 +757,10 @@ async function runSlice(
     }
     if (Object.keys(data).length > 0) {
       await tx.rtProduct.updateMany({ where: { id: v.productId, archivedAt: null }, data: { ...data, version: { increment: 1 } } });
+    }
+    // An UPDATE from a real (non-trial) file adopts a trial product as real: removeTestProducts leaves it.
+    if (!batch.isTestData) {
+      await tx.rtProduct.updateMany({ where: { id: v.productId, isTestData: true }, data: { isTestData: false, version: { increment: 1 } } });
     }
     await refreshSearchText(tx, v.productId);
 

@@ -21,7 +21,10 @@ import { updateVersioned } from "@/server/framework/versioned";
  * one active product that is not a trial item (isTestData), or an import that is not a trial import
  * put at least one row into the catalog. Trial items never complete it: the point is a real catalog
  * before launch. completeSetupStep(4) checks the same condition (CATALOG_EMPTY otherwise) and
- * stores DONE, but the page always shows the live condition (archiving every product reopens it).
+ * stores DONE, but the page always shows the live condition. Archiving every product reopens the
+ * step only when it was completed by products alone: once a non-trial import has committed a row,
+ * the step stays DONE for good (a committed import row is never deleted, even if its products are
+ * archived later or a trial product it updated is removed).
  *
  * Every step is an ordinary business action (permission staff.manage: OWNER and MANAGER), so it
  * is audited, idempotent by key, and refused while the business is READ_ONLY or CLOSED. Editing
@@ -216,7 +219,10 @@ async function saveStaff(tx: Tx, actor: Actor, d: z.infer<typeof staffData>) {
   }
 }
 
-/** True while the catalog completes step 4: a real (not trial) active product, or a real import that committed a row. */
+/**
+ * True when the catalog completes step 4: a real (not trial) active product right now, or, at any
+ * time in the past, a real (non-trial) import that committed a row (that part never turns false).
+ */
 async function catalogReady(tx: Tx): Promise<boolean> {
   const product = await tx.rtProduct.findFirst({ where: { archivedAt: null, isTestData: false }, select: { id: true } });
   if (product) return true;

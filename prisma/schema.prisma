@@ -568,7 +568,7 @@ model RtProduct {
   expiryAlertDays Int?
   // Normalised search text (all names), kept up to date by the catalog actions.
   searchText      String         @default("")
-  // A trial item entered during setup; archiveTestProducts removes these before launch.
+  // A trial item entered during setup; removeTestProducts deletes these before launch.
   isTestData      Boolean        @default(false)
   archivedAt      DateTime?
   version         Int            @default(1)

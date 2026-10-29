@@ -50,7 +50,7 @@ export default async function NewProductsPage({ searchParams }: { searchParams: 
         </div>
         <p>{t.catalog.entry.intro}</p>
       </div>
-      <QuickEntry locale={locale} t={t} categories={list} canPrice={access.canPrice} currency={access.context.defaultCurrency} trialOption={fromSetup} />
+      <QuickEntry locale={locale} t={t} categories={list} canPrice={access.canPrice} currency={access.context.defaultCurrency} trialOption={fromSetup && access.canMarkTrial} />
     </main>
   );
 }

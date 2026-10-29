@@ -67,8 +67,12 @@ const text = (f: FormData, name: string) => {
 /** The product screen: details, variants, units with their barcodes and prices. Controls exist only for those who may use them. */
 export function ProductScreen({ locale, t, product, categories, brands, currencies, canManage, canPrice, existing, today }: Props) {
   const router = useRouter();
-  const [, startTransition] = useTransition();
-  const [busy, setBusy] = useState<string | null>(null);
+  // Every control carries the version it was rendered with. After a change the page data reloads
+  // (router.refresh in a transition); until that lands the versions on screen are old, so the
+  // controls stay disabled while it is pending: a second change then never sends a stale version.
+  const [refreshing, startTransition] = useTransition();
+  const [running, setBusy] = useState<string | null>(null);
+  const busy = running ?? (refreshing ? "refresh" : null);
   const [notes, setNotes] = useState<Record<string, Note | undefined>>({});
   const [showExisting, setShowExisting] = useState(existing);
   const p = t.catalog.product;
@@ -131,6 +135,14 @@ export function ProductScreen({ locale, t, product, categories, brands, currenci
             {p.back}
           </Link>
         </div>
+        {product.isTestData ? (
+          <p className="product-trial">
+            <span className="badge" data-tone="warn" data-testid="product-trial">
+              {p.trialTag}
+            </span>{" "}
+            <span className="muted">{p.trialBanner}</span>
+          </p>
+        ) : null}
         {showExisting ? <Notice tone="success">{p.existingNotice}</Notice> : null}
         {product.archived ? <Notice tone="danger">{p.archivedBanner}</Notice> : null}
         {product.archived && canManage ? <RestoreProduct product={product} /> : null}
@@ -159,7 +171,7 @@ export function ProductScreen({ locale, t, product, categories, brands, currenci
 // ---------------------------------------------------------------------------------------------
 
 function NoteView({ section }: { section: string }) {
-  const { notes, reload, t } = useOps();
+  const { notes, reload, t, busy } = useOps();
   const note = notes[section];
   const box = useRef<HTMLDivElement>(null);
   // At phone width the message can be off screen: bring it into view when it appears.
@@ -171,7 +183,7 @@ function NoteView({ section }: { section: string }) {
     <div className="product-note" ref={box}>
       <Notice tone={note.tone}>{note.text}</Notice>
       {note.stale ? (
-        <button type="button" className="btn btn-secondary" onClick={reload}>
+        <button type="button" className="btn btn-secondary" onClick={reload} disabled={busy !== null}>
           {t.catalog.product.reload}
         </button>
       ) : null}
@@ -399,7 +411,7 @@ function VariantBlock(props: { variant: VariantDto; currencies: Currency[]; edit
 }
 
 function UnitCard({ unit, currencies, editable, pricing }: { unit: UnitDto; currencies: Currency[]; editable: boolean; pricing: boolean }) {
-  const { t, locale, run } = useOps();
+  const { t, locale, run, busy } = useOps();
   const p = t.catalog.product;
   const section = `unit:${unit.id}`;
   const barcodes = unit.barcodes.filter((b) => !b.archived);
@@ -470,6 +482,7 @@ function UnitCard({ unit, currencies, editable, pricing }: { unit: UnitDto; curr
                   type="button"
                   className="btn btn-secondary btn-small"
                   aria-label={`${p.archiveBarcode} ${b.code}`}
+                  disabled={busy !== null}
                   onClick={() => void run(section, p.archivedDone, (key) => archiveBarcodeAction(key, { id: b.id, expectedVersion: b.version }))}
                 >
                   {p.archiveBarcode}

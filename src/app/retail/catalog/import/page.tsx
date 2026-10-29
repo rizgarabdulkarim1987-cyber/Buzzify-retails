@@ -44,7 +44,7 @@ export default async function ImportPage({ searchParams }: { searchParams: Searc
 
       <section className="section panel" aria-labelledby="import-upload-title">
         <h2 id="import-upload-title">{ti.uploadTitle}</h2>
-        <UploadForm t={t} fromSetup={fromSetup} />
+        <UploadForm t={t} fromSetup={fromSetup} trialOption={fromSetup && access.canMarkTrial} />
       </section>
 
       <section className="section" aria-labelledby="import-history-title" data-testid="import-history">

@@ -149,7 +149,7 @@ const createInput = z
     expiryAlertDays: trackingFields.expiryAlertDays.nullish().transform((v) => v ?? null),
     sku: sku.optional(),
     options: options.nullish().transform((v) => v ?? null),
-    /** A trial item (setup wizard): archiveTestProducts removes it before launch; it never completes setup step 4. */
+    /** A trial item (setup wizard; staff.manage only): removeTestProducts deletes it before launch; it never completes setup step 4. */
     isTestData: z.boolean().default(false),
     ...variantParts,
   })
@@ -399,7 +399,7 @@ async function insertVariant(
     data: { businessId, variantId, name: v.baseUnit.name, factor: 1, isBase: true, quantityScale: v.baseUnit.quantityScale },
     select: { id: true },
   });
-  for (const code of v.baseUnit.barcodes) await insertBarcode(tx, businessId, base.id, code);
+  const codes = v.baseUnit.barcodes.map((code) => ({ unitId: base.id, code }));
 
   const extras: { id: string; unit: ExtraUnitInput }[] = [];
   for (const u of v.extraUnits) {
@@ -407,9 +407,12 @@ async function insertVariant(
       data: { businessId, variantId, name: u.name, factor: u.factor, isBase: false, quantityScale: u.quantityScale },
       select: { id: true },
     });
-    for (const code of u.barcodes) await insertBarcode(tx, businessId, row.id, code);
+    codes.push(...u.barcodes.map((code) => ({ unitId: row.id, code })));
     extras.push({ id: row.id, unit: u });
   }
+  // In code order, as insertProductsCore does: two creators then take the unique-index locks in one order.
+  codes.sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  for (const c of codes) await insertBarcode(tx, businessId, c.unitId, c.code);
 
   if (v.price) {
     const lists = await ensureDefaultLists(tx, businessId);
@@ -540,6 +543,7 @@ const productSelect = {
   soldByWeight: true,
   tracksExpiry: true,
   expiryAlertDays: true,
+  isTestData: true,
   archivedAt: true,
   version: true,
 } as const;
@@ -559,6 +563,7 @@ export const createProduct = defineAction({
   writes: true,
   async run({ actor, tx, input, lockBusiness }): Promise<CreatedProduct> {
     needsPricePermission(actor, wantsPrice(input));
+    assertMayMarkTrial(actor, input.isTestData);
     checkTracking(input);
     checkVariantParts(input, input.soldByWeight);
     if (input.price) await assertCurrencyEnabled(tx, input.price.currency);
@@ -663,61 +668,89 @@ export const unarchiveProduct = defineAction({
 // ---------------------------------------------------------------------------------------------
 // Trial items (setup wizard)
 
-/** Products archived per transaction by archiveTestProducts. */
-export const TEST_ARCHIVE_SLICE = 200;
+/** Only staff.manage holders (OWNER, MANAGER: the people running setup) may mark or remove trial items. */
+export function assertMayMarkTrial(actor: Actor, isTestData: boolean): void {
+  if (isTestData && !can(actor.role, "staff.manage")) throw new ForbiddenError("staff.manage");
+}
 
-export type TestArchiveSlice = { archived: number; done: boolean };
+/** Products removed per transaction by removeTestProducts. */
+export const TEST_REMOVE_SLICE = 200;
+
+export type TestRemoveSlice = { removed: number; productIds: string[]; done: boolean };
 
 /**
- * One slice of archiveTestProducts: up to TEST_ARCHIVE_SLICE active trial products (isTestData),
- * each under its product lock taken in sorted id order (the catalog's lock order), archived the
- * way archiveProduct does it (archivedAt, version + 1; barcodes and SKUs stay reserved).
- *
- * Refusing once the business has sales: R1 has no sales tables, so there is nothing to check yet.
- * When R3 adds sales, this must refuse (a trial item that was sold is history, not a trial).
+ * A check that a later release registers for a table that can point at a catalog item (a sale line,
+ * a stock movement, a purchase): given variant ids about to be removed, true when any is referenced.
+ * Then removeTestProducts refuses (TRIAL_IN_USE): a trial item that was sold is history, not a trial.
+ * R1 registers none: no sales, stock or purchase tables exist yet, so nothing can reference a product
+ * except the catalog's own rows (deleted below) and import rows (their match is set to null by the FK).
  */
-export const archiveTestProductsSlice = defineAction({
-  name: "catalog.product.archiveTestData",
-  permission: "catalog.manage",
+export type TrialReferenceCheck = (tx: Tx, variantIds: readonly string[]) => Promise<boolean>;
+const trialReferenceChecks = new Set<TrialReferenceCheck>();
+
+/** Registers a reference check; returns its removal (used by tests). */
+export function registerTrialReferenceCheck(check: TrialReferenceCheck): () => void {
+  trialReferenceChecks.add(check);
+  return () => trialReferenceChecks.delete(check);
+}
+
+/**
+ * One slice of removeTestProducts: up to TEST_REMOVE_SLICE trial products (isTestData, archived or
+ * not), each under its product lock taken in sorted id order (the catalog's lock order), deleted with
+ * everything under them in FK-safe order: prices, barcodes, units, variants, products. Their barcodes
+ * and manual SKUs are free again afterwards. The SKU counter is per business and is not rewound.
+ */
+export const removeTestProductsSlice = defineAction({
+  name: "catalog.product.removeTestData",
+  permission: "staff.manage",
   input: z.object({}).strict(),
   writes: true,
-  async run({ tx, lockBusiness }): Promise<TestArchiveSlice> {
+  async run({ actor, tx, lockBusiness }): Promise<TestRemoveSlice> {
+    if (!can(actor.role, "catalog.manage")) throw new ForbiddenError("catalog.manage");
     const found = await tx.rtProduct.findMany({
-      where: { isTestData: true, archivedAt: null },
+      where: { isTestData: true },
       orderBy: { id: "asc" },
-      take: TEST_ARCHIVE_SLICE,
+      take: TEST_REMOVE_SLICE,
       select: { id: true },
     });
     const ids = found.map((p) => p.id);
+    if (ids.length === 0) return { removed: 0, productIds: [], done: true };
     for (const id of ids) await lockBusiness(productLock(id));
-    const { count } = ids.length
-      ? await tx.rtProduct.updateMany({
-          where: { id: { in: ids }, isTestData: true, archivedAt: null },
-          data: { archivedAt: new Date(), version: { increment: 1 } },
-        })
-      : { count: 0 };
-    return { archived: count, done: ids.length < TEST_ARCHIVE_SLICE };
+    // Re-read under the locks: a product adopted as real meanwhile (a real import's UPDATE) stays.
+    const still = (await tx.rtProduct.findMany({ where: { id: { in: ids }, isTestData: true }, orderBy: { id: "asc" }, select: { id: true } })).map((p) => p.id);
+    const variantIds = (await tx.rtVariant.findMany({ where: { productId: { in: still } }, select: { id: true } })).map((v) => v.id);
+    for (const check of trialReferenceChecks) {
+      if (await check(tx, variantIds)) throw new RuleError("TRIAL_IN_USE");
+    }
+    const unitIds = (await tx.rtUnit.findMany({ where: { variantId: { in: variantIds } }, select: { id: true } })).map((u) => u.id);
+    await tx.rtPrice.deleteMany({ where: { unitId: { in: unitIds } } });
+    await tx.rtBarcode.deleteMany({ where: { unitId: { in: unitIds } } });
+    await tx.rtUnit.deleteMany({ where: { id: { in: unitIds } } });
+    await tx.rtVariant.deleteMany({ where: { id: { in: variantIds } } });
+    const { count } = await tx.rtProduct.deleteMany({ where: { id: { in: still }, isTestData: true } });
+    return { removed: count, productIds: still, done: ids.length < TEST_REMOVE_SLICE };
   },
-  audit: (_input, value) => audit("RtProduct", "", { archivedTestProducts: value.archived }),
+  // The ids are at most TEST_REMOVE_SLICE per row.
+  audit: (_input, value) => audit("RtProduct", "", { removedTestProducts: value.removed, productIds: value.productIds.slice(0, TEST_REMOVE_SLICE) }),
 });
 
 /**
- * Archives every active trial product of the business, TEST_ARCHIVE_SLICE per transaction, and
- * returns how many. Each slice is an idempotent write keyed from the caller's key and the slice
- * number (as commitImport does), so repeating the call with the same key does not redo finished slices.
+ * Deletes every trial product of the business, TEST_REMOVE_SLICE per transaction, and returns how
+ * many. Each slice is an idempotent write keyed from the caller's key and the slice number (as
+ * commitImport does), so repeating the call with the same key does not redo finished slices.
  */
-export async function archiveTestProducts(raw: unknown, meta: ActionMeta): Promise<Result<{ archived: number }>> {
+export async function removeTestProducts(raw: unknown, meta: ActionMeta): Promise<Result<{ removed: number }>> {
   if (!validKey(meta.idempotencyKey)) return failure("INVALID_INPUT");
   const base = createHash("sha256").update(meta.idempotencyKey).digest("hex").slice(0, 40);
-  let archived = 0;
+  let removed = 0;
   // Bounded: a business never has more products than this many slices can hold in R1.
   for (let n = 1; n <= 1_000; n += 1) {
-    const r = await archiveTestProductsSlice(raw, { ...meta, idempotencyKey: `test-archive:${base}:${n}` });
+    const r = await removeTestProductsSlice(raw, { ...meta, idempotencyKey: `test-remove:${base}:${n}` });
     if (!r.ok) return r;
-    archived += r.value.archived;
-    if (r.value.done) return { ok: true, value: { archived } };
+    removed += r.value.removed;
+    if (r.value.done) return { ok: true, value: { removed } };
   }
-  return { ok: true, value: { archived } };
+  return { ok: true, value: { removed } };
 }
 
 /** One product with its category and brand (names shown even when archived) and every variant, unit and barcode. */
