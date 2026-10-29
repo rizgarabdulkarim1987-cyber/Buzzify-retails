@@ -726,8 +726,9 @@ async function runSlice(
   });
   const created = await insertProductsCore(tx, actor.businessId, items, extraBarcodes);
   creates.forEach((r, i) => {
+    // Flagged only when the pack really got a price and the base piece therefore has none.
     const pack = r.normalized.factor !== null && r.normalized.factor > 1;
-    const reason = !canPrice && r.normalized.price ? "CREATED_WITHOUT_PRICE" : pack ? "CREATED_WITHOUT_BASE_PRICE" : "CREATED";
+    const reason = !r.normalized.price ? "CREATED" : !canPrice ? "CREATED_WITHOUT_PRICE" : pack ? "CREATED_WITHOUT_BASE_PRICE" : "CREATED";
     outcome.set(r.id, { status: "COMMITTED", reason, variantId: created[i]!.variantId });
   });
 

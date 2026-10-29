@@ -236,17 +236,47 @@ describe("validateRows", () => {
       [
         row("222", "حليب", "16000", "", "", "", "", "", "", "12"), // carton barcode, factor 12: carton price
         row("111", "حليب", "", "", "", "", "", "", "", "12"), // piece barcode with factor 12
-        row("", "حليب", "15000", "", "", "", "", "", "", "12", "S1"), // SKU, factor 12: the carton, unchanged
       ],
       existing,
     );
     expect(r[0]).toMatchObject({ status: "CHANGED", matchedUnitId: "u2", diff: [{ field: "price.IQD", before: "15000", after: "16000" }] });
     expect(r[1]).toMatchObject({ status: "REJECTED", reason: "UNIT_MISMATCH" });
-    expect(r[2]).toMatchObject({ status: "SKIPPED", reason: "UNCHANGED", matchedUnitId: "u2" });
+    const bySku = run([row("", "حليب", "15000", "", "", "", "", "", "", "12", "S1")], existing); // SKU, factor 12: the carton, unchanged
+    expect(bySku[0]).toMatchObject({ status: "SKIPPED", reason: "UNCHANGED", matchedUnitId: "u2" });
     // A SKU match with no unit of that factor, and a barcode match naming another SKU.
     expect(run([row("", "حليب", "", "", "", "", "", "", "", "6", "S1")], existing)[0]).toMatchObject({ reason: "UNIT_MISMATCH" });
     expect(run([row("111", "حليب", "", "", "", "", "", "", "", "", "S9")], existing)[0]).toMatchObject({ reason: "SKU_MISMATCH" });
     expect(run([row("111", "حليب", "", "", "", "", "", "", "", "", "S1")], existing)[0]).toMatchObject({ status: "SKIPPED" });
+  });
+
+  it("a second row matching the same existing variant is rejected (DUPLICATE_MATCH), the first wins", () => {
+    const carton = { unitId: "u2", name: "كرتون", factor: 12, prices: { IQD: 15000n } };
+    const existing = index({
+      "111": item({ units: [piece, carton] }),
+      "222": item({ unit: carton, units: [piece, carton] }),
+      "sku:S1": item({ units: [piece, carton] }),
+      "333": item({ variantId: "v2", sku: "S2" }),
+    });
+    const r = run(
+      [
+        row("111", "حليب 1"), // piece by barcode: first match of v1
+        row("", "حليب 2", "", "", "", "", "", "", "", "", "S1"), // same variant by SKU
+        row("222", "حليب 3", "", "", "", "", "", "", "", "12"), // same variant, its carton
+        row("333", "آخر"), // another variant: fine
+        row("444", "جديد"),
+      ],
+      existing,
+    );
+    expect(r.map((x) => [x.status, x.reason])).toEqual([
+      ["CHANGED", undefined],
+      ["REJECTED", "DUPLICATE_MATCH"],
+      ["REJECTED", "DUPLICATE_MATCH"],
+      ["CHANGED", undefined],
+      ["OK", undefined],
+    ]);
+    // A rejected first row does not claim the variant.
+    const second = run([row("111", "x", "", "", "", "", "", "", "", "6"), row("222", "حليب 3", "", "", "", "", "", "", "", "12")], existing);
+    expect(second.map((x) => x.reason ?? x.status)).toEqual(["UNIT_MISMATCH", "CHANGED"]);
   });
 
   it("a SKU must use the characters createProduct accepts, and every text needs real letters", () => {

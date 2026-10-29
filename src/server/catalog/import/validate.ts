@@ -125,6 +125,9 @@ export function validateRows(
   options: ValidateOptions = {},
 ): RowResult[] {
   const claimed = new Set<string>();
+  // Existing variants already matched by an earlier valid row: one row per variant, whatever unit
+  // or identifier it uses, so what is applied never depends on how commit slices the rows.
+  const claimedVariants = new Set<string>();
   const results: RowResult[] = [];
 
   rows.forEach((cells, i) => {
@@ -220,6 +223,8 @@ export function validateRows(
           unitMatch = existing.units.find((u) => u.factor === wanted);
           if (!unitMatch) throw new Reject("UNIT_MISMATCH");
         }
+        if (claimedVariants.has(existing.variantId)) throw new Reject("DUPLICATE_MATCH");
+        claimedVariants.add(existing.variantId);
       }
 
       for (const k of claims) claimed.add(k);

@@ -725,6 +725,48 @@ describe("catalog import actions", () => {
     const shown = value(await getImportBatch({ batchId: v.batchId }, a.as("owner")));
     expect(shown.rows[0]).toMatchObject({ status: "COMMITTED", reason: "CREATED_WITHOUT_BASE_PRICE" });
   });
+
+  it("a carton-only row without any price is a plain CREATED, not flagged", async () => {
+    const { a } = await world();
+    const v = await stageAndValidate(a, csv([row({ barcode: "9101", name: "مياه", unit: "كرتون", factor: "12" })]));
+    const c = value(await commitImport({ batchId: v.batchId, onChange: "SKIP" }, a.as("owner")));
+    expect(c.stats).toMatchObject({ created: 1, withoutBasePrice: 0 });
+    expect((await db.rtImportRow.findFirstOrThrow({ where: { batchId: v.batchId } })).reason).toBe("CREATED");
+  });
+
+  it("rows matching one variant twice give the same result wherever the slices split", async () => {
+    // Two runs: the duplicate pairs inside one slice, and across the slice boundary.
+    const { a: first, b: second } = await world();
+    const outcome = async (a: Shop, gap: number) => {
+      const juice = value(
+        await createProduct(
+          { nameAr: "عصير", sku: "JU-1", baseUnit: { name: "حبة", barcodes: ["5100"] }, extraUnits: [{ name: "كرتون", factor: 12, barcodes: ["5112"] }] },
+          a.as("owner"),
+        ),
+      );
+      const filler = Array.from({ length: gap }, (_, i) => row({ barcode: "52" + String(i).padStart(4, "0"), name: "حشو " + i }));
+      const rows = [
+        ...filler,
+        row({ barcode: "5100", name: "عصير 1" }),
+        row({ sku: "JU-1", name: "عصير 2" }),
+        row({ barcode: "5112", name: "عصير 3", factor: "12" }),
+      ];
+      const v = await stageAndValidate(a, csv(rows));
+      const c = value(await commitImport({ batchId: v.batchId, onChange: "UPDATE" }, a.as("owner")));
+      const tail = await db.rtImportRow.findMany({ where: { batchId: v.batchId, rowNumber: { gt: gap } }, orderBy: { rowNumber: "asc" } });
+      const name = (await db.rtProduct.findUniqueOrThrow({ where: { id: juice.productId } })).nameAr;
+      return { stats: { ...c.stats, created: c.stats.created - gap, total: c.stats.total - gap }, tail: tail.map((r) => [r.status, r.reason]), name };
+    };
+    const inside = await outcome(first, 0);
+    expect(inside.tail).toEqual([
+      ["COMMITTED", "UPDATED"],
+      ["REJECTED", "DUPLICATE_MATCH"],
+      ["REJECTED", "DUPLICATE_MATCH"],
+    ]);
+    expect(inside.name).toBe("عصير 1");
+    const across = await outcome(second, SLICE_SIZE - 1);
+    expect(across).toEqual(inside);
+  }, 60_000);
 });
 
 /** Polls until at least `n` sessions wait for a lock (files run one at a time, so the count is ours). */
