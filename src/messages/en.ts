@@ -233,6 +233,10 @@ export const en: Messages = {
     STAFF_EXISTS: "This person is already on the business's team.",
     DUPLICATE_NAME: "There is already an item with this name.",
     CATEGORY_IN_USE: "This category cannot be archived because it still has active subcategories or products.",
+    BARCODE_TAKEN: "This barcode is already used by another product in the business (even an archived one).",
+    SKU_TAKEN: "This SKU is already used in the business.",
+    UNIT_RULE: "This unit setup is not allowed: check the conversion factor, the quantity decimals and the unit name. The base unit cannot be archived and its factor cannot change.",
+    TRACKING_RULE: "This tracking setup is not allowed: tracking expiry requires batch tracking.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

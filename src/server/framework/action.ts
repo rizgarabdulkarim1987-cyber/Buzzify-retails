@@ -83,9 +83,9 @@ function codeOf(err: unknown): ErrorCode | undefined {
  * caller (route/UI layer) shows that message and must not expose `cause`. The transaction has
  * already rolled back by then.
  */
-export function toFailure(action: string, err: unknown): { ok: false; code: ErrorCode; message: string } {
+export function toFailure(action: string, err: unknown): ReturnType<typeof failure> {
   const code = codeOf(err);
-  if (code) return failure(code);
+  if (code) return failure(code, err instanceof RuleError ? err.details : undefined);
   console.error(`[action ${action}] unexpected failure`, err);
   throw new InternalActionError(err);
 }

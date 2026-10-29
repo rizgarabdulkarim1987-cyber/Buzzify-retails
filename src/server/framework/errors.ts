@@ -19,9 +19,21 @@ export type ErrorCode =
   | "USER_NOT_FOUND"
   | "STAFF_EXISTS"
   | "DUPLICATE_NAME"
-  | "CATEGORY_IN_USE";
+  | "CATEGORY_IN_USE"
+  | "BARCODE_TAKEN"
+  | "SKU_TAKEN"
+  | "UNIT_RULE"
+  | "TRACKING_RULE";
 
-export type Result<O> = { ok: true; value: O } | { ok: false; code: ErrorCode; message: string };
+/**
+ * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
+ * BARCODE_TAKEN names the product that owns the code). Only ever data of the caller's own business.
+ */
+export type FailureDetails = Readonly<Record<string, string>>;
+
+export type Result<O> =
+  | { ok: true; value: O }
+  | { ok: false; code: ErrorCode; message: string; details?: FailureDetails };
 
 /** The message shown to the user for each code (Arabic, business language). */
 export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze({
@@ -45,13 +57,20 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   STAFF_EXISTS: "هذا الشخص عضو في فريق المنشأة مسبقاً.",
   DUPLICATE_NAME: "يوجد عنصر بهذا الاسم مسبقاً.",
   CATEGORY_IN_USE: "لا يمكن أرشفة هذا القسم لأنه يحتوي على أقسام فرعية أو منتجات فعّالة.",
+  BARCODE_TAKEN: "هذا الباركود مستخدم لصنف آخر في المنشأة (حتى لو كان مؤرشفاً).",
+  SKU_TAKEN: "رمز الصنف (SKU) هذا مستخدم مسبقاً في المنشأة.",
+  UNIT_RULE: "إعداد الوحدة غير مقبول: تحقق من معامل التحويل ودقة الكمية واسم الوحدة، ووحدة الأساس لا تُؤرشف ولا يتغير معاملها.",
+  TRACKING_RULE: "إعداد التتبع غير مقبول: تتبّع الصلاحية يتطلب التتبع بالدفعات.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */
 export const INTERNAL_ERROR_MESSAGE = "حدث خطأ غير متوقع، لم يتم حفظ أي تغيير. يرجى المحاولة مرة أخرى.";
 
-export function failure(code: ErrorCode): { ok: false; code: ErrorCode; message: string } {
-  return { ok: false, code, message: ERROR_MESSAGES[code] };
+export function failure(
+  code: ErrorCode,
+  details?: FailureDetails,
+): { ok: false; code: ErrorCode; message: string; details?: FailureDetails } {
+  return details ? { ok: false, code, message: ERROR_MESSAGES[code], details } : { ok: false, code, message: ERROR_MESSAGES[code] };
 }
 
 /** Thrown by updateVersioned when the row's version no longer matches (or the row is out of scope). */
@@ -84,7 +103,11 @@ export class ForbiddenError extends Error {
  */
 export class RuleError extends Error {
   override readonly name = "RuleError";
-  constructor(readonly code: ErrorCode) {
+  constructor(
+    readonly code: ErrorCode,
+    /** Safe facts for the caller (see FailureDetails); never internal detail. */
+    readonly details?: FailureDetails,
+  ) {
     super(code);
   }
 }
