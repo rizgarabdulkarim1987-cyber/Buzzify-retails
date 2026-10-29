@@ -13,6 +13,8 @@ export type StockReason = (typeof STOCK_REASONS)[number];
 const RATE_SCALE = 1_000_000n;
 const MAX_RATE_INT_DIGITS = 9;
 const MAX_QTY_INT_DIGITS = 13;
+/** Same cap as the catalog price limit (10^18 minor units); local so the domain stays layer-free. */
+const MAX_VALUE_MINOR = 10n ** 18n;
 
 type QtyUnit = { factor: number; quantityScale: number };
 
@@ -25,6 +27,11 @@ function divRound(n: bigint, d: bigint): bigint {
   if (d <= 0n) invalid();
   if (n < 0n) return -divRound(-n, d);
   return (n * 2n + d) / (d * 2n);
+}
+
+function capValue(v: bigint): bigint {
+  if (v > MAX_VALUE_MINOR) invalid();
+  return v;
 }
 
 function normalizeNumber(text: string): string {
@@ -57,23 +64,26 @@ export function toBaseQty(text: string, unit: QtyUnit): bigint {
   return base;
 }
 
-/** Break a base quantity into whole units, largest first; the remainder falls to the smaller units. */
+/**
+ * Break a base quantity into whole units, largest first. Zero-count parts are omitted;
+ * `remainder` is what is left (base x 1000, 0n when exact), e.g. 500 for half a kilo.
+ */
 export function splitIntoUnits(
   baseQty: bigint,
   units: { name: string; factor: number }[],
-): { name: string; count: bigint }[] {
+): { parts: { name: string; count: bigint }[]; remainder: bigint } {
   const sorted = [...units].sort((a, b) => b.factor - a.factor);
   let rest = baseQty;
-  const out: { name: string; count: bigint }[] = [];
+  const parts: { name: string; count: bigint }[] = [];
   for (const u of sorted) {
     const size = assertFactor(u.factor) * QTY_SCALE;
     const count = rest / size;
     if (count > 0n) {
-      out.push({ name: u.name, count });
+      parts.push({ name: u.name, count });
       rest -= count * size;
     }
   }
-  return out;
+  return { parts, remainder: rest };
 }
 
 /** IQD per 1 USD as text, to an integer x 10^6 (at most 6 decimals, above zero). */
@@ -101,12 +111,13 @@ export function convertMinor(amount: bigint, from: Currency, to: Currency, rateM
 /** Value of a line: cost per typed unit x typed quantity, half up. */
 export function lineValueMinor(unitCostMinor: bigint, text: string, unit: QtyUnit): bigint {
   const scaled = parseTypedQty(text, unit.quantityScale);
-  return divRound(unitCostMinor * scaled, 10n ** BigInt(unit.quantityScale));
+  return capValue(divRound(unitCostMinor * scaled, 10n ** BigInt(unit.quantityScale)));
 }
 
 /** Value leaving with `outQty` of `onHandQty`: proportional; the final outflow takes all that remains. */
 export function reduceValue(onHandQty: bigint, onHandValue: bigint, outQty: bigint): bigint {
-  if (outQty < 0n || outQty > onHandQty) invalid();
+  if (onHandQty < 0n || onHandValue < 0n || outQty < 0n || outQty > onHandQty) invalid();
+  if (outQty === 0n) return 0n;
   if (outQty === onHandQty) return onHandValue;
   return divRound(onHandValue * outQty, onHandQty);
 }
@@ -114,17 +125,41 @@ export function reduceValue(onHandQty: bigint, onHandValue: bigint, outQty: bigi
 /** Cost of one unit with `factor` base units, from a quantity (base x 1000) and its value. */
 export function unitCostMinor(qty: bigint, value: bigint, factor: number): bigint {
   if (qty === 0n) return 0n;
-  return divRound(value * assertFactor(factor) * QTY_SCALE, qty);
+  return capValue(divRound(value * assertFactor(factor) * QTY_SCALE, qty));
 }
 
 const DAY_MS = 86_400_000;
 const utcDay = (d: Date) => Math.floor(d.getTime() / DAY_MS);
 
+/**
+ * Today's calendar day in `timeZone` (IANA name), as a date-only value: the UTC-midnight Date of
+ * that local day. Use it to build the `today` that expiryStatus expects.
+ */
+export function businessToday(now: Date, timeZone: string): Date {
+  if (Number.isNaN(now.getTime())) invalid();
+  let text: string;
+  try {
+    text = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  } catch {
+    return invalid();
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!m) invalid();
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+}
+
+/**
+ * `expiry` and `today` are date-only values represented as UTC-midnight Dates (the time of day
+ * is ignored). The caller computes `today` in the business time zone (see businessToday).
+ * An expiry equal to today is SOON, not EXPIRED.
+ */
 export function expiryStatus(
   expiry: Date | null,
   today: Date,
   alertDays: number,
 ): "NONE" | "OK" | "SOON" | "EXPIRED" {
+  if (Number.isNaN(today.getTime()) || (expiry !== null && Number.isNaN(expiry.getTime()))) invalid();
+  if (!Number.isInteger(alertDays) || alertDays < 0) invalid();
   if (expiry === null) return "NONE";
   const left = utcDay(expiry) - utcDay(today);
   if (left < 0) return "EXPIRED";

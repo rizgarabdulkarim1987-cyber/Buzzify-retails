@@ -4,6 +4,7 @@ import {
   QTY_SCALE,
   STOCK_REASONS,
   convertMinor,
+  businessToday,
   expiryStatus,
   lineValueMinor,
   parseRate,
@@ -47,12 +48,25 @@ describe("stock domain", () => {
       { name: "piece", factor: 1 },
       { name: "carton", factor: 24 },
     ];
-    expect(splitIntoUnits(53_000n, units)).toEqual([
-      { name: "carton", count: 2n },
-      { name: "piece", count: 5n },
-    ]);
-    expect(splitIntoUnits(48_000n, units)).toEqual([{ name: "carton", count: 2n }]);
-    expect(splitIntoUnits(0n, units)).toEqual([]);
+    expect(splitIntoUnits(53_000n, units)).toEqual({
+      parts: [
+        { name: "carton", count: 2n },
+        { name: "piece", count: 5n },
+      ],
+      remainder: 0n,
+    });
+    expect(splitIntoUnits(48_000n, units)).toEqual({ parts: [{ name: "carton", count: 2n }], remainder: 0n });
+    expect(splitIntoUnits(0n, units)).toEqual({ parts: [], remainder: 0n });
+  });
+
+  it("splitIntoUnits keeps the fractional remainder", () => {
+    const kg = [{ name: "kg", factor: 1 }];
+    expect(splitIntoUnits(1_500n, kg)).toEqual({ parts: [{ name: "kg", count: 1n }], remainder: 500n });
+    expect(splitIntoUnits(500n, kg)).toEqual({ parts: [], remainder: 500n });
+    expect(splitIntoUnits(50_000n, [{ name: "carton", factor: 24 }])).toEqual({
+      parts: [{ name: "carton", count: 2n }],
+      remainder: 2_000n,
+    });
   });
 
   it("parseRate reads IQD per USD as an integer times 10^6", () => {
@@ -75,6 +89,13 @@ describe("stock domain", () => {
     expect(convertMinor(1n, "USD", "IQD", parseRate("1549"))).toBe(15n); // 15.49 -> 15
     expect(convertMinor(5n, "IQD", "IQD", null)).toBe(5n);
     expect(convertMinor(5n, "USD", "USD", null)).toBe(5n);
+  });
+
+  it("convertMinor rounds negatives half away from zero", () => {
+    expect(convertMinor(-750n, "IQD", "USD", parseRate("1500"))).toBe(-50n);
+    expect(convertMinor(-15n, "IQD", "USD", parseRate("3000"))).toBe(-1n);
+    expect(convertMinor(-1n, "USD", "IQD", parseRate("1550"))).toBe(-16n);
+    expect(convertMinor(-1n, "USD", "IQD", parseRate("1549"))).toBe(-15n);
   });
 
   it("convertMinor refuses different currencies without a rate", () => {
@@ -118,6 +139,69 @@ describe("stock domain", () => {
     expect(reduceValue(5_000n, 777n, 5_000n)).toBe(777n);
     expect(reduceValue(3_000n, 10n, 1_000n)).toBe(3n);
     expect(() => reduceValue(1_000n, 10n, 2_000n)).toThrow(RuleError);
+  });
+
+  it("reduceValue handles zero outflow, rejects negatives, and mixed outflows never overspend", () => {
+    expect(reduceValue(5_000n, 777n, 0n)).toBe(0n);
+    expect(() => reduceValue(-1n, 10n, 0n)).toThrow(RuleError);
+    expect(() => reduceValue(1_000n, -10n, 500n)).toThrow(RuleError);
+    expect(() => reduceValue(1_000n, 10n, -1n)).toThrow(RuleError);
+    const initial = 987_654_321n;
+    let qty = 7_654_321n;
+    let value = initial;
+    let out = 0n;
+    for (const q of [1n, 999n, 123_456n, 1_000_000n, 3n, 2_500_000n, 1_024_000n]) {
+      const v = reduceValue(qty, value, q);
+      expect(v >= 0n && v <= value).toBe(true);
+      out += v;
+      qty -= q;
+      value -= v;
+      expect(value >= 0n).toBe(true);
+    }
+    out += reduceValue(qty, value, qty);
+    expect(out).toBe(initial);
+  });
+
+  it("quantities refuse thousands separators while parseRate accepts them", () => {
+    expect(() => toBaseQty("1,000", piece)).toThrow(RuleError);
+    expect(() => lineValueMinor(1n, "1,000", piece)).toThrow(RuleError);
+    expect(parseRate("1,310")).toBe(1_310_000_000n);
+  });
+
+  it("toBaseQty edge cases", () => {
+    expect(() => toBaseQty("1000000000000.001", kilo)).toThrow(RuleError);
+    expect(toBaseQty("1.000", piece)).toBe(1_000n);
+    for (const bad of [
+      { factor: 0, quantityScale: 0 },
+      { factor: -1, quantityScale: 0 },
+      { factor: 1.5, quantityScale: 0 },
+      { factor: 1, quantityScale: 4 },
+      { factor: 1, quantityScale: -1 },
+      { factor: 1, quantityScale: 1.5 },
+    ]) {
+      expect(() => toBaseQty("1", bad)).toThrow(RuleError);
+    }
+  });
+
+  it("lineValueMinor and unitCostMinor refuse values above 10^18", () => {
+    expect(() => lineValueMinor(10n ** 18n, "2", piece)).toThrow(RuleError);
+    expect(lineValueMinor(10n ** 18n, "1", piece)).toBe(10n ** 18n);
+    expect(() => unitCostMinor(1n, 10n ** 18n, 1)).toThrow(RuleError);
+  });
+
+  it("businessToday gives the local calendar day as a UTC-midnight date", () => {
+    expect(businessToday(new Date("2026-10-30T22:30:00Z"), "Asia/Baghdad").toISOString()).toBe("2026-10-31T00:00:00.000Z");
+    expect(businessToday(new Date("2026-10-30T20:59:00Z"), "Asia/Baghdad").toISOString()).toBe("2026-10-30T00:00:00.000Z");
+    expect(() => businessToday(new Date("x"), "Asia/Baghdad")).toThrow(RuleError);
+    expect(() => businessToday(new Date(), "Not/AZone")).toThrow(RuleError);
+  });
+
+  it("expiryStatus rejects invalid dates and alertDays", () => {
+    const today = new Date("2026-10-30T00:00:00Z");
+    expect(() => expiryStatus(new Date("x"), today, 5)).toThrow(RuleError);
+    expect(() => expiryStatus(null, new Date("x"), 5)).toThrow(RuleError);
+    expect(() => expiryStatus(null, today, -1)).toThrow(RuleError);
+    expect(() => expiryStatus(null, today, 1.5)).toThrow(RuleError);
   });
 
   it("expiryStatus marks SOON inside alertDays and EXPIRED before today", () => {
