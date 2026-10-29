@@ -64,6 +64,8 @@ model RtBusiness {
   priceLists     RtPriceList[]
   prices         RtPrice[]
   catalogCounter RtCatalogCounter?
+  importBatches  RtImportBatch[]
+  importRows     RtImportRow[]
 }
 
 model RtBranch {
@@ -463,6 +465,7 @@ model RtLoginAttempt {
 
   @@index([key, at])
 }
+
 // Setup wizard (Task 10). One row per (business, step); steps are 1..9 (CHECK in the migration).
 // Rows are created lazily by the first completed step; a missing row reads as PENDING.
 // Business-scoped (tenants read and write it through scopedDb).
@@ -697,4 +700,63 @@ model RtCatalogCounter {
   nextSku    Int    @default(1)
 
   business RtBusiness @relation(fields: [businessId], references: [id])
+}
+
+enum ImportBatchStatus {
+  STAGED
+  VALIDATED
+  COMMITTED
+  FAILED
+}
+
+enum ImportRowStatus {
+  OK
+  REJECTED
+  SKIPPED
+  CHANGED
+  COMMITTED
+}
+
+// One uploaded catalog file (CSV or xlsx), staged then validated then committed (Task 9). Only the
+// sha256 of the file is kept, never the bytes. `columns` are the file's headers, `mapping` the
+// chosen column map, `stats` the counts per row status.
+model RtImportBatch {
+  id          String            @id @default(cuid())
+  businessId  String
+  status      ImportBatchStatus @default(STAGED)
+  fileName    String
+  fileHash    String
+  columns     Json
+  mapping     Json?
+  stats       Json
+  createdById String
+  version     Int               @default(1)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  business RtBusiness    @relation(fields: [businessId], references: [id])
+  rows     RtImportRow[]
+
+  @@unique([businessId, id])
+  @@index([businessId, createdAt])
+}
+
+// A data row of a batch (rowNumber is 1-based, header excluded). `resolution` is the owner's choice
+// for a CHANGED row: UPDATE or SKIP (null until chosen). Deleted with its batch.
+model RtImportRow {
+  id               String          @id @default(cuid())
+  businessId       String
+  batchId          String
+  rowNumber        Int
+  raw              Json
+  status           ImportRowStatus
+  reason           String?
+  matchedVariantId String?
+  diff             Json?
+  resolution       String?
+
+  business RtBusiness    @relation(fields: [businessId], references: [id])
+  batch    RtImportBatch @relation(fields: [businessId, batchId], references: [businessId, id], onDelete: Cascade)
+
+  @@unique([businessId, batchId, rowNumber])
 }

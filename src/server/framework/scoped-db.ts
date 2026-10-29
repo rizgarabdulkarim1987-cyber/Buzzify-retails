@@ -62,6 +62,9 @@ const SCOPE_RULES = {
   RtPriceList: { business: "businessId" },
   RtPrice: { business: "businessId" },
   RtCatalogCounter: { business: "businessId" },
+  // Catalog import staging (Task 8/9): batches of an uploaded file and their rows.
+  RtImportBatch: { business: "businessId" },
+  RtImportRow: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**

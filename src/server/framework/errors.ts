@@ -24,7 +24,10 @@ export type ErrorCode =
   | "SKU_TAKEN"
   | "UNIT_RULE"
   | "TRACKING_RULE"
-  | "LAST_VARIANT";
+  | "LAST_VARIANT"
+  | "IMPORT_TOO_LARGE"
+  | "IMPORT_TOO_MANY_ROWS"
+  | "IMPORT_UNREADABLE";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -63,6 +66,9 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   UNIT_RULE: "إعداد الوحدة غير مقبول: تحقق من معامل التحويل ودقة الكمية واسم الوحدة، ووحدة الأساس لا تُؤرشف ولا يتغير معاملها.",
   TRACKING_RULE: "إعداد التتبع غير مقبول: تتبّع الصلاحية يتطلب التتبع بالدفعات، ومدة التنبيه قبل انتهاء الصلاحية لا تُحدَّد إلا مع تتبّع الصلاحية.",
   LAST_VARIANT: "لا يمكن أرشفة النسخة الوحيدة الفعّالة لهذا الصنف. أرشف الصنف نفسه بدلاً من ذلك.",
+  IMPORT_TOO_LARGE: "الملف كبير جداً. الحد الأقصى 5 ميجابايت.",
+  IMPORT_TOO_MANY_ROWS: "الملف يحتوي على صفوف أكثر من المسموح. الحد الأقصى 10000 صف، قسّم الملف إلى عدة ملفات.",
+  IMPORT_UNREADABLE: "تعذّرت قراءة الملف. استخدم ملف CSV أو Excel بصيغة xlsx، دون صيغ حسابية معقدة أو حماية بكلمة مرور.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

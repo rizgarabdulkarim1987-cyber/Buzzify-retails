@@ -238,6 +238,9 @@ export const en: Messages = {
     UNIT_RULE: "This unit setup is not allowed: check the conversion factor, the quantity decimals and the unit name. The base unit cannot be archived and its factor cannot change.",
     TRACKING_RULE: "This tracking setup is not allowed: tracking expiry requires batch tracking, and an expiry alert lead time can only be set when expiry is tracked.",
     LAST_VARIANT: "The only active variant of this product cannot be archived. Archive the product itself instead.",
+    IMPORT_TOO_LARGE: "The file is too large. The maximum is 5 MB.",
+    IMPORT_TOO_MANY_ROWS: "The file has more rows than allowed. The maximum is 10000 rows; split it into several files.",
+    IMPORT_UNREADABLE: "The file could not be read. Use a CSV file or an Excel xlsx file, without password protection.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };
