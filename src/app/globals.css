@@ -1348,3 +1348,262 @@ textarea.input {
   flex: 1 1 12rem;
   min-width: 0;
 }
+
+/* Catalog import ---------------------------------------------------------------------------------- */
+
+.import-wizard {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.import-wizard > .section + .section {
+  margin-block-start: 0;
+}
+
+.import-title {
+  overflow-wrap: anywhere;
+}
+
+.import-actions,
+.import-inline,
+.import-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.import-inline > .field {
+  flex: 1 1 12rem;
+}
+
+.import-pager {
+  align-items: center;
+  justify-content: center;
+  margin-block-start: var(--space-3);
+}
+
+.import-tip {
+  padding: var(--space-3);
+  border-inline-start: 3px solid var(--color-warn);
+  border-radius: var(--radius-sm);
+  background: var(--color-warn-soft);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+}
+
+.import-file {
+  padding-block: var(--space-2);
+}
+
+.import-map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
+  gap: var(--space-3);
+}
+
+.import-problems {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.import-presets {
+  display: grid;
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.import-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.5rem), 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.import-stat {
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.import-stat dt {
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+}
+
+.import-stat dd {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.import-stat[data-tone="danger"] {
+  border-color: var(--color-danger-line);
+  background: var(--color-danger-soft);
+}
+
+.import-stat[data-tone="danger"] dd {
+  color: var(--color-danger);
+}
+
+.import-notes {
+  margin: 0 0 var(--space-3);
+  padding-inline-start: var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.import-notes:empty {
+  display: none;
+}
+
+.import-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block-end: var(--space-3);
+}
+
+.import-tabs .btn[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-hover);
+}
+
+.import-rows td:first-child {
+  max-width: 16rem;
+}
+
+.import-row-name {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.import-row-code {
+  /* An LTR code inside an RTL cell: shrink to the code so it sits at the cell's start, under the name. */
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.import-row-details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-diff {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-diff-field {
+  color: var(--color-ink-2);
+}
+
+.import-diff del {
+  color: var(--color-ink-3);
+}
+
+.import-diff ins {
+  color: var(--color-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.import-reason {
+  display: block;
+  color: var(--color-ink-2);
+}
+
+.import-reason-danger {
+  color: var(--color-danger);
+}
+
+.import-choice {
+  min-width: 7.5rem;
+}
+
+.import-confirm {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.import-confirm > h2,
+.import-confirm > p {
+  margin: 0;
+}
+
+.import-file-link {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+@media (max-width: 40rem) {
+  .import-rows tr {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+
+  .import-rows td.import-row-details,
+  .import-rows td:last-child:has(.import-choice) {
+    grid-column: 1 / -1;
+  }
+
+  .import-choice {
+    width: 100%;
+  }
+}
+
+/* Setup step 4 (catalog) ------------------------------------------------------------------------ */
+
+.setup-catalog {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.setup-catalog-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.setup-trial {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+}
+
+.setup-trial h3 {
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+.title-row:has(.title-actions) {
+  flex-wrap: wrap;
+}
+
+.title-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
+
+.check-hint {
+  display: block;
+  font-weight: 400;
+}

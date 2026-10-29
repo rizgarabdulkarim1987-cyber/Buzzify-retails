@@ -124,8 +124,26 @@ export function prepareInput<I>(schema: ZodType<I>, raw: unknown, writes: boolea
  * actor resolution (FORBIDDEN for non-members and deactivated staff), permission (FORBIDDEN),
  * business gate (READ_ONLY), then the transaction: idempotency lookup, run, audit row, stored result.
  */
+/** What a defined action declares about itself (read by tests that enumerate every write). */
+export type ActionInfo = { name: string; writes: boolean; permission: Permission | null; allowWhenReadOnly: boolean };
+
+/** The declaration of a function made by defineAction, or null for any other value. */
+export function actionInfoOf(value: unknown): ActionInfo | null {
+  if (typeof value !== "function") return null;
+  const info = (value as { actionInfo?: unknown }).actionInfo;
+  return typeof info === "object" && info !== null ? (info as ActionInfo) : null;
+}
+
 export function defineAction<I, O>(spec: ActionSpec<I, O>) {
-  return async function action(raw: unknown, meta: ActionMeta): Promise<Result<O>> {
+  const info: ActionInfo = Object.freeze({
+    name: spec.name,
+    writes: spec.writes,
+    permission: spec.permission,
+    allowWhenReadOnly: spec.allowWhenReadOnly === true,
+  });
+  return Object.assign(action, { actionInfo: info });
+
+  async function action(raw: unknown, meta: ActionMeta): Promise<Result<O>> {
     const prepared = prepareInput(spec.input, raw, spec.writes, meta.idempotencyKey);
     if (!prepared) return failure("INVALID_INPUT");
     const { input } = prepared;
@@ -169,5 +187,5 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
     } catch (err) {
       return toFailure(spec.name, err);
     }
-  };
+  }
 }

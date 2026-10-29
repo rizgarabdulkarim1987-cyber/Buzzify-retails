@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { createProduct } from "@/server/catalog/products";
 import { AVAILABLE_STEPS, SETUP_STEPS, completeSetupStep, getSetupProgress, setupOverview } from "@/server/setup/progress";
 import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createPlan, createUser } from "../helpers/fixtures";
@@ -46,7 +47,7 @@ const step1 = (version: number) => ({
 });
 
 describe("setup progress", () => {
-  it("progress survives a reload and steps 4, 6, 7, 8, 9 stay PENDING", async () => {
+  it("progress survives a reload, only step 4 completes from the catalog, and steps 6, 7, 8, 9 stay PENDING", async () => {
     const { a } = await world();
 
     // Nothing stored yet: all nine steps read as PENDING.
@@ -85,6 +86,16 @@ describe("setup progress", () => {
       ),
     ).toMatchObject({ ok: true });
 
+    // Step 4 follows the catalog: a trial item does not complete it, a real product does.
+    const before = await getSetupProgress({}, a.as("owner"));
+    expect(before.ok && statusOf(before.value)[4]).toBe("PENDING");
+    const product = (nameAr: string, isTestData: boolean) =>
+      createProduct({ nameAr, isTestData, baseUnit: { name: "قطعة", barcodes: [] } }, a.as("owner"));
+    expect(await product("صنف تجربة", true)).toMatchObject({ ok: true });
+    const trialOnly = await getSetupProgress({}, a.as("owner"));
+    expect(trialOnly.ok && statusOf(trialOnly.value)[4]).toBe("PENDING");
+    expect(await product("سكر", false)).toMatchObject({ ok: true });
+
     // "Reload": a new read from the database, nothing kept in memory.
     const reloaded = await getSetupProgress({}, a.as("manager"));
     expect(reloaded.ok).toBe(true);
@@ -93,7 +104,7 @@ describe("setup progress", () => {
       1: "DONE",
       2: "DONE",
       3: "DONE",
-      4: "PENDING",
+      4: "DONE",
       5: "DONE",
       6: "PENDING",
       7: "PENDING",
@@ -124,9 +135,9 @@ describe("setup progress", () => {
     expect(overview).toMatchObject({ ok: true, value: { business: { name: "متجر النور", version: v + 2 } } });
   });
 
-  it("refuses steps 4, 6, 7, 8 and 9 with STEP_NOT_AVAILABLE and never marks them DONE", async () => {
+  it("refuses steps 6, 7, 8 and 9 with STEP_NOT_AVAILABLE and never marks them DONE", async () => {
     const { a } = await world();
-    for (const step of [4, 6, 7, 8, 9]) {
+    for (const step of [6, 7, 8, 9]) {
       expect(await completeSetupStep({ step, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "STEP_NOT_AVAILABLE" });
     }
     expect(await completeSetupStep({ step: 10, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
@@ -216,5 +227,28 @@ describe("setup progress", () => {
     ).toMatchObject({ ok: false, code: "NOT_FOUND" });
     expect((await db.rtBranch.findUniqueOrThrow({ where: { id: branchA.id } })).name).toBe("A");
     expect(await db.rtStaff.count({ where: { userId: u.id } })).toBe(0);
+  });
+  it("step 4: completeSetupStep refuses CATALOG_EMPTY until a real product or a real import exists, and an archived catalog reopens it", async () => {
+    const { a, b } = await world();
+    expect(await completeSetupStep({ step: 4, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "CATALOG_EMPTY" });
+    const trial = await createProduct({ nameAr: "تجربة", isTestData: true, baseUnit: { name: "قطعة", barcodes: [] } }, a.as("owner"));
+    expect(trial.ok).toBe(true);
+    expect(await completeSetupStep({ step: 4, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "CATALOG_EMPTY" });
+    const real = await createProduct({ nameAr: "رز", baseUnit: { name: "قطعة", barcodes: [] } }, a.as("owner"));
+    expect(real.ok).toBe(true);
+    if (!real.ok) return;
+    expect(await completeSetupStep({ step: 4, data: {} }, a.as("owner"))).toEqual({ ok: true, value: null });
+    expect(await db.rtSetupProgress.findFirst({ where: { businessId: a.business.id, step: 4 } })).toMatchObject({ status: "DONE" });
+    const overview = await setupOverview({}, a.as("owner"));
+    expect(overview).toMatchObject({ ok: true, value: { catalog: { products: 1, testProducts: 1, ready: true } } });
+
+    // Another business's catalog never completes this one's step.
+    const fromB = await getSetupProgress({}, b.as("owner"));
+    expect(fromB.ok && statusOf(fromB.value)[4]).toBe("PENDING");
+
+    // The page shows the live catalog: archiving the only real product reopens step 4.
+    await db.rtProduct.update({ where: { id: real.value.productId }, data: { archivedAt: new Date() } });
+    const after = await getSetupProgress({}, a.as("owner"));
+    expect(after.ok && after.value.find((s) => s.step === 4)).toMatchObject({ status: "PENDING", completedAt: null });
   });
 });

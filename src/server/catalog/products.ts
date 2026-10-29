@@ -1,12 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { Currency, RtTrackingMode } from "@/generated/prisma/enums";
 import { SKU_PATTERN, assertUnitFactor, normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
-import { defineAction } from "@/server/framework/action";
-import { ForbiddenError, NotFoundError, RuleError } from "@/server/framework/errors";
+import { defineAction, validKey, type ActionMeta } from "@/server/framework/action";
+import { ForbiddenError, NotFoundError, RuleError, failure, type Result } from "@/server/framework/errors";
 import { updateVersioned } from "@/server/framework/versioned";
 import { applyPrice, assertCurrencyEnabled, derivedUnitPrice, ensureDefaultLists, money } from "./price-core";
 
@@ -149,6 +149,8 @@ const createInput = z
     expiryAlertDays: trackingFields.expiryAlertDays.nullish().transform((v) => v ?? null),
     sku: sku.optional(),
     options: options.nullish().transform((v) => v ?? null),
+    /** A trial item (setup wizard): archiveTestProducts removes it before launch; it never completes setup step 4. */
+    isTestData: z.boolean().default(false),
     ...variantParts,
   })
   .strict()
@@ -437,6 +439,8 @@ export type NewCatalogItem = {
   pack: { name: string; factor: number; barcodes: string[] } | null;
   /** DEFAULT-list price from now on, of the pack when there is one, else of the base unit. */
   price: PriceInput | null;
+  /** A trial item (an import started from the setup wizard as trial items). */
+  isTestData?: boolean;
 };
 
 /**
@@ -481,6 +485,7 @@ export async function insertProductsCore(
       categoryId: r.item.categoryId,
       brandId: r.item.brandId,
       searchText: r.productText,
+      isTestData: r.item.isTestData === true,
     })),
   });
   if (rows.length > 0) await tx.rtVariant.createMany({
@@ -577,6 +582,7 @@ export const createProduct = defineAction({
         soldByWeight: input.soldByWeight,
         tracksExpiry: input.tracksExpiry,
         expiryAlertDays: input.expiryAlertDays,
+        isTestData: input.isTestData,
       },
       select: { id: true },
     });
@@ -653,6 +659,66 @@ export const unarchiveProduct = defineAction({
   },
   audit: (input) => audit("RtProduct", input.id, { input }),
 });
+
+// ---------------------------------------------------------------------------------------------
+// Trial items (setup wizard)
+
+/** Products archived per transaction by archiveTestProducts. */
+export const TEST_ARCHIVE_SLICE = 200;
+
+export type TestArchiveSlice = { archived: number; done: boolean };
+
+/**
+ * One slice of archiveTestProducts: up to TEST_ARCHIVE_SLICE active trial products (isTestData),
+ * each under its product lock taken in sorted id order (the catalog's lock order), archived the
+ * way archiveProduct does it (archivedAt, version + 1; barcodes and SKUs stay reserved).
+ *
+ * Refusing once the business has sales: R1 has no sales tables, so there is nothing to check yet.
+ * When R3 adds sales, this must refuse (a trial item that was sold is history, not a trial).
+ */
+export const archiveTestProductsSlice = defineAction({
+  name: "catalog.product.archiveTestData",
+  permission: "catalog.manage",
+  input: z.object({}).strict(),
+  writes: true,
+  async run({ tx, lockBusiness }): Promise<TestArchiveSlice> {
+    const found = await tx.rtProduct.findMany({
+      where: { isTestData: true, archivedAt: null },
+      orderBy: { id: "asc" },
+      take: TEST_ARCHIVE_SLICE,
+      select: { id: true },
+    });
+    const ids = found.map((p) => p.id);
+    for (const id of ids) await lockBusiness(productLock(id));
+    const { count } = ids.length
+      ? await tx.rtProduct.updateMany({
+          where: { id: { in: ids }, isTestData: true, archivedAt: null },
+          data: { archivedAt: new Date(), version: { increment: 1 } },
+        })
+      : { count: 0 };
+    return { archived: count, done: ids.length < TEST_ARCHIVE_SLICE };
+  },
+  audit: (_input, value) => audit("RtProduct", "", { archivedTestProducts: value.archived }),
+});
+
+/**
+ * Archives every active trial product of the business, TEST_ARCHIVE_SLICE per transaction, and
+ * returns how many. Each slice is an idempotent write keyed from the caller's key and the slice
+ * number (as commitImport does), so repeating the call with the same key does not redo finished slices.
+ */
+export async function archiveTestProducts(raw: unknown, meta: ActionMeta): Promise<Result<{ archived: number }>> {
+  if (!validKey(meta.idempotencyKey)) return failure("INVALID_INPUT");
+  const base = createHash("sha256").update(meta.idempotencyKey).digest("hex").slice(0, 40);
+  let archived = 0;
+  // Bounded: a business never has more products than this many slices can hold in R1.
+  for (let n = 1; n <= 1_000; n += 1) {
+    const r = await archiveTestProductsSlice(raw, { ...meta, idempotencyKey: `test-archive:${base}:${n}` });
+    if (!r.ok) return r;
+    archived += r.value.archived;
+    if (r.value.done) return { ok: true, value: { archived } };
+  }
+  return { ok: true, value: { archived } };
+}
 
 /** One product with its category and brand (names shown even when archived) and every variant, unit and barcode. */
 export const getProduct = defineAction({

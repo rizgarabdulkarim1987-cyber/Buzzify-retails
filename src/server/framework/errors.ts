@@ -29,7 +29,8 @@ export type ErrorCode =
   | "IMPORT_TOO_MANY_ROWS"
   | "IMPORT_UNREADABLE"
   | "IMPORT_NOT_VALIDATED"
-  | "IMPORT_ALREADY_COMMITTED";
+  | "IMPORT_ALREADY_COMMITTED"
+  | "CATALOG_EMPTY";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -73,6 +74,7 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   IMPORT_UNREADABLE: "تعذّرت قراءة الملف. استخدم ملف CSV أو Excel بصيغة xlsx، دون حماية بكلمة مرور.",
   IMPORT_NOT_VALIDATED: "راجع الملف (المعاينة) أولاً، ثم احفظ.",
   IMPORT_ALREADY_COMMITTED: "حُفظت سطور من هذا الملف في الكتالوج، فلا يمكن حذفه ولا تغيير تخطيط أعمدته.",
+  CATALOG_EMPTY: "لا تكتمل خطوة الكتالوج قبل إضافة صنف فعلي واحد على الأقل (أصناف التجربة لا تُحسب) أو استيراد ملف بنجاح.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

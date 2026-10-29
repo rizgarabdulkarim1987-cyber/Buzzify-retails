@@ -18,7 +18,11 @@ test("the owner completes setup step 1 and sees it DONE after a reload", async (
   const step1 = page.getByTestId("setup-step-1");
   await expect(step1).toHaveAttribute("data-status", "PENDING");
   // The "soon" steps show no form.
-  await expect(page.getByTestId("setup-step-4")).toHaveAttribute("data-status", "SOON");
+  await expect(page.getByTestId("setup-step-6")).toHaveAttribute("data-status", "SOON");
+  await expect(page.getByTestId("setup-form-6")).toHaveCount(0);
+  // Step 4 follows the catalog: the seeded (real) products already complete it; it has no form of its own.
+  await expect(page.getByTestId("setup-step-4")).toHaveAttribute("data-status", "DONE");
+  await expect(page.getByTestId("setup-step-4").getByTestId("setup-catalog")).toBeVisible();
   await expect(page.getByTestId("setup-form-4")).toHaveCount(0);
 
   // Saved with the values already there (the business name is shared with other specs).

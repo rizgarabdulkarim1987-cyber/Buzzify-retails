@@ -105,7 +105,7 @@ const json = (v: unknown) => v as Prisma.InputJsonValue;
 async function findBatch(tx: Tx, batchId: string) {
   const batch = await tx.rtImportBatch.findFirst({
     where: { id: batchId },
-    select: { id: true, status: true, fileName: true, fileHash: true, columns: true, mapping: true, stats: true, version: true, createdAt: true, createdById: true },
+    select: { id: true, status: true, fileName: true, fileHash: true, columns: true, mapping: true, stats: true, isTestData: true, version: true, createdAt: true, createdById: true },
   });
   if (!batch) throw new NotFoundError();
   return batch;
@@ -138,6 +138,8 @@ export const stageImport = defineAction({
       fileName: z.string().trim().min(1).max(255),
       // A hard cap well above the real limit; the real limit gives IMPORT_TOO_LARGE in run.
       contentBase64: z.string().max(MAX_BASE64_LENGTH * 2),
+      /** Trial items (an import started from the setup wizard): the products it creates get isTestData. */
+      isTestData: z.boolean().default(false),
     })
     .strict(),
   async run({ actor, tx, input }): Promise<StagedImport> {
@@ -166,6 +168,7 @@ export const stageImport = defineAction({
         fileHash,
         columns: parsed.headers,
         stats: { total: parsed.rows.length },
+        isTestData: input.isTestData,
         createdById: actor.userId,
       },
       select: { id: true },
@@ -718,6 +721,7 @@ async function runSlice(
           }
         : null,
       price: canPrice ? priceOf(n) : null,
+      isTestData: batch.isTestData,
     };
   });
   const extraBarcodes = updates.flatMap((r) => {
@@ -876,7 +880,7 @@ export const downloadRejected = defineAction({
 // ---------------------------------------------------------------------------------------------
 // Batches
 
-const batchSummarySelect = { id: true, fileName: true, status: true, stats: true, createdAt: true, createdById: true } as const;
+const batchSummarySelect = { id: true, fileName: true, status: true, stats: true, isTestData: true, createdAt: true, createdById: true } as const;
 
 /** The business's batches, newest first, PAGE_SIZE per page; counts only, never rows. */
 export const listImportBatches = defineAction({
@@ -929,6 +933,27 @@ export const getImportBatch = defineAction({
     const { fileHash: _hash, ...rest } = batch;
     void _hash;
     return { ...rest, rows, rowCount, committedRows };
+  },
+});
+
+/**
+ * The row numbers of a batch's CHANGED rows (at most MAX_IMPORT_ROWS numbers, no cells), so a screen
+ * that shows one page at a time can send a per-row choice for every changed row.
+ */
+export const listChangedRows = defineAction({
+  name: "catalog.import.changed",
+  permission: "catalog.import",
+  writes: false,
+  input: z.object({ batchId: id }).strict(),
+  async run({ tx, input }): Promise<number[]> {
+    const batch = await findBatch(tx, input.batchId);
+    const rows = await tx.rtImportRow.findMany({
+      where: { batchId: batch.id, status: "CHANGED" },
+      orderBy: { rowNumber: "asc" },
+      take: MAX_IMPORT_ROWS,
+      select: { rowNumber: true },
+    });
+    return rows.map((r) => r.rowNumber);
   },
 });
 

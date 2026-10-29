@@ -21,6 +21,8 @@ type Props = {
   /** The user holds price.change: the price field exists. Otherwise products are added without a price. */
   canPrice: boolean;
   currency: "IQD" | "USD";
+  /** Opened from setup step 4: a "these are trial items" box is offered (off by default). */
+  trialOption?: boolean;
 };
 
 type Added = { id: string; productId: string; name: string; barcode: string; price: string | null };
@@ -35,7 +37,7 @@ const KEEP = 10;
  * Enter saves and the form is empty again with the cursor back on the barcode, with no page
  * change. A barcode that already exists opens that product instead (no duplicate is made).
  */
-export function QuickEntry({ locale, t, categories: initialCategories, canPrice, currency }: Props) {
+export function QuickEntry({ locale, t, categories: initialCategories, canPrice, currency, trialOption = false }: Props) {
   const router = useRouter();
   const hydrated = useHydrated();
   const e = t.catalog.entry;
@@ -53,6 +55,7 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
   const [busy, setBusy] = useState<"idle" | "saving">("idle");
   const [status, setStatus] = useState<Status>(null);
   const [added, setAdded] = useState<Added[]>([]);
+  const [trial, setTrial] = useState(false);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const categoryRef = useRef<HTMLInputElement>(null);
@@ -159,7 +162,7 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
     setBusy("saving");
     setStatus(null);
     try {
-      const result = await quickCreateAction(key.current, { barcode, name, categoryId: chosenCategory, price: canPrice ? price : "" });
+      const result = await quickCreateAction(key.current, { barcode, name, categoryId: chosenCategory, price: canPrice ? price : "", isTestData: trialOption && trial });
       if (!result.ok) {
         failWith(result);
         if (result.code === "BAD_PRICE") priceRef.current?.select();
@@ -394,6 +397,18 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
         ) : (
           <p className="muted">{e.noPriceNote}</p>
         )}
+
+        {trialOption ? (
+          <label className="check">
+            <input type="checkbox" checked={trial} onChange={(ev) => setTrial(ev.target.checked)} disabled={!hydrated} data-testid="qe-trial" />
+            <span>
+              {e.trialLabel}
+              <span className="hint check-hint">
+                {e.trialHint}
+              </span>
+            </span>
+          </label>
+        ) : null}
 
         <div className="qe-actions">
           <button type="button" className="btn btn-primary" disabled={!hydrated || busy !== "idle"} aria-busy={busy !== "idle"} onClick={() => void save()} data-testid="qe-save">

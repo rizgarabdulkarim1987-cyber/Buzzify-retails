@@ -7,11 +7,10 @@ import { searchCatalog, type CatalogHit } from "@/server/catalog/search";
 import { createCategory } from "@/server/catalog/taxonomy";
 import { normalizeBarcode, parseMoneyText } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
-import { IdempotencyMismatchError, InternalActionError, type Result } from "@/server/framework/errors";
-import type { ActionMeta } from "@/server/framework/action";
 import { getLocale } from "../../_lib/i18n";
 import { messagesFor } from "@/messages";
 import { loadShell } from "../_shell";
+import { call, fail, metaFor } from "./_lib/call";
 import { resolveStartDate, wholeNumber } from "./_lib/numbers";
 import type { CategoryDto, Currency, HitDto, SearchPage, UiResult } from "./_lib/types";
 
@@ -25,28 +24,6 @@ import type { CategoryDto, Currency, HitDto, SearchPage, UiResult } from "./_lib
  */
 
 type Wire = Record<string, unknown>;
-
-const fail = (code: Extract<UiResult<never>, { ok: false }>["code"]): UiResult<never> => ({ ok: false, code });
-
-async function metaFor(key: unknown): Promise<ActionMeta | null> {
-  const shell = await loadShell();
-  if (!shell?.businessId) return null;
-  return { userId: shell.user.id, businessId: shell.businessId, idempotencyKey: typeof key === "string" ? key : "" };
-}
-
-async function call<T, V = T>(key: unknown, run: (meta: ActionMeta) => Promise<Result<T>>, map?: (v: T) => V): Promise<UiResult<V>> {
-  const meta = await metaFor(key);
-  if (!meta) return fail("FORBIDDEN");
-  try {
-    const r = await run(meta);
-    if (!r.ok) return r.details ? { ok: false, code: r.code, details: r.details } : { ok: false, code: r.code };
-    return { ok: true, value: map ? map(r.value) : (r.value as unknown as V) };
-  } catch (err) {
-    if (err instanceof IdempotencyMismatchError) return fail("IDEMPOTENCY_MISMATCH");
-    if (err instanceof InternalActionError) return fail("INTERNAL");
-    throw err;
-  }
-}
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const optId = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
@@ -156,6 +133,7 @@ export async function quickCreateAction(key: unknown, input: Wire): Promise<UiRe
           categoryId: optId(input.categoryId),
           baseUnit: { name: t.catalog.defaultUnit, barcodes: barcode ? [barcode] : [] },
           ...(amount !== null ? { price: { currency, amountMinor: amount } } : {}),
+          isTestData: input.isTestData === true,
         },
         m,
       ),

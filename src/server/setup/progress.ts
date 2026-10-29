@@ -12,10 +12,16 @@ import { ForbiddenError, NotFoundError, RuleError } from "@/server/framework/err
 import { updateVersioned } from "@/server/framework/versioned";
 
 /*
- * The setup wizard: nine steps a new business walks through. R0 implements steps 1, 2, 3 and 5;
- * the others are shown as "soon", stay PENDING, and completeSetupStep refuses them with
- * STEP_NOT_AVAILABLE. Progress rows are created lazily: a business with no rows reads as nine
- * PENDING steps, and the first completed step inserts all nine.
+ * The setup wizard: nine steps a new business walks through. R0 implements steps 1, 2, 3 and 5,
+ * R1 step 4 (the catalog); the others are shown as "soon", stay PENDING, and completeSetupStep
+ * refuses them with STEP_NOT_AVAILABLE. Progress rows are created lazily: a business with no rows
+ * reads as nine PENDING steps, and the first completed step inserts all nine.
+ *
+ * Step 4 follows the catalog itself (spec R1 7.15): it reads as DONE while the business has at least
+ * one active product that is not a trial item (isTestData), or an import that is not a trial import
+ * put at least one row into the catalog. Trial items never complete it: the point is a real catalog
+ * before launch. completeSetupStep(4) checks the same condition (CATALOG_EMPTY otherwise) and
+ * stores DONE, but the page always shows the live condition (archiving every product reopens it).
  *
  * Every step is an ordinary business action (permission staff.manage: OWNER and MANAGER), so it
  * is audited, idempotent by key, and refused while the business is READ_ONLY or CLOSED. Editing
@@ -26,9 +32,10 @@ type Tx = Prisma.TransactionClient;
 
 export const SETUP_STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 export type StepNumber = (typeof SETUP_STEPS)[number];
-/** The steps R0 can complete. */
-export const AVAILABLE_STEPS = [1, 2, 3, 5] as const;
-const SOON_STEPS = [4, 6, 7, 8, 9] as const;
+/** The steps this release can complete. */
+export const AVAILABLE_STEPS = [1, 2, 3, 4, 5] as const;
+const SOON_STEPS = [6, 7, 8, 9] as const;
+const CATALOG_STEP = 4;
 
 /** Stable keys (message keys in the UI). */
 export const STEP_KEYS = {
@@ -135,6 +142,7 @@ const stepInput = z.discriminatedUnion("step", [
   z.object({ step: z.literal(1), data: businessData }).strict(),
   z.object({ step: z.literal(2), data: branchesData }).strict(),
   z.object({ step: z.literal(3), data: activityData }).strict(),
+  z.object({ step: z.literal(4), data: z.object({}).strict().default({}) }).strict(),
   z.object({ step: z.literal(5), data: staffData }).strict(),
   z.object({ step: z.literal([...SOON_STEPS]), data: z.unknown() }).strict(),
 ]);
@@ -208,6 +216,14 @@ async function saveStaff(tx: Tx, actor: Actor, d: z.infer<typeof staffData>) {
   }
 }
 
+/** True while the catalog completes step 4: a real (not trial) active product, or a real import that committed a row. */
+async function catalogReady(tx: Tx): Promise<boolean> {
+  const product = await tx.rtProduct.findFirst({ where: { archivedAt: null, isTestData: false }, select: { id: true } });
+  if (product) return true;
+  const imported = await tx.rtImportRow.findFirst({ where: { status: "COMMITTED", batch: { is: { isTestData: false } } }, select: { id: true } });
+  return imported !== null;
+}
+
 async function markDone(tx: Tx, actor: Actor, step: StepNumber) {
   await tx.rtSetupProgress.createMany({
     data: SETUP_STEPS.map((s) => ({ businessId: actor.businessId, step: s })),
@@ -243,6 +259,9 @@ const completeStep = defineAction({
       case 3:
         await saveActivity(tx, actor, input.data);
         break;
+      case 4:
+        if (!(await catalogReady(tx))) throw new RuleError("CATALOG_EMPTY");
+        break;
       case 5:
         await saveStaff(tx, actor, input.data);
         break;
@@ -263,8 +282,9 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
  * - 1: `{ name, defaultCurrency, enabledCurrencies, timezone?, expectedVersion }` (the business's version)
  * - 2: `{ branches: [{ id, name, expectedVersion } | { name, storeName? }] }` (rename or add; a new branch gets one store)
  * - 3: `{ activityType, capabilities, expectedVersion }` (the business's version; replaces the enabled set)
+ * - 4: `{}` (checks the catalog: CATALOG_EMPTY until a real product or a real import exists)
  * - 5: `{ staff: [{ email, role, branchIds }] }` (adds existing accounts as staff; may be empty)
- * Steps 4, 6, 7, 8 and 9 return STEP_NOT_AVAILABLE. On success the value is null.
+ * Steps 6, 7, 8 and 9 return STEP_NOT_AVAILABLE. On success the value is null.
  */
 export async function completeSetupStep(raw: unknown, meta: ActionMeta): Promise<Result<null>> {
   // Step 5 names people by email; the user id is resolved here (tenant code cannot read the User
@@ -284,7 +304,7 @@ export async function completeSetupStep(raw: unknown, meta: ActionMeta): Promise
 // ---------------------------------------------------------------------------------------------
 // Reads
 
-/** The nine steps with their stored status (PENDING when no row exists yet). */
+/** The nine steps with their stored status (PENDING when no row exists yet); step 4 with the catalog's live status. */
 export const getSetupProgress = defineAction({
   name: "setup.progress",
   permission: "staff.manage",
@@ -293,15 +313,17 @@ export const getSetupProgress = defineAction({
   async run({ tx }): Promise<SetupStep[]> {
     const rows = await tx.rtSetupProgress.findMany({ select: { step: true, status: true, isTestData: true, completedAt: true } });
     const byStep = new Map(rows.map((r) => [r.step, r]));
+    const catalogDone = await catalogReady(tx);
     return SETUP_STEPS.map((step) => {
       const row = byStep.get(step);
+      const stored: SetupStatus = row?.status ?? "PENDING";
       return {
         step,
         key: STEP_KEYS[step],
-        status: row?.status ?? "PENDING",
+        status: step === CATALOG_STEP ? (catalogDone ? "DONE" : "PENDING") : stored,
         available: (AVAILABLE_STEPS as readonly number[]).includes(step),
         isTestData: row?.isTestData ?? false,
-        completedAt: row?.completedAt ?? null,
+        completedAt: step === CATALOG_STEP && !catalogDone ? null : (row?.completedAt ?? null),
       };
     });
   },
@@ -319,6 +341,8 @@ export type SetupOverview = {
   capabilities: Capability[];
   branches: { id: string; name: string; version: number; stores: string[] }[];
   staff: { id: string; userId: string; role: RtRole; branchIds: string[] }[];
+  /** Step 4: active products that count (not trial items), active trial items, and whether step 4 is complete. */
+  catalog: { products: number; testProducts: number; ready: boolean };
 };
 
 /** What the wizard's forms show: the business, its enabled capabilities, branches with stores, and staff. */
@@ -348,7 +372,13 @@ export const setupOverview = defineAction({
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     const links = await tx.rtStaffBranch.findMany({ select: { staffId: true, branchId: true } });
+    const catalog = {
+      products: await tx.rtProduct.count({ where: { archivedAt: null, isTestData: false } }),
+      testProducts: await tx.rtProduct.count({ where: { archivedAt: null, isTestData: true } }),
+      ready: await catalogReady(tx),
+    };
     return {
+      catalog,
       business,
       capabilities: CAPABILITIES.filter((c) => capabilities.includes(c)),
       branches: branches.map((b) => ({ ...b, stores: locations.filter((l) => l.branchId === b.id).map((l) => l.name) })),

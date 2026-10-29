@@ -21,6 +21,7 @@ import {
 import { getI18n } from "../../_lib/i18n";
 import { Notice, StateBlock } from "../../_ui/state";
 import { requireShell } from "../_shell";
+import { CatalogStep } from "./catalog-step";
 import { StepForm } from "./step-form";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,7 @@ export default async function SetupPage() {
   const done = steps.filter((s) => s.available && s.status === "DONE").length;
   const formT = { ...t.setup, errors: t.errors, internalError: t.internalError };
 
+
   return (
     <main className="page">
       <div className="page-head">
@@ -111,7 +113,18 @@ export default async function SetupPage() {
               </h2>
               <StatusBadge step={s} t={t} />
             </div>
-            {s.available ? (
+            {s.step === 4 ? (
+              <CatalogStep
+                locale={locale}
+                businessId={businessId}
+                products={overview.value.catalog.products}
+                testProducts={overview.value.catalog.testProducts}
+                canImport={role !== null && can(role, "catalog.import")}
+                canManage={role !== null && can(role, "catalog.manage")}
+                disabled={readOnly}
+                t={formT}
+              />
+            ) : s.available ? (
               <StepForm step={s.step} businessId={businessId} idempotencyKey={randomUUID()} disabled={readOnly} t={formT}>
                 <StepFields step={s.step} overview={overview.value} labels={labels} role={role} locale={locale} t={t} />
               </StepForm>

@@ -9,8 +9,12 @@ import { QuickEntry } from "./quick-entry";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewProductsPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function NewProductsPage({ searchParams }: { searchParams: SearchParams }) {
   const { locale, t } = await getI18n();
+  // Opened from setup step 4: the products can be marked as trial items (archived before launch).
+  const fromSetup = (await searchParams).from === "setup";
   const access = await loadCatalogAccess();
   if (!access.ok) return <RefusedPage code={access.code} t={t} />;
   if (!access.canManage) {
@@ -40,13 +44,13 @@ export default async function NewProductsPage() {
       <div className="page-head">
         <div className="title-row">
           <h1>{t.catalog.entry.title}</h1>
-          <Link href="/retail/catalog" className="btn btn-secondary catalog-add">
-            {t.catalog.entry.back}
+          <Link href={fromSetup ? "/retail/setup" : "/retail/catalog"} className="btn btn-secondary catalog-add">
+            {fromSetup ? t.catalog.entry.backToSetup : t.catalog.entry.back}
           </Link>
         </div>
         <p>{t.catalog.entry.intro}</p>
       </div>
-      <QuickEntry locale={locale} t={t} categories={list} canPrice={access.canPrice} currency={access.context.defaultCurrency} />
+      <QuickEntry locale={locale} t={t} categories={list} canPrice={access.canPrice} currency={access.context.defaultCurrency} trialOption={fromSetup} />
     </main>
   );
 }

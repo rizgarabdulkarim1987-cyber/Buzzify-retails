@@ -6,7 +6,7 @@ import { can } from "@/server/domain/permissions";
 import { requireShell } from "../../_shell";
 
 export type CatalogAccess =
-  | { ok: true; meta: ActionMeta; context: CatalogContext; canManage: boolean; canPrice: boolean }
+  | { ok: true; meta: ActionMeta; context: CatalogContext; canManage: boolean; canPrice: boolean; canImport: boolean }
   | { ok: false; code: ErrorCode };
 
 /**
@@ -26,5 +26,6 @@ export async function loadCatalogAccess(): Promise<CatalogAccess> {
     context: context.value,
     canManage: can(context.value.role, "catalog.manage"),
     canPrice: can(context.value.role, "price.change"),
+    canImport: can(context.value.role, "catalog.import"),
   };
 }

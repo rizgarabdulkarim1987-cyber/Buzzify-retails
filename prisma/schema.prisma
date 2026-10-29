@@ -568,6 +568,8 @@ model RtProduct {
   expiryAlertDays Int?
   // Normalised search text (all names), kept up to date by the catalog actions.
   searchText      String         @default("")
+  // A trial item entered during setup; archiveTestProducts removes these before launch.
+  isTestData      Boolean        @default(false)
   archivedAt      DateTime?
   version         Int            @default(1)
   createdAt       DateTime       @default(now())
@@ -732,6 +734,8 @@ model RtImportBatch {
   columns     Json
   mapping     Json?
   stats       Json
+  // Started from the setup wizard as trial items: the products it creates get isTestData.
+  isTestData  Boolean           @default(false)
   createdById String
   version     Int               @default(1)
   createdAt   DateTime          @default(now())

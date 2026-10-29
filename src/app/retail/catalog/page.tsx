@@ -58,10 +58,19 @@ export default async function CatalogPage({ searchParams }: { searchParams: Sear
       <div className="page-head">
         <div className="title-row">
           <h1>{t.catalog.title}</h1>
-          {access.canManage ? (
-            <Link href="/retail/catalog/new" className="btn btn-primary catalog-add" data-testid="catalog-add">
-              {t.catalog.list.add}
-            </Link>
+          {access.canImport || access.canManage ? (
+            <div className="title-actions">
+              {access.canImport ? (
+                <Link href="/retail/catalog/import" className="btn btn-secondary" data-testid="catalog-import">
+                  {t.catalog.list.importFile}
+                </Link>
+              ) : null}
+              {access.canManage ? (
+                <Link href="/retail/catalog/new" className="btn btn-primary" data-testid="catalog-add">
+                  {t.catalog.list.add}
+                </Link>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>
