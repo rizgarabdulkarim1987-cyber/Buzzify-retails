@@ -19,24 +19,24 @@ describe("permissions", () => {
     const writes = ["price.change", "discount.override", "refund", "stock.receive", "stock.transfer", "supplier.pay", "staff.manage"] as const;
     const set = permissionsOf("AUDITOR");
     for (const p of writes) expect(set.has(p)).toBe(false);
-    expect([...set]).toEqual(["multiBranch.access"]);
+    expect([...set].sort()).toEqual(["multiBranch.access", "stock.view"]);
   });
 
   it("OWNER holds every permission", () => {
     const all = new Set(Object.values(ROLE_PERMISSIONS).flat());
-    expect(permissionsOf("OWNER").size).toBe(16);
-    expect(all.size).toBe(16);
+    expect(permissionsOf("OWNER").size).toBe(18);
+    expect(all.size).toBe(18);
   });
 
   it("pins the whole role matrix", () => {
     const expected: Record<RtRole, Permission[]> = {
       OWNER: [...PERMISSIONS],
-      MANAGER: ["price.change", "discount.override", "return.noInvoice", "refund", "count.adjust.approve", "stock.receive", "stock.transfer", "staff.manage", "ai.use", "multiBranch.access", "catalog.manage", "catalog.import"],
-      CASHIER: [],
-      STOCK: ["stock.receive", "stock.transfer", "catalog.manage"],
-      PURCHASING: ["stock.receive", "ai.use"],
-      ACCOUNTANT: ["cost.view", "data.export", "supplier.pay", "multiBranch.access"],
-      AUDITOR: ["multiBranch.access"],
+      MANAGER: ["price.change", "discount.override", "return.noInvoice", "refund", "count.adjust.approve", "stock.receive", "stock.transfer", "staff.manage", "ai.use", "multiBranch.access", "catalog.manage", "catalog.import", "stock.adjust", "stock.view"],
+      CASHIER: ["stock.view"],
+      STOCK: ["stock.receive", "stock.transfer", "catalog.manage", "stock.adjust", "stock.view"],
+      PURCHASING: ["stock.receive", "ai.use", "stock.view"],
+      ACCOUNTANT: ["cost.view", "data.export", "supplier.pay", "multiBranch.access", "stock.view"],
+      AUDITOR: ["multiBranch.access", "stock.view"],
     };
     expect(Object.keys(ROLE_PERMISSIONS).sort()).toEqual(Object.keys(expected).sort());
     for (const role of Object.keys(expected) as RtRole[]) {
@@ -50,7 +50,19 @@ describe("permissions", () => {
     expect(roles.filter((r) => can(r, "catalog.import")).sort()).toEqual(["MANAGER", "OWNER"]);
     expect(PERMISSIONS).toContain("catalog.manage");
     expect(PERMISSIONS).toContain("catalog.import");
-    expect(PERMISSIONS.length).toBe(16);
+    expect(PERMISSIONS.length).toBe(18);
+    expect(Object.isFrozen(PERMISSIONS)).toBe(true);
+  });
+
+  it("stock.adjust and stock.view follow the matrix and the permission table stays frozen", () => {
+    const roles = Object.keys(ROLE_PERMISSIONS) as RtRole[];
+    expect(roles.filter((r) => can(r, "stock.adjust")).sort()).toEqual(["MANAGER", "OWNER", "STOCK"]);
+    expect(roles.filter((r) => can(r, "stock.view")).sort()).toEqual(
+      ["ACCOUNTANT", "AUDITOR", "CASHIER", "MANAGER", "OWNER", "PURCHASING", "STOCK"],
+    );
+    expect(PERMISSIONS).toContain("stock.adjust");
+    expect(PERMISSIONS).toContain("stock.view");
+    expect(PERMISSIONS.length).toBe(18);
     expect(Object.isFrozen(PERMISSIONS)).toBe(true);
   });
 

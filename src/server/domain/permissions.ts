@@ -17,6 +17,8 @@ const PERMISSION_LIST = [
   "support.grant",
   "catalog.manage",
   "catalog.import",
+  "stock.adjust",
+  "stock.view",
 ] as const;
 
 export type Permission = (typeof PERMISSION_LIST)[number];
@@ -40,12 +42,14 @@ export const ROLE_PERMISSIONS: Readonly<Record<RtRole, readonly Permission[]>> =
     "multiBranch.access",
     "catalog.manage",
     "catalog.import",
+    "stock.adjust",
+    "stock.view",
   ]),
-  CASHIER: frozen([]),
-  STOCK: frozen(["stock.receive", "stock.transfer", "catalog.manage"]),
-  PURCHASING: frozen(["stock.receive", "ai.use"]),
-  ACCOUNTANT: frozen(["cost.view", "data.export", "supplier.pay", "multiBranch.access"]),
-  AUDITOR: frozen(["multiBranch.access"]),
+  CASHIER: frozen(["stock.view"]),
+  STOCK: frozen(["stock.receive", "stock.transfer", "catalog.manage", "stock.adjust", "stock.view"]),
+  PURCHASING: frozen(["stock.receive", "ai.use", "stock.view"]),
+  ACCOUNTANT: frozen(["cost.view", "data.export", "supplier.pay", "multiBranch.access", "stock.view"]),
+  AUDITOR: frozen(["multiBranch.access", "stock.view"]),
 });
 
 export function permissionsOf(role: RtRole): ReadonlySet<Permission> {
