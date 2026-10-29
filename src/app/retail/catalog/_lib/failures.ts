@@ -18,6 +18,10 @@ export function failureMessage(t: Messages, failure: UiFailure): string {
       return t.catalog.entry.nameRequired;
     case "BAD_FACTOR":
       return t.catalog.product.badFactor;
+    case "BAD_NUMBER":
+      return t.catalog.product.badNumber;
+    case "BAD_OPTIONS":
+      return t.catalog.product.badOptions;
     case "BAD_DATE":
       return t.catalog.product.badDate;
     default:

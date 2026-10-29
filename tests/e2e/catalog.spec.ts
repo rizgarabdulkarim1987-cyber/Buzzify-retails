@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { en } from "../../src/messages/en";
-import { CASHIER, LONG_PRODUCT_NAME, OWNER, PASSWORD, SUGAR } from "./fixtures";
+import { ar } from "../../src/messages/ar";
+import { CASHIER, LONG_PRODUCT_NAME, MANAGER, OWNER, PASSWORD, SUGAR } from "./fixtures";
 
 async function signIn(page: Page, email: string) {
   await page.goto("/login");
@@ -57,13 +58,19 @@ test("scanning an existing barcode opens that product instead of creating a dupl
   await expect(page.getByTestId("qe-barcode")).toBeFocused();
   await page.keyboard.type(SUGAR.barcode);
   await page.keyboard.press("Enter");
+  // The cursor is on the name at once: typing right away must not wait for the lookup.
+  await expect(page.getByTestId("qe-name")).toBeFocused();
+  await page.keyboard.type("اسم مؤقت");
 
-  await expect(page).toHaveURL(/\/retail\/catalog\/[A-Za-z0-9_-]+$/);
+  // The product page of the existing item (not /new), with the right product.
+  await expect(page).toHaveURL(/\/retail\/catalog\/(?!new)[A-Za-z0-9_-]+(\?existing=1)?$/);
   await expect(page.getByTestId("product-name-ar")).toHaveValue(SUGAR.nameAr);
 
   await page.goto("/retail/catalog");
   await page.getByTestId("catalog-search").fill("سكر ناعم");
   await expect(page.getByTestId("catalog-row")).toHaveCount(1);
+  await page.getByTestId("catalog-search").fill("اسم مؤقت");
+  await expect(page.getByTestId("catalog-no-results")).toBeVisible();
 });
 
 test("a cashier sees the catalog but no edit controls", async ({ page }) => {
@@ -133,4 +140,72 @@ test("the list shows prices with the interface digits", async ({ page, context }
   await expect(priceEn).toContainText("1,250");
   await expect(priceEn).not.toContainText("١");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(en.catalog.title);
+});
+
+test("a manager adds a variant to a product", async ({ page }) => {
+  await signIn(page, MANAGER.email);
+  await page.goto("/retail/catalog");
+  await page.getByTestId("catalog-row").filter({ hasText: SUGAR.nameAr }).getByRole("link").first().click();
+  await expect(page.getByTestId("variant-add-form")).toBeVisible();
+  await expect(page.getByTestId("variant")).toHaveCount(1);
+
+  await page.getByTestId("variant-opt-key-0").fill("الحجم");
+  await page.getByTestId("variant-opt-value-0").fill("كبير");
+  await page.getByTestId("variant-add-submit").click();
+  await expect(page.getByTestId("variant")).toHaveCount(2);
+  await expect(page.getByTestId("variant").filter({ hasText: "الحجم: كبير" })).toBeVisible();
+
+  // No option at all: a clear message, nothing added.
+  await page.getByTestId("variant-add-submit").click();
+  await expect(page.getByText(ar.catalog.product.badOptions)).toBeVisible();
+  await expect(page.getByTestId("variant")).toHaveCount(2);
+});
+
+test("digits in any script work, a past price date is refused, an archived product can be restored", async ({ page }) => {
+  await signIn(page, OWNER.email);
+  // A product of its own, added by the keyboard.
+  await page.goto("/retail/catalog/new");
+  await expect(page.getByTestId("qe-barcode")).toBeFocused();
+  await page.keyboard.type("7100000000019");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("منتج للاختبار");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("١٥٠٠");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("qe-added-item")).toHaveCount(1);
+  await page.getByTestId("qe-added-item").getByRole("link").click();
+  await expect(page.getByTestId("product-name-ar")).toHaveValue("منتج للاختبار");
+
+  // A carton of "١٢" (Arabic-Indic digits) is accepted, with its suggested price.
+  const add = page.getByTestId("unit-add-form");
+  await add.locator('input[name="name"]').fill("كرتون");
+  await add.locator('input[name="factor"]').fill("١٢");
+  await add.getByRole("button").click();
+  await expect(page.getByTestId("unit-card")).toHaveCount(2);
+
+  // Expiry alert days in Arabic-Indic digits.
+  await page.getByTestId("product-tracks-expiry").check();
+  await page.locator('input[name="expiryAlertDays"]').fill("٣٠");
+  await page.getByTestId("product-save").click();
+  await expect(page.getByText(ar.catalog.product.saved)).toBeVisible();
+
+  // The date box starts today; a past date is refused with the message, not moved to now.
+  const start = page.getByTestId("price-start").first();
+  const min = await start.getAttribute("min");
+  expect(min).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  const form = page.getByTestId("price-set-form").first();
+  await form.locator('input[name="amount"]').fill("1750");
+  await start.fill("2020-01-01");
+  await form.getByRole("button", { name: ar.catalog.product.setPrice }).click();
+  await expect(page.getByText(ar.catalog.product.badDate)).toBeVisible();
+
+  // Archive, then restore.
+  await page.getByTestId("product-archive").click();
+  await page.getByRole("button", { name: ar.catalog.product.confirm }).click();
+  await expect(page.getByTestId("product-unarchive")).toBeVisible();
+  await expect(page.getByTestId("product-save")).toHaveCount(0);
+  await page.getByTestId("product-unarchive").click();
+  await expect(page.getByTestId("product-save")).toBeVisible();
+  await expect(page.getByTestId("product-unarchive")).toHaveCount(0);
 });

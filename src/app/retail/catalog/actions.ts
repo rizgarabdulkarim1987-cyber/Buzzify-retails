@@ -1,6 +1,6 @@
 "use server";
 
-import { addBarcode, addUnit, archiveBarcode, archiveProduct, archiveUnit, archiveVariant, createProduct, updateProduct, updateUnit } from "@/server/catalog/products";
+import { addBarcode, addUnit, archiveBarcode, archiveProduct, archiveUnit, archiveVariant, addVariant, createProduct, unarchiveProduct, updateProduct, updateUnit } from "@/server/catalog/products";
 import { setPrice } from "@/server/catalog/prices";
 import { catalogContext } from "@/server/catalog/context";
 import { searchCatalog, type CatalogHit } from "@/server/catalog/search";
@@ -12,6 +12,7 @@ import type { ActionMeta } from "@/server/framework/action";
 import { getLocale } from "../../_lib/i18n";
 import { messagesFor } from "@/messages";
 import { loadShell } from "../_shell";
+import { resolveStartDate, wholeNumber } from "./_lib/numbers";
 import type { CategoryDto, Currency, HitDto, SearchPage, UiResult } from "./_lib/types";
 
 /*
@@ -191,7 +192,8 @@ export type Done = { done: true };
 export async function updateProductAction(key: unknown, input: Wire): Promise<UiResult<{ version: number }>> {
   const tracksExpiry = input.tracksExpiry === true;
   const alert = str(input.expiryAlertDays).trim();
-  const alertDays = tracksExpiry && alert !== "" ? Number(alert) : null;
+  const alertDays = tracksExpiry && alert !== "" ? wholeNumber(alert) : null;
+  if (tracksExpiry && alert !== "" && alertDays === null) return fail("BAD_NUMBER");
   return call(
     key,
     (m) =>
@@ -228,7 +230,7 @@ export async function updateUnitAction(key: unknown, input: Wire): Promise<UiRes
     key,
     (m) =>
       updateUnit(
-        { id: str(input.id), expectedVersion: Number(input.expectedVersion), name: str(input.name), quantityScale: Number(input.quantityScale) },
+        { id: str(input.id), expectedVersion: Number(input.expectedVersion), name: str(input.name), quantityScale: wholeNumber(input.quantityScale) ?? Number.NaN },
         m,
       ),
     ack,
@@ -240,9 +242,8 @@ export async function archiveUnitAction(key: unknown, input: Wire): Promise<UiRe
 }
 
 export async function addUnitAction(key: unknown, input: Wire): Promise<UiResult<Done>> {
-  const factorText = str(input.factor).trim();
-  const factor = /^\d{1,6}$/.test(factorText) ? Number(factorText) : NaN;
-  if (!Number.isInteger(factor) || factor < 2) return fail("BAD_FACTOR");
+  const factor = wholeNumber(input.factor);
+  if (factor === null || factor < 2) return fail("BAD_FACTOR");
   let code: string | null = null;
   if (str(input.barcode).trim() !== "") {
     try {
@@ -284,18 +285,13 @@ export async function archiveBarcodeAction(key: unknown, input: Wire): Promise<U
   return call(key, (m) => archiveBarcode({ id: str(input.id), expectedVersion: Number(input.expectedVersion) }, m), ack);
 }
 
-/** A price on the DEFAULT list. `startsAt` is a Baghdad calendar date (YYYY-MM-DD); today or the past means now. */
+/** A price on the DEFAULT list. `startsAt` is a Baghdad calendar date (YYYY-MM-DD): empty or today is now, a later day is scheduled, a past day is refused (BAD_DATE). */
 export async function setPriceAction(key: unknown, input: Wire): Promise<UiResult<Done>> {
   const amount = parseAmount(input.amount, input.currency);
   if (amount === null || amount === "BAD") return fail("BAD_PRICE");
-  let validFrom: Date | undefined;
-  const day = str(input.startsAt).trim();
-  if (day !== "") {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return fail("BAD_DATE");
-    const at = new Date(`${day}T00:00:00+03:00`);
-    if (Number.isNaN(at.getTime())) return fail("BAD_DATE");
-    if (at.getTime() > Date.now()) validFrom = at;
-  }
+  const start = resolveStartDate(input.startsAt, new Date());
+  if (start.kind === "bad") return fail("BAD_DATE");
+  const validFrom = start.kind === "at" ? start.at : undefined;
   return call(
     key,
     (m) =>
@@ -307,6 +303,52 @@ export async function setPriceAction(key: unknown, input: Wire): Promise<UiResul
           amountMinor: amount,
           ...(validFrom ? { validFrom } : {}),
           expectedLatestPriceId: typeof input.latestId === "string" ? input.latestId : null,
+        },
+        m,
+      ),
+    ack,
+  );
+}
+
+export async function unarchiveProductAction(key: unknown, input: Wire): Promise<UiResult<Done>> {
+  return call(key, (m) => unarchiveProduct({ id: str(input.id), expectedVersion: Number(input.expectedVersion) }, m), ack);
+}
+
+/** A new variant from option name/value pairs (size L, colour blue), an optional SKU and its base unit. */
+export async function addVariantAction(key: unknown, input: Wire): Promise<UiResult<Done>> {
+  const locale = await getLocale();
+  const pairs = Array.isArray(input.options) ? (input.options as unknown[]) : [];
+  const options: Record<string, string> = {};
+  for (const pair of pairs) {
+    const p = (pair ?? {}) as Wire;
+    const k = str(p.key).trim();
+    const v = str(p.value).trim();
+    if (k === "" && v === "") continue;
+    if (k === "" || v === "" || Object.hasOwn(options, k)) return fail("BAD_OPTIONS");
+    options[k] = v;
+  }
+  if (Object.keys(options).length === 0) return fail("BAD_OPTIONS");
+  let code: string | null = null;
+  if (str(input.barcode).trim() !== "") {
+    try {
+      code = normalizeBarcode(str(input.barcode));
+    } catch {
+      return fail("BAD_BARCODE");
+    }
+  }
+  const amount = parseAmount(input.price, input.currency);
+  if (amount === "BAD") return fail("BAD_PRICE");
+  const sku = str(input.sku).trim();
+  return call(
+    key,
+    (m) =>
+      addVariant(
+        {
+          productId: str(input.productId),
+          options,
+          ...(sku !== "" ? { sku } : {}),
+          baseUnit: { name: str(input.unitName).trim() || messagesFor(locale).catalog.defaultUnit, barcodes: code ? [code] : [] },
+          ...(amount !== null ? { price: { currency: input.currency, amountMinor: amount } } : {}),
         },
         m,
       ),

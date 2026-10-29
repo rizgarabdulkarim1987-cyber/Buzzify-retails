@@ -637,6 +637,23 @@ export const archiveProduct = defineAction({
   audit: (input) => audit("RtProduct", input.id, { input }),
 });
 
+/** Brings an archived product back (its variants, units, barcodes and SKUs never left). */
+export const unarchiveProduct = defineAction({
+  name: "catalog.product.unarchive",
+  permission: "catalog.manage",
+  input: z.object({ id, expectedVersion: version }).strict(),
+  writes: true,
+  async run({ tx, input, lockBusiness }) {
+    await lockBusiness(productLock(input.id));
+    const row = await tx.rtProduct.findFirst({ where: { id: input.id, archivedAt: { not: null } }, select: { id: true } });
+    if (!row) throw new NotFoundError();
+    await updateVersioned(tx.rtProduct, { id: input.id, archivedAt: { not: null } }, input.expectedVersion, { archivedAt: null });
+    await refreshSearchText(tx, input.id);
+    return tx.rtProduct.findFirstOrThrow({ where: { id: input.id }, select: { id: true, archivedAt: true, version: true } });
+  },
+  audit: (input) => audit("RtProduct", input.id, { input }),
+});
+
 /** One product with its category and brand (names shown even when archived) and every variant, unit and barcode. */
 export const getProduct = defineAction({
   name: "catalog.product.get",

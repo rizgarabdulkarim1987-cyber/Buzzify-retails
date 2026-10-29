@@ -2,23 +2,26 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createContext, useContext, useMemo, useState, useTransition, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { formatDate, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, formatMoney, minorToInput, pickName } from "../../../_lib/format";
 import { Notice } from "../../../_ui/state";
 import {
   addBarcodeAction,
   addUnitAction,
+  addVariantAction,
   archiveBarcodeAction,
   archiveProductAction,
   archiveUnitAction,
   archiveVariantAction,
   setPriceAction,
+  unarchiveProductAction,
   updateProductAction,
   updateUnitAction,
 } from "../actions";
 import { categoryOptions } from "../_lib/categories";
 import { failureMessage, isStale } from "../_lib/failures";
+import { useHydrated } from "../_lib/hydrated";
 import { newKey } from "../_lib/keys";
 import type { BrandDto, CategoryDto, Currency, ProductDto, UiResult, UnitDto, VariantDto } from "../_lib/types";
 
@@ -32,6 +35,8 @@ type Props = {
   canManage: boolean;
   canPrice: boolean;
   existing: boolean;
+  /** Today in Baghdad (YYYY-MM-DD): the earliest start date of a price. */
+  today: string;
 };
 
 type Note = { tone: "success" | "danger"; text: string; stale: boolean };
@@ -39,6 +44,7 @@ type Note = { tone: "success" | "danger"; text: string; stale: boolean };
 type Ops = {
   t: Messages;
   locale: Locale;
+  today: string;
   busy: string | null;
   notes: Record<string, Note | undefined>;
   /** Runs one change (a fresh idempotency key each time); on success shows `ok` and reloads the page data. */
@@ -59,11 +65,12 @@ const text = (f: FormData, name: string) => {
 };
 
 /** The product screen: details, variants, units with their barcodes and prices. Controls exist only for those who may use them. */
-export function ProductScreen({ locale, t, product, categories, brands, currencies, canManage, canPrice, existing }: Props) {
+export function ProductScreen({ locale, t, product, categories, brands, currencies, canManage, canPrice, existing, today }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, Note | undefined>>({});
+  const [showExisting, setShowExisting] = useState(existing);
   const p = t.catalog.product;
   const editable = canManage && !product.archived;
   const pricing = canPrice && !product.archived;
@@ -72,12 +79,18 @@ export function ProductScreen({ locale, t, product, categories, brands, currenci
     () => ({
       t,
       locale,
+      today,
       busy,
       notes,
-      reload: () => startTransition(() => router.refresh()),
+      reload: () => {
+        setNotes({});
+        startTransition(() => router.refresh());
+      },
       async run(section, ok, change) {
         if (busy) return false;
         setBusy(section);
+        setShowExisting(false);
+        setNotes((n) => ({ ...n, [section]: undefined }));
         let done = false;
         try {
           const result = await change(newKey());
@@ -96,8 +109,16 @@ export function ProductScreen({ locale, t, product, categories, brands, currenci
         return done;
       },
     }),
-    [t, locale, busy, notes, router],
+    [t, locale, today, busy, notes, router],
   );
+
+  // The notice belongs to the arrival; a reload of this page must not show it again.
+  useEffect(() => {
+    if (!existing) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("existing");
+    window.history.replaceState(null, "", url.pathname + url.search);
+  }, [existing]);
 
   const activeVariants = product.variants.filter((v) => !v.archived).length;
 
@@ -110,12 +131,13 @@ export function ProductScreen({ locale, t, product, categories, brands, currenci
             {p.back}
           </Link>
         </div>
-        {existing ? <Notice tone="success">{t.catalog.entry.existsToast}</Notice> : null}
+        {showExisting ? <Notice tone="success">{p.existingNotice}</Notice> : null}
         {product.archived ? <Notice tone="danger">{p.archivedBanner}</Notice> : null}
+        {product.archived && canManage ? <RestoreProduct product={product} /> : null}
         {!canManage && !product.archived ? <p>{p.readOnlyNote}</p> : null}
       </div>
 
-      <DetailsSection key={`d:${JSON.stringify([product.version, product.nameAr, product.nameCkb, product.nameEn, product.category?.id, product.brand?.id])}`} {...{ product, categories, brands, editable }} />
+      <DetailsSection key={`details:${product.version}`} {...{ product, categories, brands, editable }} />
 
       <section className="section" aria-labelledby="variants-title">
         <div className="section-head">
@@ -126,6 +148,7 @@ export function ProductScreen({ locale, t, product, categories, brands, currenci
             <VariantBlock key={v.id} variant={v} currencies={currencies} editable={editable} pricing={pricing} canArchiveVariant={activeVariants > 1} showHeader={product.variants.length > 1 || v.archived} />
           ))}
         </div>
+        {editable ? <AddVariantForm productId={product.id} currencies={currencies} pricing={pricing} /> : null}
       </section>
 
       {editable ? <ArchiveProduct product={product} /> : null}
@@ -138,9 +161,14 @@ export function ProductScreen({ locale, t, product, categories, brands, currenci
 function NoteView({ section }: { section: string }) {
   const { notes, reload, t } = useOps();
   const note = notes[section];
+  const box = useRef<HTMLDivElement>(null);
+  // At phone width the message can be off screen: bring it into view when it appears.
+  useEffect(() => {
+    if (note) box.current?.scrollIntoView({ block: "nearest" });
+  }, [note]);
   if (!note) return null;
   return (
-    <div className="product-note">
+    <div className="product-note" ref={box}>
       <Notice tone={note.tone}>{note.text}</Notice>
       {note.stale ? (
         <button type="button" className="btn btn-secondary" onClick={reload}>
@@ -153,8 +181,9 @@ function NoteView({ section }: { section: string }) {
 
 function SubmitButton({ section, children, testId, disabledExtra }: { section: string; children: ReactNode; testId?: string; disabledExtra?: boolean }) {
   const { busy, t } = useOps();
+  const hydrated = useHydrated(); // before hydration a native submit would reload the page with the values in the address
   return (
-    <button type="submit" className="btn btn-primary" disabled={busy !== null || disabledExtra} aria-busy={busy === section} data-testid={testId}>
+    <button type="submit" className="btn btn-primary" disabled={!hydrated || busy !== null || disabledExtra} aria-busy={busy === section} data-testid={testId}>
       {busy === section ? t.catalog.product.saving : children}
     </button>
   );
@@ -320,9 +349,11 @@ function ArchiveProduct({ product }: { product: ProductDto }) {
 
 function VariantBlock(props: { variant: VariantDto; currencies: Currency[]; editable: boolean; pricing: boolean; canArchiveVariant: boolean; showHeader: boolean }) {
   const { variant, currencies, editable, pricing, canArchiveVariant, showHeader } = props;
-  const { t, run } = useOps();
+  const { t, run, locale } = useOps();
   const p = t.catalog.product;
-  const optionText = variant.options ? Object.entries(variant.options).map(([k, v]) => `${k}: ${v}`).join("، ") : "";
+  const optionText = variant.options
+    ? new Intl.ListFormat(locale === "ckb" ? "ar" : locale, { style: "narrow", type: "unit" }).format(Object.entries(variant.options).map(([k, v]) => `${k}: ${v}`))
+    : "";
   const section = `variant:${variant.id}`;
   const active = variant.units.filter((u) => !u.archived);
   const archivedUnits = variant.units.filter((u) => u.archived);
@@ -347,10 +378,10 @@ function VariantBlock(props: { variant: VariantDto; currencies: Currency[]; edit
       <NoteView section={section} />
       <div className="unit-list">
         {active.map((u) => (
-          <UnitCard key={`${u.id}:${JSON.stringify(u)}`} unit={u} currencies={currencies} editable={editable && !variant.archived} pricing={pricing && !variant.archived} />
+          <UnitCard key={`${u.id}:${u.version}`} unit={u} currencies={currencies} editable={editable && !variant.archived} pricing={pricing && !variant.archived} />
         ))}
         {archivedUnits.map((u) => (
-          <UnitCard key={`${u.id}:${JSON.stringify(u)}`} unit={u} currencies={currencies} editable={false} pricing={false} />
+          <UnitCard key={`${u.id}:${u.version}`} unit={u} currencies={currencies} editable={false} pricing={false} />
         ))}
       </div>
       {editable && !variant.archived ? <AddUnitForm variantId={variant.id} currencies={currencies} pricing={pricing} /> : null}
@@ -487,7 +518,7 @@ function UnitCard({ unit, currencies, editable, pricing }: { unit: UnitDto; curr
 }
 
 function PriceRow({ unit, currency, pricing }: { unit: UnitDto; currency: Currency; pricing: boolean }) {
-  const { t, locale, run } = useOps();
+  const { t, locale, run, today } = useOps();
   const p = t.catalog.product;
   const cell = unit.prices[currency];
   const short = t.catalog.currencyShort[currency];
@@ -528,14 +559,14 @@ function PriceRow({ unit, currency, pricing }: { unit: UnitDto; currency: Curren
       ) : null}
       <NoteView section={section} />
       {pricing ? (
-        <form className="price-form" onSubmit={submit} data-testid="price-set-form">
+        <form className="price-form" onSubmit={submit} noValidate data-testid="price-set-form">
           <label className="field">
             <span>{fill(p.newPrice, { currency: short })}</span>
             <input className="input" dir="ltr" inputMode="decimal" name="amount" value={value} onChange={(event) => setValue(event.target.value)} maxLength={24} autoComplete="off" required />
           </label>
           <label className="field">
             <span>{p.startsAt}</span>
-            <input className="input" type="date" name="startsAt" dir="ltr" />
+            <input className="input" type="date" name="startsAt" dir="ltr" min={today} data-testid="price-start" />
           </label>
           <div className="price-form-actions">
             {cell?.suggestedMinor ? (
@@ -609,6 +640,102 @@ function AddUnitForm({ variantId, currencies, pricing }: { variantId: string; cu
       </div>
       <div>
         <SubmitButton section={section}>{p.addUnitSubmit}</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+function RestoreProduct({ product }: { product: ProductDto }) {
+  const { t, run, busy } = useOps();
+  const hydrated = useHydrated();
+  return (
+    <div className="product-note">
+      <NoteView section="unarchive" />
+      <div>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!hydrated || busy !== null}
+          onClick={() =>
+            void run("unarchive", t.catalog.product.unarchived, (key) => unarchiveProductAction(key, { id: product.id, expectedVersion: product.version }))
+          }
+          data-testid="product-unarchive"
+        >
+          {t.catalog.product.unarchive}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const OPTION_ROWS = 3;
+
+function AddVariantForm({ productId, currencies, pricing }: { productId: string; currencies: Currency[]; pricing: boolean }) {
+  const { t, run } = useOps();
+  const p = t.catalog.product;
+  const section = `add-variant:${productId}`;
+  const [currency, setCurrency] = useState<Currency>(currencies[0] ?? "IQD");
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const f = new FormData(form);
+    const options = Array.from({ length: OPTION_ROWS }, (_, i) => ({ key: text(f, `optKey${i}`), value: text(f, `optValue${i}`) }));
+    void run(section, p.variantAdded, (key) =>
+      addVariantAction(key, { productId, options, sku: text(f, "sku"), barcode: text(f, "barcode"), price: pricing ? text(f, "price") : "", currency }),
+    ).then((done) => {
+      if (done) form.reset();
+    });
+  };
+
+  return (
+    <form className="form panel add-unit" onSubmit={submit} noValidate data-testid="variant-add-form">
+      <h4>{p.addVariant}</h4>
+      <p className="muted">{p.addVariantHint}</p>
+      <NoteView section={section} />
+      {Array.from({ length: OPTION_ROWS }, (_, i) => (
+        <div className="field-row" key={i}>
+          <label className="field">
+            <span>{p.optionName}</span>
+            <input className="input" name={`optKey${i}`} maxLength={40} autoComplete="off" data-testid={`variant-opt-key-${i}`} />
+          </label>
+          <label className="field">
+            <span>{p.optionValue}</span>
+            <input className="input" name={`optValue${i}`} maxLength={60} autoComplete="off" data-testid={`variant-opt-value-${i}`} />
+          </label>
+        </div>
+      ))}
+      <div className="field-row">
+        <label className="field">
+          <span>{p.variantSku}</span>
+          <input className="input" name="sku" dir="ltr" maxLength={64} autoComplete="off" />
+        </label>
+        <label className="field">
+          <span>{p.barcodes}</span>
+          <input className="input" name="barcode" dir="ltr" maxLength={64} autoComplete="off" placeholder={p.barcodePlaceholder} />
+        </label>
+      </div>
+      {pricing ? (
+        <label className="field">
+          <span>{fill(p.newPrice, { currency: t.catalog.currencyShort[currency] })}</span>
+          <div className="price-with-currency">
+            <input className="input" name="price" dir="ltr" inputMode="decimal" maxLength={24} autoComplete="off" />
+            {currencies.length > 1 ? (
+              <select className="input" aria-label={t.currency[currency]} value={currency} onChange={(event) => setCurrency(event.target.value as Currency)}>
+                {currencies.map((c) => (
+                  <option key={c} value={c}>
+                    {t.catalog.currencyShort[c]}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+        </label>
+      ) : null}
+      <div>
+        <SubmitButton section={section} testId="variant-add-submit">
+          {p.addVariantSubmit}
+        </SubmitButton>
       </div>
     </form>
   );

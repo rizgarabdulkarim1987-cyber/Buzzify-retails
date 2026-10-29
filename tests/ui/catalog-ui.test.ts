@@ -54,3 +54,25 @@ describe("catalog display helpers", () => {
     expect(out.map((o) => o.label)).toEqual(["غذاء", "غذاء › حبوب", "يتيم"]);
   });
 });
+
+import { baghdadToday, resolveStartDate, wholeNumber } from "../../src/app/retail/catalog/_lib/numbers";
+
+describe("numbers and dates typed in the catalog forms", () => {
+  it("reads whole numbers in Arabic-Indic, Persian and ASCII digits", () => {
+    expect(wholeNumber("١٢")).toBe(12);
+    expect(wholeNumber(" ۲۴ ")).toBe(24);
+    expect(wholeNumber("30")).toBe(30);
+    for (const bad of ["", "1.5", "-3", "1,000", "abc", "1234567", 5, null]) expect(wholeNumber(bad)).toBeNull();
+  });
+
+  it("start dates: empty or today is now, a later day is its Baghdad midnight, the past and garbage are refused", () => {
+    const now = new Date("2026-10-29T21:30:00Z"); // already 30 Oct 00:30 in Baghdad
+    expect(baghdadToday(now)).toBe("2026-10-30");
+    expect(resolveStartDate("", now)).toEqual({ kind: "now" });
+    expect(resolveStartDate("2026-10-30", now)).toEqual({ kind: "now" });
+    expect(resolveStartDate("2026-10-29", now)).toEqual({ kind: "bad" });
+    expect(resolveStartDate("2026-11-01", now)).toEqual({ kind: "at", at: new Date("2026-10-31T21:00:00Z") });
+    expect(resolveStartDate("٢٠٢٦-١١-٠١", now)).toEqual({ kind: "at", at: new Date("2026-10-31T21:00:00Z") });
+    for (const bad of ["2026-02-30", "tomorrow", "1/2/2026", "2026-13-01"]) expect(resolveStartDate(bad, now)).toEqual({ kind: "bad" });
+  });
+});

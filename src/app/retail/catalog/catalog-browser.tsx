@@ -25,8 +25,8 @@ const DEBOUNCE_MS = 250;
 
 /**
  * The catalog list with instant search. The server renders the first page; typing (after a short
- * pause), a filter or the archived switch asks the server again, and "show more" follows the
- * cursor. Only the newest request may write the list, so a slow answer never replaces a newer one.
+ * pause) asks the server again, a filter or the archived switch asks at once, and "show more"
+ * follows the cursor. Only the newest request may write the list, so a slow answer never replaces a newer one.
  */
 export function CatalogBrowser({ locale, t, canManage, categories, brands, initial }: Props) {
   const [query, setQuery] = useState(initial.query);
@@ -40,9 +40,10 @@ export function CatalogBrowser({ locale, t, canManage, categories, brands, initi
   const latest = useRef(0);
   const first = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastQuery = useRef(initial.query);
 
   const categoryChoices = useMemo(() => categoryOptions(locale, categories), [locale, categories]);
-  const catLabel = t.catalog.currencyShort;
+  const currencyLabels = t.catalog.currencyShort;
 
   const run = useCallback(
     async (q: string, cat: string, brand: string, arch: boolean, cursor: string | null) => {
@@ -74,7 +75,9 @@ export function CatalogBrowser({ locale, t, canManage, categories, brands, initi
       return;
     }
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => void run(query, categoryId, brandId, archived, null), DEBOUNCE_MS);
+    const typed = query !== lastQuery.current; // only typing waits for a pause; a filter is one click
+    lastQuery.current = query;
+    timer.current = setTimeout(() => void run(query, categoryId, brandId, archived, null), typed ? DEBOUNCE_MS : 0);
     const params = new URLSearchParams();
     if (query) params.set("q", query);
     if (categoryId) params.set("category", categoryId);
@@ -196,7 +199,7 @@ export function CatalogBrowser({ locale, t, canManage, categories, brands, initi
                 </span>
                 <span className="catalog-row-price" data-testid="catalog-row-price" data-empty={hit.unitPrice ? undefined : "true"}>
                   {hit.unitPrice
-                    ? formatMoney(locale, hit.unitPrice.currency, hit.unitPrice.amountMinor, catLabel[hit.unitPrice.currency])
+                    ? formatMoney(locale, hit.unitPrice.currency, hit.unitPrice.amountMinor, currencyLabels[hit.unitPrice.currency])
                     : t.catalog.list.noPrice}
                 </span>
               </Link>

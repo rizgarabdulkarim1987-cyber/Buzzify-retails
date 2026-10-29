@@ -20,6 +20,7 @@ import {
   LONG_OWNER,
   LONG_PRODUCT_BARCODE,
   LONG_PRODUCT_NAME,
+  MANAGER,
   OWNER,
   PASSWORD,
   SUGAR,
@@ -101,6 +102,13 @@ async function main() {
     { userId: ownerId, businessId, idempotencyKey: "e2e-seed-cashier" },
   );
   if (!added.ok) throw new Error(`adding the cashier failed: ${JSON.stringify(added)}`);
+  // A manager of branch A (can manage the catalog and change prices).
+  await signUp(MANAGER);
+  const addedManager = await completeSetupStep(
+    { step: 5, data: { staff: [{ email: MANAGER.email, role: "MANAGER", branchIds: [branchA.id] }] } },
+    { userId: ownerId, businessId, idempotencyKey: "e2e-seed-manager" },
+  );
+  if (!addedManager.ok) throw new Error(`adding the manager failed: ${JSON.stringify(addedManager)}`);
   // One terminal in branch A (no action for terminals until a later task).
   const location = await db.rtLocation.findFirstOrThrow({ where: { businessId, branchId: branchA.id } });
   await db.rtTerminal.create({ data: { businessId, branchId: branchA.id, locationId: location.id, name: TERMINAL_A } });

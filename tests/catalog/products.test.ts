@@ -9,6 +9,7 @@ import {
   archiveUnit,
   archiveVariant,
   createProduct,
+  unarchiveProduct,
   getProduct,
   updateProduct,
   updateUnit,
@@ -536,6 +537,25 @@ describe("lifecycle", () => {
     expect(await db.rtProduct.count({ where: { businessId: a.business.id } })).toBe(1);
     expect(await createProduct({ ...input, nameAr: "آخر" }, a.as("stock", k))).toMatchObject({ ok: false, code: "IDEMPOTENCY_MISMATCH" });
     expect(await db.rtAuditLog.count({ where: { businessId: a.business.id, action: "catalog.product.create" } })).toBe(1);
+  });
+
+  it("unarchive brings a product back: editable, searchable, audited, version checked, manage only, own business only", async () => {
+    const { a, b } = await world();
+    const p = await product(a, { nameAr: "راجع", baseUnit: piece(["7070"]) });
+    expect(await archiveProduct({ id: p.productId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: true });
+    // Refused: a cashier, a stale version, another business, an unknown id.
+    expect(await unarchiveProduct({ id: p.productId, expectedVersion: 2 }, a.as("cashier"))).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(await unarchiveProduct({ id: p.productId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "VERSION_CONFLICT" });
+    expect(await unarchiveProduct({ id: p.productId, expectedVersion: 2 }, b.as("owner"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await unarchiveProduct({ id: "missing", expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    const back = await unarchiveProduct({ id: p.productId, expectedVersion: 2 }, a.as("stock"));
+    expect(back).toMatchObject({ ok: true, value: { id: p.productId, archivedAt: null, version: 3 } });
+    // Active again: editable, and an active product cannot be unarchived twice.
+    expect(await updateProduct({ id: p.productId, expectedVersion: 3, nameAr: "راجع جديد" }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await unarchiveProduct({ id: p.productId, expectedVersion: 4 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await db.rtAuditLog.count({ where: { businessId: a.business.id, action: "catalog.product.unarchive" } })).toBe(1);
+    const row = await db.rtProduct.findUniqueOrThrow({ where: { id: p.productId } });
+    expect(row.searchText).toContain(normalizeSearchText("راجع جديد"));
   });
 
   it("archive keeps the product readable and frees nothing", async () => {

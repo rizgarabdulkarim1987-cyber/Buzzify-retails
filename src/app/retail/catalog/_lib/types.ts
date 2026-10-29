@@ -1,7 +1,7 @@
 import type { ErrorCode } from "@/server/framework/errors";
 
 /** Refusals only the UI layer produces (text it could not turn into a value), besides the actions' own codes. */
-export type UiCode = ErrorCode | "INTERNAL" | "BAD_BARCODE" | "BAD_PRICE" | "BAD_NAME" | "BAD_FACTOR" | "BAD_DATE";
+export type UiCode = ErrorCode | "INTERNAL" | "BAD_BARCODE" | "BAD_PRICE" | "BAD_NAME" | "BAD_FACTOR" | "BAD_DATE" | "BAD_NUMBER" | "BAD_OPTIONS";
 
 export type UiFailure = { code: UiCode; details?: Readonly<Record<string, string | null>> };
 export type UiResult<T> = { ok: true; value: T } | ({ ok: false } & UiFailure);

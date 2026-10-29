@@ -10,6 +10,7 @@ import { Notice } from "../../../_ui/state";
 import { createCategoryAction, lookupBarcodeAction, quickCreateAction } from "../actions";
 import { categoryOptions } from "../_lib/categories";
 import { failureMessage, ownerOfBarcode } from "../_lib/failures";
+import { useHydrated } from "../_lib/hydrated";
 import { newKey } from "../_lib/keys";
 import type { CategoryDto, UiFailure } from "../_lib/types";
 
@@ -36,6 +37,7 @@ const KEEP = 10;
  */
 export function QuickEntry({ locale, t, categories: initialCategories, canPrice, currency }: Props) {
   const router = useRouter();
+  const hydrated = useHydrated();
   const e = t.catalog.entry;
   const listId = useId();
   const [barcode, setBarcode] = useState("");
@@ -60,8 +62,15 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
   /** The barcode check of the current barcode (true: free to create), null when there is none to wait for. */
   const lookup = useRef<Promise<boolean> | null>(null);
   const [checking, setChecking] = useState(false);
+  /** Bumped whenever the barcode changes or the form clears: an older lookup answer is then ignored. */
+  const lookupToken = useRef(0);
+  const statusRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => barcodeRef.current?.focus(), []);
+  // An error at phone width can sit below the fold (the cursor stays in the fields): show it.
+  useEffect(() => {
+    if (status?.tone === "danger") statusRef.current?.scrollIntoView({ block: "nearest" });
+  }, [status]);
 
   const choices = useMemo(() => categoryOptions(locale, categories), [locale, categories]);
   const options = useMemo<Option[]>(() => {
@@ -93,6 +102,8 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
     setNavigated(false);
     setActive(0);
     lookup.current = null;
+    lookupToken.current += 1;
+    setChecking(false);
     key.current = newKey();
     barcodeRef.current?.focus();
   };
@@ -111,9 +122,11 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
     }
     setChecking(true);
     setStatus(null);
+    const token = ++lookupToken.current;
     lookup.current = (async () => {
       try {
         const found = await lookupBarcodeAction(code);
+        if (token !== lookupToken.current) return false; // the barcode changed meanwhile: this answer is about an older one
         if (!found.ok) {
           failWith(found);
           barcodeRef.current?.select();
@@ -129,7 +142,7 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
         failWith({ code: "INTERNAL" });
         return false;
       } finally {
-        setChecking(false);
+        if (token === lookupToken.current) setChecking(false);
       }
     })();
   }
@@ -204,6 +217,10 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
 
   const onFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     if (event.key !== "Escape") return;
+    if (working.current) {
+      event.preventDefault(); // a save is in flight: clearing now would wipe what the next product has typed
+      return;
+    }
     if (open) {
       setOpen(false);
       return;
@@ -258,6 +275,8 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
             onChange={(event) => {
               setBarcode(event.target.value);
               lookup.current = null;
+              lookupToken.current += 1;
+              setChecking(false);
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -377,7 +396,7 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
         )}
 
         <div className="qe-actions">
-          <button type="button" className="btn btn-primary" disabled={busy !== "idle"} aria-busy={busy !== "idle"} onClick={() => void save()} data-testid="qe-save">
+          <button type="button" className="btn btn-primary" disabled={!hydrated || busy !== "idle"} aria-busy={busy !== "idle"} onClick={() => void save()} data-testid="qe-save">
             {busy === "saving" ? e.saving : e.save}
           </button>
           <span className="muted" role="status">
@@ -385,7 +404,7 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
           </span>
         </div>
 
-        <div aria-live="polite" className="qe-status" data-testid="qe-status">
+        <div aria-live="polite" className="qe-status" ref={statusRef} data-testid="qe-status">
           {status ? (
             <Notice tone={status.tone}>
               {status.text}

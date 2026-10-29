@@ -11,7 +11,7 @@ const ARABIC_INDIC_ZERO = 0x0660;
 const PERSIAN_ZERO = 0x06f0;
 
 /** Arabic-Indic (U+0660..0669) and Persian (U+06F0..06F9) digits to ASCII. */
-function toAsciiDigits(s: string): string {
+export function toAsciiDigits(s: string): string {
   return s.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (ch) => {
     const c = ch.charCodeAt(0);
     return String(c >= PERSIAN_ZERO ? c - PERSIAN_ZERO : c - ARABIC_INDIC_ZERO);

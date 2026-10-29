@@ -4,6 +4,7 @@ import { listUnitPrices, suggestedUnitPrice } from "@/server/catalog/prices";
 import { listBrands, listCategories } from "@/server/catalog/taxonomy";
 import { getI18n } from "../../../_lib/i18n";
 import { isId } from "../../../_lib/workplace";
+import { baghdadToday } from "../_lib/numbers";
 import { StateBlock } from "../../../_ui/state";
 import { loadCatalogAccess } from "../_lib/access";
 import { RefusedPage } from "../_lib/state-pages";
@@ -122,6 +123,7 @@ export default async function ProductPage({ params, searchParams }: { params: Pa
         canManage={access.canManage}
         canPrice={access.canPrice}
         existing={existing}
+        today={baghdadToday(new Date())}
       />
     </main>
   );
