@@ -33,13 +33,13 @@ function headerKey(s: string): string {
 // Aliases per column: Arabic, Kurdish (Sorani) and English. They go through the same normalization
 // as the headers, so letter variants (ة/ه, أ/ا, ی/ي, ک/ك) and digits need no separate entry.
 const ALIASES: Record<KnownColumn, readonly string[]> = {
-  barcode: ["barcode", "bar code", "code", "ean", "upc", "gtin", "الباركود", "باركود", "بار كود", "الرمز الشريطي", "رمز شريطي", "بارکۆد", "بارکۆدی کاڵا", "کۆدی بارکۆد"],
+  barcode: ["barcode", "bar code", "ean", "upc", "gtin", "الباركود", "باركود", "بار كود", "الرمز الشريطي", "رمز شريطي", "بارکۆد", "بارکۆدی کاڵا", "کۆدی بارکۆد"],
   name: ["name", "item", "item name", "product", "product name", "title", "اسم", "الاسم", "اسم المادة", "اسم الصنف", "اسم المنتج", "المادة", "الصنف", "المنتج", "ناو", "ناوی کاڵا", "ناوی ماددە", "کاڵا"],
   nameCkb: ["name ckb", "name kurdish", "kurdish name", "name ku", "الاسم الكردي", "اسم كردي", "الاسم بالكردي", "الاسم كردي", "ناوی کوردی", "ناو بە کوردی", "ناوی کوردی کاڵا"],
   nameEn: ["name en", "name english", "english name", "name eng", "الاسم الانجليزي", "اسم انجليزي", "الاسم بالانجليزي", "الاسم انكليزي", "الاسم الإنجليزي", "ناوی ئینگلیزی", "ناو بە ئینگلیزی"],
   category: ["category", "group", "department", "الفئة", "التصنيف", "القسم", "المجموعة", "الفئه", "فئة", "تصنيف", "قسم", "پۆل", "پۆلێن", "بەش"],
   brand: ["brand", "maker", "manufacturer", "ماركة", "الماركة", "العلامة التجارية", "الشركة", "براند", "مارکە", "ماركه", "کۆمپانیا"],
-  unit: ["unit", "uom", "unit name", "الوحدة", "وحدة", "یەکە", "یەکەی کاڵا", "یەکە"],
+  unit: ["unit", "uom", "unit name", "الوحدة", "وحدة", "یەکە", "یەکەی کاڵا"],
   factor: ["factor", "conversion", "conversion factor", "qty per unit", "pack size", "معامل", "معامل التحويل", "عدد في الوحدة", "عدد القطع", "هاوکۆلکە", "هاوکۆلکەی گۆڕین"],
   price: ["price", "sale price", "selling price", "unit price", "السعر", "سعر", "سعر البيع", "نرخ", "نرخی فرۆشتن"],
   currency: ["currency", "cur", "ccy", "العملة", "عملة", "دراو", "دراوی"],

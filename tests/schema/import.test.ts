@@ -55,6 +55,25 @@ describe("import staging schema", () => {
     expect(err).toContain("RtImportRow_businessId_batchId_fkey");
   });
 
+  it("matchedVariantId is tenant-safe and cleared when the variant is deleted", async () => {
+    const a = (await createBusinessWithStaff(db)).business;
+    const other = (await createBusinessWithStaff(db)).business;
+    const mk = async (businessId: string, sku: string) => {
+      const p = await db.rtProduct.create({ data: { businessId, nameAr: "حليب" } });
+      return db.rtVariant.create({ data: { businessId, productId: p.id, sku } });
+    };
+    const mine = await mk(a.id, "S-A");
+    const theirs = await mk(other.id, "S-B");
+    const b = await batch(a.id);
+    const base = { businessId: a.id, batchId: b.id, raw: [], status: "CHANGED" as const };
+    const err = await failure(db.rtImportRow.create({ data: { ...base, rowNumber: 1, matchedVariantId: theirs.id } }));
+    expect(err).toContain("RtImportRow_businessId_matchedVariantId_fkey");
+    const row = await db.rtImportRow.create({ data: { ...base, rowNumber: 2, matchedVariantId: mine.id } });
+    await db.rtVariant.delete({ where: { id: mine.id } });
+    const after = await db.rtImportRow.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after).toMatchObject({ matchedVariantId: null, businessId: a.id });
+  });
+
   it("is classified as business-scoped, never branch-scoped, and not readable by support", () => {
     for (const m of ["RtImportBatch", "RtImportRow"]) {
       expect(BUSINESS_SCOPED_MODELS).toContain(m);

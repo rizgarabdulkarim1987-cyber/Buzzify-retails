@@ -597,9 +597,10 @@ model RtVariant {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  business RtBusiness @relation(fields: [businessId], references: [id])
-  product  RtProduct  @relation(fields: [businessId, productId], references: [businessId, id])
-  units    RtUnit[]
+  business   RtBusiness    @relation(fields: [businessId], references: [id])
+  product    RtProduct     @relation(fields: [businessId, productId], references: [businessId, id])
+  units      RtUnit[]
+  importRows RtImportRow[]
 
   @@unique([businessId, sku])
   @@unique([businessId, id])
@@ -757,6 +758,7 @@ model RtImportRow {
 
   business RtBusiness    @relation(fields: [businessId], references: [id])
   batch    RtImportBatch @relation(fields: [businessId, batchId], references: [businessId, id], onDelete: Cascade)
+  variant  RtVariant?    @relation(fields: [businessId, matchedVariantId], references: [businessId, id], onDelete: SetNull)
 
   @@unique([businessId, batchId, rowNumber])
 }

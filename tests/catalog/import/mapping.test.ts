@@ -13,8 +13,12 @@ describe("mapping", () => {
   });
 
   it("auto-maps English headers regardless of case, spacing and punctuation", () => {
-    const m = autoMapHeaders(["  Bar_Code ", "ITEM NAME", "Name (EN)", "Price:", "Category", "Brand", "UOM", "Currency", "SKU", "code"]);
+    const m = autoMapHeaders(["  Bar_Code ", "ITEM NAME", "Name (EN)", "Price:", "Category", "Brand", "UOM", "Currency", "SKU"]);
     expect(m).toMatchObject({ barcode: 0, name: 1, nameEn: 2, price: 3, category: 4, brand: 5, unit: 6, currency: 7, sku: 8 });
+  });
+
+  it("a bare code header is ambiguous and not mapped", () => {
+    expect(autoMapHeaders(["code"]).barcode).toBeNull();
   });
 
   it("recognizes the Kurdish and English name columns", () => {

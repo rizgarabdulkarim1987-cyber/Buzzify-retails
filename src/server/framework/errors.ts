@@ -68,7 +68,7 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   LAST_VARIANT: "لا يمكن أرشفة النسخة الوحيدة الفعّالة لهذا الصنف. أرشف الصنف نفسه بدلاً من ذلك.",
   IMPORT_TOO_LARGE: "الملف كبير جداً. الحد الأقصى 5 ميجابايت.",
   IMPORT_TOO_MANY_ROWS: "الملف يحتوي على صفوف أكثر من المسموح. الحد الأقصى 10000 صف، قسّم الملف إلى عدة ملفات.",
-  IMPORT_UNREADABLE: "تعذّرت قراءة الملف. استخدم ملف CSV أو Excel بصيغة xlsx، دون صيغ حسابية معقدة أو حماية بكلمة مرور.",
+  IMPORT_UNREADABLE: "تعذّرت قراءة الملف. استخدم ملف CSV أو Excel بصيغة xlsx، دون حماية بكلمة مرور.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { parseImportFile } from "@/server/catalog/import/parse";
+import { buildXlsx } from "./xlsx-fixture";
 import { autoMapHeaders } from "@/server/catalog/import/mapping";
 import {
   IMPORT_LIMITS,
@@ -164,6 +166,56 @@ describe("validateRows", () => {
       "NUMERIC_BARCODE_LOST_ZEROS", "NUMERIC_BARCODE_LOST_ZEROS", "OK", "NUMERIC_BARCODE_LOST_ZEROS", "OK", "OK",
     ]);
     // Row 6 is a text cell (not in numericCells): a short text barcode is fine.
+  });
+
+  it("an xlsx numeric barcode cell that lost its zeros or became scientific notation is rejected with a clear reason", () => {
+    // A whitespace-only first row shifts the header; the numeric cell positions must still line up.
+    const file = parseImportFile(
+      buildXlsx([[" "], ["barcode", "name"], [1234567, "short"], ["1.23457E+12", "sci"], [6221234567890, "ok"]]),
+      "o.xlsx",
+    );
+    const m = autoMapHeaders(file.headers);
+    const r = validateRows(file.rows, m, index(), biz, { numericCells: file.numericCells });
+    expect(r.map((x) => [x.status, x.reason])).toEqual([
+      ["REJECTED", "NUMERIC_BARCODE_LOST_ZEROS"],
+      ["REJECTED", "NUMERIC_BARCODE_LOST_ZEROS"],
+      ["OK", undefined],
+    ]);
+  });
+
+  it("numeric barcode cells are accepted only with 8, 12, 13 or 14 digits", () => {
+    const lens = [7, 8, 9, 10, 11, 12, 13, 14, 15];
+    const rows = lens.map((n) => row("1".repeat(n), "n"));
+    const numeric = new Set(lens.map((_, i) => `${i + 1}:0`));
+    const r = run(rows, index(), mapping, biz, { numericCells: numeric });
+    expect(r.map((x) => x.status === "OK")).toEqual([false, true, false, false, false, true, true, true, false]);
+  });
+
+  it("matches by barcode first, then by SKU; a barcode and SKU naming two products conflict", () => {
+    const existing = index({ "sku:S1": item({ variantId: "vs" }), "111": item({ variantId: "vb", nameAr: "كرتون" }) });
+    const r = run(
+      [
+        row("999", "حليب طازج", "", "", "", "", "", "", "", "", "S1"), // new barcode, SKU of an existing variant
+        row("888", "حليب", "", "", "", "", "", "", "", "", "S1"), // same SKU again: duplicate in file
+        row("111", "كرتون"), // barcode only
+        row("111x", "كرتون"),
+      ],
+      existing,
+    );
+    expect(r[0]).toMatchObject({ status: "CHANGED", matchedVariantId: "vs" });
+    expect(r[1]).toMatchObject({ status: "REJECTED", reason: "DUPLICATE_IN_FILE" });
+    expect(r[2]).toMatchObject({ status: "SKIPPED", reason: "UNCHANGED", matchedVariantId: "vb" });
+    expect(r[3]?.status).toBe("OK");
+    const same = run([row("999", "حليب", "", "", "", "", "", "", "", "", "S1")], existing);
+    expect(same[0]).toMatchObject({ status: "SKIPPED", reason: "UNCHANGED", matchedVariantId: "vs" });
+    const conflict = run([row("111", "x", "", "", "", "", "", "", "", "", "S1")], existing);
+    expect(conflict[0]).toMatchObject({ status: "REJECTED", reason: "CONFLICTING_MATCH" });
+    const both = index({
+      "111": item({ variantId: "vb", nameAr: "كرتون" }),
+      "sku:S1": item({ variantId: "vb", nameAr: "كرتون" }),
+    });
+    const same2 = run([row("111", "كرتون", "", "", "", "", "", "", "", "", "S1")], both);
+    expect(same2[0]).toMatchObject({ status: "SKIPPED", matchedVariantId: "vb" });
   });
 
   it("rows with no sku and no barcode are rejected; sku identifies when the mapping has no barcode", () => {

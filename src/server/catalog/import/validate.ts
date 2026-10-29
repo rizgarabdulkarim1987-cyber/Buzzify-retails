@@ -8,8 +8,11 @@ import type { Mapping } from "./mapping";
 /** Field length limits; keep equal to MAX_PRODUCT_NAME_LENGTH, MAX_NAME_LENGTH, MAX_UNIT_NAME_LENGTH, MAX_SKU_LENGTH (tested). */
 export const IMPORT_LIMITS = { name: 200, taxonomy: 120, unit: 40, sku: 64 } as const;
 
-/** Numeric xlsx barcode cells shorter than this lost their leading zeros (EAN-8 is the shortest real code). */
-const MIN_NUMERIC_BARCODE_DIGITS = 8;
+/**
+ * A barcode typed as a NUMBER in xlsx may have lost leading zeros, so only the real code lengths
+ * (EAN-8, UPC-A 12, EAN-13, GTIN-14) are trusted; any other digit count is rejected.
+ */
+const NUMERIC_BARCODE_LENGTHS: ReadonlySet<number> = new Set([8, 12, 13, 14]);
 
 /** What the database already holds for one identifier (a barcode, or `skuKey(sku)`). */
 export type ExistingItem = {
@@ -66,7 +69,7 @@ export type ValidateOptions = {
 };
 
 const CURRENCY_ALIASES: Record<string, Currency> = {
-  iqd: "IQD", "دينار": "IQD", "دينارعراقي": "IQD", "دع": "IQD", id: "IQD",
+  iqd: "IQD", "دينار": "IQD", "دينارعراقي": "IQD", "دع": "IQD",
   usd: "USD", "us$": "USD", $: "USD", "دولار": "USD", "دولارامريكي": "USD", "دۆلار": "USD",
 };
 
@@ -143,7 +146,7 @@ export function validateRows(
         const col = mapping.barcode;
         if (col !== null && options.numericCells?.has(`${rowNumber}:${col}`)) {
           // A number cell: zeros may be gone. A short one, or one with a fraction, is not a barcode we can trust.
-          if (!/^\d+$/.test(rawBarcode) || rawBarcode.length < MIN_NUMERIC_BARCODE_DIGITS) {
+          if (!/^\d+$/.test(rawBarcode) || !NUMERIC_BARCODE_LENGTHS.has(rawBarcode.length)) {
             throw new Reject("NUMERIC_BARCODE_LOST_ZEROS");
           }
         }
@@ -185,12 +188,15 @@ export function validateRows(
       if (priceText !== "") price = parsePrice(priceText, get("currency"), businessCurrencies);
 
       // Repeated inside the file: the first valid row wins, later ones are rejected.
-      const idKey = barcode !== null ? barcode : skuKey(sku);
-      const claims = [idKey, ...(barcode !== null && sku !== "" ? [skuKey(sku)] : [])];
+      const claims = [...(barcode !== null ? [barcode] : []), ...(sku !== "" ? [skuKey(sku)] : [])];
       if (claims.some((k) => claimed.has(k))) throw new Reject("DUPLICATE_IN_FILE");
 
-      const existing = existingIndex.get(idKey);
-      if (existing?.archived) throw new Reject("ARCHIVED_BARCODE");
+      // Barcode first, then SKU. Two different products named by the barcode and the SKU is a conflict.
+      const byBarcode = barcode !== null ? existingIndex.get(barcode) : undefined;
+      const bySku = sku !== "" ? existingIndex.get(skuKey(sku)) : undefined;
+      if (byBarcode && bySku && byBarcode.variantId !== bySku.variantId) throw new Reject("CONFLICTING_MATCH");
+      const existing = byBarcode ?? bySku;
+      if (existing?.archived) throw new Reject(byBarcode ? "ARCHIVED_BARCODE" : "ARCHIVED_SKU");
 
       for (const k of claims) claimed.add(k);
       const normalized: NormalizedRow = {

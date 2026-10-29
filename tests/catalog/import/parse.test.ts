@@ -63,6 +63,22 @@ describe("parseImportFile: csv", () => {
     expect(parseImportFile(csv("a,b\n"), "x.csv")).toMatchObject({ headers: ["a", "b"], rows: [] });
   });
 
+  it("decodes UTF-16 CSV with a BOM (LE and BE)", () => {
+    const text = "a\tb\nحليب\t2\n";
+    const le = new Uint8Array(2 + text.length * 2);
+    le.set([0xff, 0xfe]);
+    const be = new Uint8Array(2 + text.length * 2);
+    be.set([0xfe, 0xff]);
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      le[2 + 2 * i] = c & 255;
+      le[3 + 2 * i] = c >> 8;
+      be[2 + 2 * i] = c >> 8;
+      be[3 + 2 * i] = c & 255;
+    }
+    for (const b of [le, be]) expect(parseImportFile(b, "u.csv")).toMatchObject({ headers: ["a", "b"], rows: [["حليب", "2"]] });
+  });
+
   it("keeps duplicate header names as they are", () => {
     expect(parseImportFile(csv("a,a\n1,2"), "x.csv").headers).toEqual(["a", "a"]);
   });
@@ -167,6 +183,77 @@ describe("parseImportFile: xlsx", () => {
       if (sig === 0x04034b50 && dv.getUint32(i + 22, true) > 50_000_000) dv.setUint32(i + 22, 2000, true);
     }
     expect(codeOf(() => parseImportFile(z, "forged.xlsx"))).toBe("IMPORT_UNREADABLE");
+  });
+
+  it("a forged declared size fails fast instead of inflating the whole stream", () => {
+    const sheet = `<?xml version="1.0"?><worksheet><sheetData>${" ".repeat(100 * 1024 * 1024)}</sheetData></worksheet>`;
+    const z = buildXlsx([["a"]], { sheetXmlOverride: sheet });
+    const dv = new DataView(z.buffer, z.byteOffset, z.byteLength);
+    for (let i = 0; i < z.length - 30; i++) {
+      const sig = dv.getUint32(i, true);
+      if (sig === 0x02014b50 && dv.getUint32(i + 24, true) > 50_000_000) dv.setUint32(i + 24, 2000, true);
+      if (sig === 0x04034b50 && dv.getUint32(i + 22, true) > 50_000_000) dv.setUint32(i + 22, 2000, true);
+    }
+    const t = Date.now();
+    expect(codeOf(() => parseImportFile(z, "forged.xlsx"))).toBe("IMPORT_UNREADABLE");
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+
+  it("more than 200 columns is refused and a far-right cell never allocates a wide row", () => {
+    const rows = [`<row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c><c r="XFD1" t="inlineStr"><is><t>x</t></is></c></row>`];
+    for (let r = 2; r <= 10001; r++) rows.push(`<row r="${r}"><c r="A${r}" t="inlineStr"><is><t>n</t></is></c></row>`);
+    const wide = buildXlsx([], { sheetXmlOverride: `<worksheet><sheetData>${rows.join("")}</sheetData></worksheet>` });
+    const t = Date.now();
+    expect(codeOf(() => parseImportFile(wide, "w.xlsx"))).toBe("IMPORT_UNREADABLE");
+    expect(Date.now() - t).toBeLessThan(1000);
+    const header200 = Array.from({ length: 200 }, (_, i) => `h${i}`);
+    expect(parseImportFile(buildXlsx([header200, ["1"]]), "x.xlsx").headers).toHaveLength(200);
+    expect(codeOf(() => parseImportFile(buildXlsx([[...header200, "h200"], ["1"]]), "x.xlsx"))).toBe("IMPORT_UNREADABLE");
+    expect(codeOf(() => parseImportFile(csv(Array.from({ length: 201 }, (_, i) => `h${i}`).join(",") + "\n1"), "x.csv"))).toBe("IMPORT_UNREADABLE");
+  });
+
+  it("stripping phonetic runs is linear", () => {
+    const sst = `<sst><si><t>a</t>${"<rPh></rPh>".repeat(80000)}</si></sst>`;
+    const z = buildXlsx([["h"], [{ f: "x", v: 1 }]], { extraFiles: { "xl/sharedStrings.xml": strToU8(sst) } });
+    const t = Date.now();
+    parseImportFile(z, "r.xlsx");
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+
+  it("rows are counted while scanning: 5 MB of one-cell rows is refused fast", () => {
+    const t = Date.now();
+    expect(codeOf(() => parseImportFile(csv("a\n".repeat(2_500_000)), "m.csv"))).toBe("IMPORT_TOO_MANY_ROWS");
+    expect(Date.now() - t).toBeLessThan(1000);
+    const parts = Array.from({ length: 30000 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}" t="inlineStr"><is><t>x</t></is></c></row>`);
+    const x = buildXlsx([], { sheetXmlOverride: `<worksheet><sheetData>${parts.join("")}</sheetData></worksheet>` });
+    expect(codeOf(() => parseImportFile(x, "m.xlsx"))).toBe("IMPORT_TOO_MANY_ROWS");
+  });
+
+  it("numeric cell keys are relative to the data rows even after a blank leading row", () => {
+    const r = parseImportFile(buildXlsx([[" "], ["barcode", "name"], [1234567, "x"]]), "o.xlsx");
+    expect(r.headers).toEqual(["barcode", "name"]);
+    expect(r.rows).toEqual([["1234567", "x"]]);
+    expect([...r.numericCells]).toEqual(["1:0"]);
+  });
+
+  it("skips hidden sheets and reads the first visible one", () => {
+    const wb = `<workbook xmlns:r="r"><sheets><sheet name="H" sheetId="1" state="hidden" r:id="rId1"/><sheet name="D" sheetId="2" r:id="rId3"/></sheets></workbook>`;
+    const rels = `<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId3" Target="worksheets/sheet2.xml"/></Relationships>`;
+    const sheet2 = `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>visible</t></is></c></row></sheetData></worksheet>`;
+    const z = buildXlsx([["hidden"]], {
+      extraFiles: { "xl/workbook.xml": strToU8(wb), "xl/_rels/workbook.xml.rels": strToU8(rels), "xl/worksheets/sheet2.xml": strToU8(sheet2) },
+    });
+    expect(parseImportFile(z, "h.xlsx").headers).toEqual(["visible"]);
+  });
+
+  it("decodes CDATA text and keeps it literal", () => {
+    const sheet = `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t><![CDATA[a & <b>]]></t></is></c></row></sheetData></worksheet>`;
+    expect(parseImportFile(buildXlsx([], { sheetXmlOverride: sheet }), "c.xlsx").headers).toEqual(["a & <b>"]);
+  });
+
+  it("prefixed OOXML (x:c) is unreadable, not a crash", () => {
+    const sheet = `<x:worksheet><x:sheetData><x:row r="1"><x:c r="A1" t="inlineStr"><x:is><x:t>a</x:t></x:is></x:c></x:row></x:sheetData></x:worksheet>`;
+    expect(codeOf(() => parseImportFile(buildXlsx([], { sheetXmlOverride: sheet }), "p.xlsx"))).toBe("IMPORT_UNREADABLE");
   });
 
   it("an unclosed-tag flood does not hang", () => {

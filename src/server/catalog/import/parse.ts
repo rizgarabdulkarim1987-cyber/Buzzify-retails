@@ -7,10 +7,14 @@
  * file only needs strings and numbers, which is a few hundred lines on top of an unzip.
  *
  * Safety rules:
- *  - The file is at most 5 MB; an xlsx is a zip, so its DECLARED uncompressed total is capped at 50 MB
- *    before anything is inflated (zip bomb), and fflate inflates into a buffer of the declared size,
- *    so a forged smaller size cannot grow past it. Only workbook.xml, its rels, sharedStrings.xml and
- *    the first sheet are ever inflated.
+ *  - The file is at most 5 MB; an xlsx is a zip, so the central directory is read first and its
+ *    DECLARED uncompressed total is capped at 50 MB before anything is inflated (zip bomb). Entries are
+ *    then inflated with fflate's streaming Inflate in 16 KB steps that stop as soon as the output passes
+ *    the declared size, so a forged size cannot make us inflate more than that (an entry whose real
+ *    size differs from the declared one is refused). Only workbook.xml, its rels, sharedStrings.xml and
+ *    the first VISIBLE sheet are ever inflated.
+ *  - At most 200 columns and 10000 data rows; both are enforced while scanning, before any dense
+ *    structure is built.
  *  - The XML is scanned with indexOf (no regular expression runs over the document), entities are
  *    decoded by a fixed table, and no DOCTYPE or external entity is ever resolved (no XXE).
  *  - Cells are read as TEXT. Shared and inline strings keep their exact text (leading zeros stay).
@@ -23,13 +27,14 @@
  *  - Every failure is a RuleError with IMPORT_TOO_LARGE, IMPORT_TOO_MANY_ROWS or IMPORT_UNREADABLE;
  *    a raw library error never escapes.
  */
-import { strFromU8, unzipSync } from "fflate";
+import { Inflate, strFromU8 } from "fflate";
 import { RuleError } from "@/server/framework/errors";
 
 export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_IMPORT_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 export const MAX_IMPORT_ROWS = 10_000;
-const MAX_COLUMNS = 16_384; // Excel's limit (XFD)
+const MAX_COLUMNS = 200;
+const INFLATE_STEP = 16 * 1024;
 
 export type ParsedImport = {
   headers: string[];
@@ -44,20 +49,24 @@ const unreadable = () => new RuleError("IMPORT_UNREADABLE");
 export function parseImportFile(bytes: Uint8Array, name: string): ParsedImport {
   if (bytes.length > MAX_IMPORT_FILE_BYTES) throw new RuleError("IMPORT_TOO_LARGE");
   const lower = name.trim().toLowerCase();
-  let table: { cells: string[][]; numeric: Set<string> };
   try {
-    if (lower.endsWith(".csv")) table = { cells: parseCsv(bytes), numeric: new Set() };
-    else if (lower.endsWith(".xlsx")) table = readXlsx(bytes);
-    else throw unreadable();
+    if (lower.endsWith(".csv")) return finish(parseCsv(bytes), new Set());
+    if (lower.endsWith(".xlsx")) {
+      const t = readXlsx(bytes);
+      return finish(t.cells, t.numeric);
+    }
+    throw unreadable();
   } catch (e) {
     if (e instanceof RuleError) throw e;
     throw unreadable();
   }
-  return finish(table.cells, table.numeric);
 }
 
-/** Splits header and data, drops trailing empty rows, enforces the row cap. */
-function finish(cells: string[][], numeric: Set<string>): ParsedImport {
+/**
+ * Splits header and data, drops leading and trailing blank rows, enforces the row cap. `numeric`
+ * holds "arrayIndex:col" keys; they are rewritten here to "dataRow:col" with the header offset applied.
+ */
+function finish(cells: string[][], numericRaw: ReadonlySet<string>): ParsedImport {
   const isBlank = (r: readonly string[]) => r.every((c) => c.trim() === "");
   let start = 0;
   while (start < cells.length && isBlank(cells[start]!)) start++;
@@ -67,13 +76,27 @@ function finish(cells: string[][], numeric: Set<string>): ParsedImport {
   const headers = cells[start]!.map((h) => h.trim());
   const rows = cells.slice(start + 1, end);
   if (rows.length > MAX_IMPORT_ROWS) throw new RuleError("IMPORT_TOO_MANY_ROWS");
-  return { headers, rows, numericCells: numeric };
+  const numericCells = new Set<string>();
+  for (const key of numericRaw) {
+    const [i, c] = key.split(":").map(Number) as [number, number];
+    if (i > start && i < end) numericCells.add(`${i - start}:${c}`);
+  }
+  return { headers, rows, numericCells };
 }
 
 // ---------------------------------------------------------------------------------------------
 // CSV
 
 function decodeCsv(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const swapped = new Uint8Array(bytes.length - (bytes.length % 2));
+    for (let i = 0; i < swapped.length; i += 2) {
+      swapped[i] = bytes[i + 1]!;
+      swapped[i + 1] = bytes[i]!;
+    }
+    return new TextDecoder("utf-16le").decode(swapped); // the swapped BOM reads as FF FE
+  }
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes); // strips a BOM
   } catch {
@@ -116,8 +139,14 @@ function parseCsv(bytes: Uint8Array): string[][] {
     field = "";
     fieldStarted = false;
   };
+  let nonBlank = 0;
   const endRow = () => {
     endField();
+    if (row.length > MAX_COLUMNS) throw unreadable();
+    if (!(row.length === 1 && row[0] === "")) {
+      // Header plus MAX_IMPORT_ROWS data rows; stop reading as soon as there are more.
+      if (++nonBlank > MAX_IMPORT_ROWS + 1) throw new RuleError("IMPORT_TOO_MANY_ROWS");
+    }
     rows.push(row);
     row = [];
   };
@@ -207,17 +236,42 @@ function decodeXml(s: string): string {
     .replace(/_x([0-9A-Fa-f]{4})_/g, (_m, hex: string) => codePoint(parseInt(hex, 16))); // OOXML escape, e.g. _x000D_
 }
 
-/** Text of all <t> elements of a string item (rich text runs joined; phonetic hints skipped). */
-function itemText(inner: string): string {
-  let s = inner;
-  while (s.includes("<rPh")) {
-    const a = s.indexOf("<rPh");
+/** Element text: entities decoded, CDATA sections kept literal. */
+function textOf(inner: string): string {
+  if (!inner.includes("<![CDATA[")) return decodeXml(inner);
+  let out = "";
+  let pos = 0;
+  for (;;) {
+    const a = inner.indexOf("<![CDATA[", pos);
+    if (a === -1) return out + decodeXml(inner.slice(pos));
+    const b = inner.indexOf("]]>", a + 9);
+    if (b === -1) throw unreadable();
+    out += decodeXml(inner.slice(pos, a)) + inner.slice(a + 9, b);
+    pos = b + 3;
+  }
+}
+
+/** Removes every <rPh>...</rPh> (phonetic hints) in ONE forward pass. */
+function stripPhonetic(s: string): string {
+  if (!s.includes("<rPh")) return s;
+  const parts: string[] = [];
+  let pos = 0;
+  for (;;) {
+    const a = s.indexOf("<rPh", pos);
+    if (a === -1) break;
     const b = s.indexOf("</rPh>", a);
     if (b === -1) throw unreadable();
-    s = s.slice(0, a) + s.slice(b + 6);
+    parts.push(s.slice(pos, a));
+    pos = b + 6;
   }
+  parts.push(s.slice(pos));
+  return parts.join("");
+}
+
+/** Text of all <t> elements of a string item (rich text runs joined; phonetic hints skipped). */
+function itemText(inner: string): string {
   let out = "";
-  for (const t of elements(s, "t")) out += decodeXml(t.inner);
+  for (const t of elements(stripPhonetic(inner), "t")) out += textOf(t.inner);
   return out;
 }
 
@@ -229,43 +283,101 @@ function columnIndex(ref: string): number | null {
   return n - 1;
 }
 
-function unzipNeeded(bytes: Uint8Array): Record<string, Uint8Array> {
-  if (!(bytes[0] === 0x50 && bytes[1] === 0x4b)) throw unreadable(); // "PK"
-  // Pass 1 inflates nothing: it only adds up what the archive DECLARES it will expand to.
+// --- zip -------------------------------------------------------------------------------------
+
+type ZipEntry = { name: string; method: number; compressedSize: number; size: number; dataStart: number };
+
+/** The archive entries from its central directory (sizes as DECLARED; nothing is inflated). */
+function readZipDirectory(bytes: Uint8Array): Map<string, ZipEntry> {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd === -1) throw unreadable();
+  const count = dv.getUint16(eocd + 10, true);
+  let pos = dv.getUint32(eocd + 16, true);
+  const entries = new Map<string, ZipEntry>();
   let total = 0;
-  unzipSync(bytes, {
-    filter: (f) => {
-      total += f.originalSize;
-      if (f.originalSize > MAX_IMPORT_UNCOMPRESSED_BYTES || total > MAX_IMPORT_UNCOMPRESSED_BYTES) {
-        throw new RuleError("IMPORT_TOO_LARGE");
-      }
-      return false;
-    },
-  });
-  const wanted = (n: string) =>
-    n === "xl/workbook.xml" || n === "xl/_rels/workbook.xml.rels" || n === "xl/sharedStrings.xml" || /^xl\/worksheets\/[^/]+\.xml$/.test(n);
-  return unzipSync(bytes, { filter: (f) => wanted(f.name) });
+  for (let n = 0; n < count; n++) {
+    if (pos + 46 > bytes.length || dv.getUint32(pos, true) !== 0x02014b50) throw unreadable();
+    const flags = dv.getUint16(pos + 8, true);
+    const method = dv.getUint16(pos + 10, true);
+    const compressedSize = dv.getUint32(pos + 20, true);
+    const size = dv.getUint32(pos + 24, true);
+    const nameLen = dv.getUint16(pos + 28, true);
+    const extraLen = dv.getUint16(pos + 30, true);
+    const commentLen = dv.getUint16(pos + 32, true);
+    const localOffset = dv.getUint32(pos + 42, true);
+    if (flags & 1) throw unreadable(); // encrypted
+    if (compressedSize === 0xffffffff || size === 0xffffffff || localOffset === 0xffffffff) throw unreadable(); // zip64: far beyond our limits
+    total += size;
+    if (size > MAX_IMPORT_UNCOMPRESSED_BYTES || total > MAX_IMPORT_UNCOMPRESSED_BYTES) throw new RuleError("IMPORT_TOO_LARGE");
+    const name = new TextDecoder().decode(bytes.subarray(pos + 46, pos + 46 + nameLen));
+    if (localOffset + 30 > bytes.length || dv.getUint32(localOffset, true) !== 0x04034b50) throw unreadable();
+    const dataStart = localOffset + 30 + dv.getUint16(localOffset + 26, true) + dv.getUint16(localOffset + 28, true);
+    if (dataStart + compressedSize > bytes.length) throw unreadable();
+    entries.set(name, { name, method, compressedSize, size, dataStart });
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
 }
 
-function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> } {
-  const files = unzipNeeded(bytes);
-  const text = (n: string): string | null => (files[n] ? strFromU8(files[n]) : null);
+/** Inflates one entry in 16 KB steps, refusing as soon as it passes (or ends short of) its declared size. */
+function inflateEntry(bytes: Uint8Array, e: ZipEntry): Uint8Array {
+  const data = bytes.subarray(e.dataStart, e.dataStart + e.compressedSize);
+  if (e.method === 0) {
+    if (e.size !== data.length) throw unreadable();
+    return data;
+  }
+  if (e.method !== 8 || data.length === 0) throw unreadable();
+  const out = new Uint8Array(e.size);
+  let written = 0;
+  const inflate = new Inflate((chunk) => {
+    if (written + chunk.length > e.size) throw unreadable();
+    out.set(chunk, written);
+    written += chunk.length;
+  });
+  for (let i = 0; i < data.length; i += INFLATE_STEP) {
+    inflate.push(data.subarray(i, Math.min(i + INFLATE_STEP, data.length)), i + INFLATE_STEP >= data.length);
+  }
+  if (written !== e.size) throw unreadable();
+  return out;
+}
 
-  // The first sheet of the workbook (through its relationship), else the conventional sheet1.xml.
+// --- sheet -----------------------------------------------------------------------------------
+
+function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> } {
+  const entries = readZipDirectory(bytes);
+  const text = (n: string): string | null => {
+    const e = entries.get(n);
+    return e ? strFromU8(inflateEntry(bytes, e)) : null;
+  };
+
+  // The first VISIBLE sheet of the workbook (through its relationship), else the conventional sheet1.xml.
   let sheetPath = "xl/worksheets/sheet1.xml";
   const workbook = text("xl/workbook.xml");
   const rels = text("xl/_rels/workbook.xml.rels");
   if (workbook && rels) {
-    const first = elements(workbook, "sheet").next();
-    const rid = first.done ? null : attr(first.value.attrs, "r:id");
-    if (rid) {
-      for (const rel of elements(rels, "Relationship")) {
-        if (attr(rel.attrs, "Id") === rid) {
-          const target = attr(rel.attrs, "Target");
-          if (target) sheetPath = target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\.\//, "")}`;
-          break;
+    for (const sheetEl of elements(workbook, "sheet")) {
+      const state = attr(sheetEl.attrs, "state");
+      if (state === "hidden" || state === "veryHidden") continue;
+      const rid = attr(sheetEl.attrs, "r:id");
+      let target: string | null = null;
+      if (rid) {
+        for (const rel of elements(rels, "Relationship")) {
+          if (attr(rel.attrs, "Id") === rid) {
+            target = attr(rel.attrs, "Target");
+            break;
+          }
         }
       }
+      if (!target) throw unreadable();
+      sheetPath = target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\.\//, "")}`;
+      break;
     }
   }
   const sheet = text(sheetPath);
@@ -290,7 +402,7 @@ function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> 
       if (col >= MAX_COLUMNS) throw unreadable();
       const type = attr(c.attrs, "t");
       const v = elements(c.inner, "v").next();
-      const vText = v.done ? "" : decodeXml(v.value.inner);
+      const vText = v.done ? "" : textOf(v.value.inner);
       let value: string;
       let isNumber = false;
       if (type === "s") value = shared[Number(vText)] ?? "";
@@ -306,7 +418,11 @@ function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> 
       }
       if (value === "") continue;
       let cols = byRow.get(rowIdx);
-      if (!cols) byRow.set(rowIdx, (cols = new Map()));
+      if (!cols) {
+        // Counted while scanning: the header plus MAX_IMPORT_ROWS data rows is the most we ever keep.
+        if (byRow.size >= MAX_IMPORT_ROWS + 1) throw new RuleError("IMPORT_TOO_MANY_ROWS");
+        byRow.set(rowIdx, (cols = new Map()));
+      }
       cols.set(col, value);
       if (isNumber) {
         let set = numericAt.get(rowIdx);
@@ -323,6 +439,7 @@ function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> 
   const lastDataRow = rowNumbers[rowNumbers.length - 1]!;
   if (lastDataRow - headerRow > MAX_IMPORT_ROWS + 1_000) throw new RuleError("IMPORT_TOO_MANY_ROWS");
 
+  // Rows are padded to the header width only; columns are capped at MAX_COLUMNS above.
   const width = Math.max(...byRow.get(headerRow)!.keys()) + 1;
   const cells: string[][] = [];
   const numeric = new Set<string>();
@@ -332,7 +449,7 @@ function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> 
     const out = new Array<string>(Math.max(width, maxCol)).fill("");
     if (cols) for (const [c, v] of cols) out[c] = v;
     cells.push(out);
-    if (r > headerRow) for (const c of numericAt.get(r) ?? []) numeric.add(`${r - headerRow}:${c}`);
+    for (const c of numericAt.get(r) ?? []) numeric.add(`${r - headerRow}:${c}`);
   }
   return { cells, numeric };
 }
