@@ -28,7 +28,7 @@ import {
 } from "@/server/catalog/import/actions";
 import { autoMapHeaders } from "@/server/catalog/import/mapping";
 import { setPrice } from "@/server/catalog/prices";
-import { createProduct, getProduct } from "@/server/catalog/products";
+import { createProduct, getProduct, updateProduct } from "@/server/catalog/products";
 import { searchCatalog } from "@/server/catalog/search";
 import { createCategory } from "@/server/catalog/taxonomy";
 import { useTestDb } from "../../helpers/db";
@@ -173,7 +173,17 @@ describe("catalog import actions", () => {
     console.info(`[import 1200 rows] stage+validate ${validatedAt - started} ms, commit ${committedAt - validatedAt} ms`);
     expect(c).toEqual({
       alreadyCommitted: false,
-      stats: { total: 1200, created: expected.ok, updated: 0, priceNotPermitted: 0, skipped: expected.changed, rejected: expected.rejected },
+      stats: {
+        total: 1200,
+        created: expected.ok,
+        updated: 0,
+        priceNotPermitted: 0,
+        priceNotApplied: 0,
+        // Carton rows (factor 24) make a base piece without a price: reported, not hidden.
+        withoutBasePrice: rows.filter((r) => r[5] === "24").length,
+        skipped: expected.changed,
+        rejected: expected.rejected,
+      },
     });
 
     expect(await productCount(a)).toBe(expected.ok + 1);
@@ -354,7 +364,7 @@ describe("catalog import actions", () => {
         a.as("owner"),
       ),
     );
-    const vb = await stageAndValidate(a, csv([row({ barcode: "801", name: "عصير", price: "5500" })]));
+    const vb = await stageAndValidate(a, csv([row({ barcode: "801", name: "عصير", price: "5500", factor: "12" })]));
     value(await commitImport({ batchId: vb.batchId, onChange: "UPDATE" }, a.as("owner")));
     const units = await db.rtUnit.findMany({ where: { variantId: box.variantId } });
     const open = async (unitId: string) => (await db.rtPrice.findFirstOrThrow({ where: { unitId, validTo: null } })).amountMinor;
@@ -419,7 +429,8 @@ describe("catalog import actions", () => {
     ];
     for (const r of writes) expect(r).toMatchObject({ ok: false, code: "READ_ONLY" });
     expect(await productCount(a)).toBe(0);
-    // Reading is fine.
+    // Ruling: reads stay allowed in READ_ONLY (list, get, the rejected-rows file, presets): they
+    // change nothing, and an owner whose subscription lapsed can still see and fix the file.
     expect(value(await listImportBatches({}, a.as("owner")))).toHaveLength(1);
     expect(value(await getImportBatch({ batchId: v.batchId }, a.as("owner")))).toMatchObject({ status: "VALIDATED" });
     expect(value(await downloadRejected({ batchId: v.batchId }, a.as("owner")))).toContain("reason");
@@ -598,19 +609,121 @@ describe("catalog import actions", () => {
     expect(await db.rtImportRow.count({ where: { batchId: old.batchId } })).toBe(0);
   });
 
-  it("a price set after validation stays in the history when the import applies its own", async () => {
-    // The row's price is applied as the new price from now on; history stays (append-only).
+  it("a row whose product changed after validation is not written (STALE_ROW)", async () => {
     const { a } = await world();
-    const p = await existing(a, "خبز", "960", 250n);
-    const v = await stageAndValidate(a, csv([row({ barcode: "960", name: "خبز", price: "300" })]));
-    value(await setPrice({ unitId: p.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 275n }, a.as("owner")));
-    value(await commitImport({ batchId: v.batchId, onChange: "UPDATE" }, a.as("owner")));
-    const rows = await db.rtPrice.findMany({ where: { unitId: p.baseUnitId }, orderBy: { validFrom: "asc" } });
-    expect(rows.map((r) => [r.amountMinor, r.validTo === null])).toEqual([
-      [250n, false],
-      [275n, false],
-      [300n, true],
-    ]);
+    const bread = await existing(a, "خبز", "960", 250n);
+    const tea = await existing(a, "شاي", "961");
+    const v = await stageAndValidate(a, csv([row({ barcode: "960", name: "خبز", price: "300" }), row({ barcode: "961", name: "شاي أخضر" })]));
+    // Someone sets the price of one and renames the other in the meantime.
+    value(await setPrice({ unitId: bread.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 275n }, a.as("owner")));
+    value(await updateProduct({ id: tea.productId, expectedVersion: 1, nameAr: "شاي أسود" }, a.as("owner")));
+    const c = value(await commitImport({ batchId: v.batchId, onChange: "UPDATE", expectedVersion: v.version }, a.as("owner")));
+    expect(c.stats).toMatchObject({ updated: 0, rejected: 2 });
+    const stored = await db.rtImportRow.findMany({ where: { batchId: v.batchId }, orderBy: { rowNumber: "asc" } });
+    expect(stored.map((r) => r.reason)).toEqual(["STALE_ROW", "STALE_ROW"]);
+    expect((await db.rtProduct.findUniqueOrThrow({ where: { id: tea.productId } })).nameAr).toBe("شاي أسود");
+    const prices = await db.rtPrice.findMany({ where: { unitId: bread.baseUnitId }, orderBy: { validFrom: "asc" } });
+    expect(prices.map((r) => r.amountMinor)).toEqual([250n, 275n]);
+  });
+
+  it("a SKU-matched row adds its new barcode on UPDATE, and a code taken meanwhile rejects the row", async () => {
+    const { a } = await world();
+    const oil = value(await createProduct({ nameAr: "زيت", sku: "OIL-1", baseUnit: { name: "حبة", barcodes: [] } }, a.as("owner")));
+    value(await createProduct({ nameAr: "سمن", sku: "GHEE-1", baseUnit: { name: "حبة", barcodes: [] } }, a.as("owner")));
+    const v = await stageAndValidate(a, csv([row({ sku: "OIL-1", name: "زيت", barcode: "7001" }), row({ sku: "GHEE-1", name: "سمن", barcode: "7002" })]));
+    expect(v.summary).toMatchObject({ changed: 2 });
+    const changed = value(await getImportBatch({ batchId: v.batchId, status: "CHANGED" }, a.as("owner")));
+    expect(changed.rows[0]!.diff).toEqual([{ field: "barcode", before: null, after: "7001" }]);
+    await existing(a, "سابق", "7002");
+    const c = value(await commitImport({ batchId: v.batchId, onChange: "UPDATE" }, a.as("owner")));
+    expect(c.stats).toMatchObject({ updated: 1, rejected: 1 });
+    expect(await db.rtBarcode.findFirstOrThrow({ where: { businessId: a.business.id, code: "7001" } })).toMatchObject({ unitId: oil.baseUnitId });
+    expect((await db.rtImportRow.findFirstOrThrow({ where: { batchId: v.batchId, rowNumber: 2 } })).reason).toBe("BARCODE_TAKEN");
+    expect(value(await searchCatalog({ query: "7001" }, a.as("cashier"))).items.map((h) => h.productId)).toEqual([oil.productId]);
+    // A carton's barcode with no factor, a barcode with another SKU, a SKU with no unit of that factor: refused.
+    value(
+      await createProduct(
+        { nameAr: "عصير", sku: "J-1", baseUnit: { name: "حبة", barcodes: ["7100"] }, extraUnits: [{ name: "كرتون", factor: 12, barcodes: ["7101"] }] },
+        a.as("owner"),
+      ),
+    );
+    const bad = await stageAndValidate(
+      a,
+      csv([row({ barcode: "7101", name: "عصير" }), row({ barcode: "7100", name: "عصير", sku: "J-2" }), row({ sku: "J-1", name: "عصير", factor: "6" })]),
+    );
+    const reasons = await db.rtImportRow.findMany({ where: { batchId: bad.batchId }, orderBy: { rowNumber: "asc" }, select: { reason: true } });
+    expect(reasons.map((r) => r.reason)).toEqual(["UNIT_MISMATCH", "SKU_MISMATCH", "UNIT_MISMATCH"]);
+  });
+
+  it("commit refuses a batch re-validated since the caller looked (expectedVersion)", async () => {
+    const { a } = await world();
+    const v = await stageAndValidate(a, csv([row({ barcode: "980", name: "واحد" })]));
+    const again = value(await validateImport({ batchId: v.batchId, mapping: v.suggestedMapping }, a.as("owner")));
+    expect(again.version).toBe(v.version + 1);
+    expect(await commitImport({ batchId: v.batchId, onChange: "SKIP", expectedVersion: v.version }, a.as("owner"))).toMatchObject({
+      ok: false,
+      code: "VERSION_CONFLICT",
+    });
+    expect(await productCount(a)).toBe(0);
+    const c = value(await commitImport({ batchId: v.batchId, onChange: "SKIP", expectedVersion: again.version }, a.as("owner")));
+    expect(c.stats).toMatchObject({ created: 1 });
+  });
+
+  it("the idempotency records of stage and validate keep no cells of the file", async () => {
+    const { a } = await world();
+    const k1 = key();
+    const k2 = key();
+    const file = b64(csv([row({ barcode: "990", name: "سري-جدا", price: "-1" })]));
+    const staged = value(await stageImport({ fileName: "s.csv", contentBase64: file }, a.as("owner", k1)));
+    const v = value(await validateImport({ batchId: staged.batchId, mapping: staged.suggestedMapping }, a.as("owner", k2)));
+    expect(v.firstRejected[0]!.raw).toContain("سري-جدا");
+    const stored = JSON.stringify(await db.rtIdempotency.findMany({ where: { scope: a.business.id } }));
+    expect(stored).not.toContain("سري-جدا");
+    expect(stored).not.toContain("الباركود"); // a header
+    // A replay returns the redacted values; the data stays readable through getImportBatch.
+    const replay = value(await validateImport({ batchId: staged.batchId, mapping: staged.suggestedMapping }, a.as("owner", k2)));
+    expect(replay.firstRejected[0]).toMatchObject({ reason: "NEGATIVE_PRICE", raw: [] });
+    const restaged = value(await stageImport({ fileName: "s.csv", contentBase64: file }, a.as("owner", k1)));
+    expect(restaged).toMatchObject({ batchId: staged.batchId, headers: [] });
+  });
+
+  it("a scheduled price leaves the update standing without its price, counted apart", async () => {
+    const { a } = await world();
+    const salt = await existing(a, "ملح", "995", 100n);
+    value(
+      await setPrice({ unitId: salt.baseUnitId, listKind: "DEFAULT", currency: "IQD", amountMinor: 150n, validFrom: new Date(Date.now() + 5 * DAY) }, a.as("owner")),
+    );
+    const v = await stageAndValidate(a, csv([row({ barcode: "995", name: "ملح ناعم", price: "120" })]));
+    const c = value(await commitImport({ batchId: v.batchId, onChange: "UPDATE" }, a.as("owner")));
+    expect(c.stats).toMatchObject({ updated: 1, priceNotApplied: 1 });
+    expect((await db.rtImportRow.findFirstOrThrow({ where: { batchId: v.batchId } })).reason).toBe("PRICE_NOT_APPLIED");
+    expect((await db.rtProduct.findUniqueOrThrow({ where: { id: salt.productId } })).nameAr).toBe("ملح ناعم");
+    expect(await db.rtPrice.count({ where: { unitId: salt.baseUnitId } })).toBe(2);
+  });
+
+  it("resolutions are stored by the first slice; a resumed commit cannot change them", async () => {
+    const { a } = await world();
+    const sugar = await existing(a, "سكر", "8000");
+    const rows = Array.from({ length: SLICE_SIZE + 20 }, (_, i) => row({ barcode: "81" + String(i).padStart(4, "0"), name: "صنف " + i }));
+    rows.push(row({ barcode: "8000", name: "سكر ناعم" }));
+    const v = await stageAndValidate(a, csv(rows));
+    value(await commitImportSlice({ batchId: v.batchId, onChange: "SKIP" }, a.as("owner")));
+    // Partial progress is visible.
+    expect(value(await listImportBatches({}, a.as("owner")))[0]).toMatchObject({ committedRows: SLICE_SIZE, status: "VALIDATED" });
+    expect(value(await getImportBatch({ batchId: v.batchId }, a.as("owner")))).toMatchObject({ committedRows: SLICE_SIZE });
+    const c = value(await commitImport({ batchId: v.batchId, onChange: "UPDATE" }, a.as("owner")));
+    expect(c.stats).toMatchObject({ created: SLICE_SIZE + 20, updated: 0, skipped: 1 });
+    expect((await db.rtProduct.findUniqueOrThrow({ where: { id: sugar.productId } })).nameAr).toBe("سكر");
+    expect(value(await getImportBatch({ batchId: v.batchId }, a.as("owner")))).toMatchObject({ committedRows: SLICE_SIZE + 20 });
+  });
+
+  it("a carton-only row is created and reported as without a base price", async () => {
+    const { a } = await world();
+    const v = await stageAndValidate(a, csv([row({ barcode: "9100", name: "مياه", unit: "كرتون", factor: "12", price: "3000" })]));
+    const c = value(await commitImport({ batchId: v.batchId, onChange: "SKIP" }, a.as("owner")));
+    expect(c.stats).toMatchObject({ created: 1, withoutBasePrice: 1 });
+    const shown = value(await getImportBatch({ batchId: v.batchId }, a.as("owner")));
+    expect(shown.rows[0]).toMatchObject({ status: "COMMITTED", reason: "CREATED_WITHOUT_BASE_PRICE" });
   });
 });
 

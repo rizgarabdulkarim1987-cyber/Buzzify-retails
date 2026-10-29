@@ -626,10 +626,11 @@ model RtUnit {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  business RtBusiness  @relation(fields: [businessId], references: [id])
-  variant  RtVariant   @relation(fields: [businessId, variantId], references: [businessId, id])
-  barcodes RtBarcode[]
-  prices   RtPrice[]
+  business     RtBusiness    @relation(fields: [businessId], references: [id])
+  variant      RtVariant     @relation(fields: [businessId, variantId], references: [businessId, id])
+  barcodes     RtBarcode[]
+  prices       RtPrice[]
+  rtImportRows RtImportRow[]
 
   @@unique([businessId, id])
   @@index([businessId, variantId])
@@ -754,6 +755,8 @@ model RtImportRow {
   status           ImportRowStatus
   reason           String?
   matchedVariantId String?
+  // The existing unit a CHANGED/SKIPPED row was compared with (a price change applies to it).
+  matchedUnitId    String?
   diff             Json?
   resolution       String?
   // The validated row (serializeRowResult's `normalized`), what commit applies. Null until validated.
@@ -764,6 +767,7 @@ model RtImportRow {
   business RtBusiness    @relation(fields: [businessId], references: [id])
   batch    RtImportBatch @relation(fields: [businessId, batchId], references: [businessId, id], onDelete: Cascade)
   variant  RtVariant?    @relation(fields: [businessId, matchedVariantId], references: [businessId, id], onDelete: SetNull)
+  unit     RtUnit?       @relation(fields: [businessId, matchedUnitId], references: [businessId, id], onDelete: SetNull)
 
   @@unique([businessId, batchId, rowNumber])
 }

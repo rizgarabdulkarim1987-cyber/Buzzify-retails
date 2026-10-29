@@ -74,6 +74,17 @@ describe("import staging schema", () => {
     expect(after).toMatchObject({ matchedVariantId: null, businessId: a.id });
   });
 
+  it("matchedUnitId can only name a unit of the same business", async () => {
+    const a = (await createBusinessWithStaff(db)).business;
+    const other = (await createBusinessWithStaff(db)).business;
+    const p = await db.rtProduct.create({ data: { businessId: other.id, nameAr: "حليب" } });
+    const v = await db.rtVariant.create({ data: { businessId: other.id, productId: p.id, sku: "S-U" } });
+    const u = await db.rtUnit.create({ data: { businessId: other.id, variantId: v.id, name: "حبة", factor: 1, isBase: true } });
+    const b = await batch(a.id);
+    const err = await failure(db.rtImportRow.create({ data: { businessId: a.id, batchId: b.id, rowNumber: 1, raw: [], status: "CHANGED", matchedUnitId: u.id } }));
+    expect(err).toContain("RtImportRow_businessId_matchedUnitId_fkey");
+  });
+
   it("a mapping preset name is unique within its business only", async () => {
     const a = (await createBusinessWithStaff(db)).business;
     const other = (await createBusinessWithStaff(db)).business;

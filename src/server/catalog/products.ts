@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { Currency, RtTrackingMode } from "@/generated/prisma/enums";
-import { assertUnitFactor, normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
+import { SKU_PATTERN, assertUnitFactor, normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction } from "@/server/framework/action";
@@ -98,7 +98,7 @@ const sku = z
   .trim()
   .min(1)
   .max(MAX_SKU_LENGTH)
-  .regex(/^[A-Za-z0-9._/-]+$/);
+  .regex(SKU_PATTERN);
 const options = z
   .record(z.string().trim().min(1).max(40), z.string().trim().min(1).max(60))
   .refine((o) => Object.keys(o).length >= 1 && Object.keys(o).length <= 10);
@@ -453,8 +453,9 @@ export async function insertProductsCore(
   tx: Tx,
   businessId: string,
   items: readonly NewCatalogItem[],
+  /** Codes for EXISTING units (checked free by the caller, under the product lock); inserted in the same sorted INSERT. */
+  extraBarcodes: readonly { unitId: string; code: string }[] = [],
 ): Promise<{ productId: string; variantId: string }[]> {
-  if (items.length === 0) return [];
   const rows = items.map((item) => {
     for (const code of [...item.baseUnit.barcodes, ...(item.pack?.barcodes ?? [])]) normalizeBarcode(code);
     if (item.pack) checkFactor(item.pack.factor);
@@ -470,7 +471,7 @@ export async function insertProductsCore(
       variantText: variantSearchText(names, item.sku, null, codes),
     };
   });
-  await tx.rtProduct.createMany({
+  if (rows.length > 0) await tx.rtProduct.createMany({
     data: rows.map((r) => ({
       id: r.productId,
       businessId,
@@ -482,10 +483,10 @@ export async function insertProductsCore(
       searchText: r.productText,
     })),
   });
-  await tx.rtVariant.createMany({
+  if (rows.length > 0) await tx.rtVariant.createMany({
     data: rows.map((r) => ({ id: r.variantId, businessId, productId: r.productId, sku: r.item.sku, searchText: r.variantText })),
   });
-  await tx.rtUnit.createMany({
+  if (rows.length > 0) await tx.rtUnit.createMany({
     data: rows.flatMap((r) => [
       { id: r.baseUnitId, businessId, variantId: r.variantId, name: r.item.baseUnit.name, factor: 1, isBase: true, quantityScale: 0 },
       ...(r.item.pack && r.packUnitId
@@ -493,11 +494,12 @@ export async function insertProductsCore(
         : []),
     ]),
   });
-  const codes = rows
-    .flatMap((r) => [
+  const codes: { businessId: string; unitId: string; code: string }[] = rows
+    .flatMap((r): { businessId: string; unitId: string; code: string }[] => [
       ...r.item.baseUnit.barcodes.map((code) => ({ businessId, unitId: r.baseUnitId, code })),
       ...(r.packUnitId ? (r.item.pack?.barcodes ?? []).map((code) => ({ businessId, unitId: r.packUnitId!, code })) : []),
     ])
+    .concat(extraBarcodes.map((b) => ({ businessId, unitId: b.unitId, code: normalizeBarcode(b.code) })))
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
   if (codes.length > 0) await tx.rtBarcode.createMany({ data: codes });
   const priced = rows.filter((r) => r.item.price !== null);

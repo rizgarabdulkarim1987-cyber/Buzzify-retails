@@ -23,10 +23,12 @@ const biz: BusinessCurrencies = { default: "IQD", enabled: ["IQD", "USD"] };
 /** A row in HEADERS order; omitted trailing cells are empty. */
 const row = (...cells: string[]): string[] => HEADERS.map((_, i) => cells[i] ?? "");
 
+const piece = { unitId: "u1", name: "حبة", factor: 1, prices: { IQD: 1500n } };
+/** An existing variant with a piece (factor 1) unit; for a barcode key `unit` is the code's own unit. */
 function item(over: Partial<ExistingItem> = {}): ExistingItem {
   return {
-    variantId: "v1", productId: "p1", archived: false, nameAr: "حليب", nameCkb: null, nameEn: null,
-    categoryName: "ألبان", brandName: "المراعي", unitName: "حبة", prices: { IQD: 1500n }, ...over,
+    variantId: "v1", productId: "p1", archived: false, sku: "S1", nameAr: "حليب", nameCkb: null, nameEn: null,
+    categoryName: "ألبان", brandName: "المراعي", unit: piece, units: [piece], ...over,
   };
 }
 const index = (entries: Record<string, ExistingItem> = {}): ExistingIndex => new Map(Object.entries(entries));
@@ -202,11 +204,16 @@ describe("validateRows", () => {
       ],
       existing,
     );
-    expect(r[0]).toMatchObject({ status: "CHANGED", matchedVariantId: "vs" });
+    expect(r[0]).toMatchObject({ status: "CHANGED", matchedVariantId: "vs", matchedUnitId: "u1" });
+    // The SKU-matched row brings a barcode the product does not have: it is part of the diff.
+    expect(r[0]?.diff).toEqual([
+      { field: "name", before: "حليب", after: "حليب طازج" },
+      { field: "barcode", before: null, after: "999" },
+    ]);
     expect(r[1]).toMatchObject({ status: "REJECTED", reason: "DUPLICATE_IN_FILE" });
     expect(r[2]).toMatchObject({ status: "SKIPPED", reason: "UNCHANGED", matchedVariantId: "vb" });
     expect(r[3]?.status).toBe("OK");
-    const same = run([row("999", "حليب", "", "", "", "", "", "", "", "", "S1")], existing);
+    const same = run([row("", "حليب", "", "", "", "", "", "", "", "", "S1")], existing);
     expect(same[0]).toMatchObject({ status: "SKIPPED", reason: "UNCHANGED", matchedVariantId: "vs" });
     const conflict = run([row("111", "x", "", "", "", "", "", "", "", "", "S1")], existing);
     expect(conflict[0]).toMatchObject({ status: "REJECTED", reason: "CONFLICTING_MATCH" });
@@ -216,6 +223,44 @@ describe("validateRows", () => {
     });
     const same2 = run([row("111", "كرتون", "", "", "", "", "", "", "", "", "S1")], both);
     expect(same2[0]).toMatchObject({ status: "SKIPPED", matchedVariantId: "vb" });
+  });
+
+  it("a matched row is compared with the unit of its factor; other units and SKUs are refused", () => {
+    const carton = { unitId: "u2", name: "كرتون", factor: 12, prices: { IQD: 15000n } };
+    const existing = index({
+      "111": item(), // the piece's barcode
+      "222": item({ unit: carton, units: [piece, carton] }), // the carton's barcode
+      "sku:S1": item({ units: [piece, carton] }),
+    });
+    const r = run(
+      [
+        row("222", "حليب", "16000", "", "", "", "", "", "", "12"), // carton barcode, factor 12: carton price
+        row("111", "حليب", "", "", "", "", "", "", "", "12"), // piece barcode with factor 12
+        row("", "حليب", "15000", "", "", "", "", "", "", "12", "S1"), // SKU, factor 12: the carton, unchanged
+      ],
+      existing,
+    );
+    expect(r[0]).toMatchObject({ status: "CHANGED", matchedUnitId: "u2", diff: [{ field: "price.IQD", before: "15000", after: "16000" }] });
+    expect(r[1]).toMatchObject({ status: "REJECTED", reason: "UNIT_MISMATCH" });
+    expect(r[2]).toMatchObject({ status: "SKIPPED", reason: "UNCHANGED", matchedUnitId: "u2" });
+    // A SKU match with no unit of that factor, and a barcode match naming another SKU.
+    expect(run([row("", "حليب", "", "", "", "", "", "", "", "6", "S1")], existing)[0]).toMatchObject({ reason: "UNIT_MISMATCH" });
+    expect(run([row("111", "حليب", "", "", "", "", "", "", "", "", "S9")], existing)[0]).toMatchObject({ reason: "SKU_MISMATCH" });
+    expect(run([row("111", "حليب", "", "", "", "", "", "", "", "", "S1")], existing)[0]).toMatchObject({ status: "SKIPPED" });
+  });
+
+  it("a SKU must use the characters createProduct accepts, and every text needs real letters", () => {
+    const r = run([
+      row("1", "a", "", "", "", "", "", "", "", "", "AB 12"),
+      row("2", "b", "", "", "", "", "", "", "", "", "رمز"),
+      row("3", "c", "", "", "", "", "", "", "", "", "A-1._/x"),
+      row("4", "ـــ"),
+      row("5", "d", "", "", "ـــ"),
+      row("6", "e", "", "", "", "ــ"),
+      row("7", "f", "", "", "", "", "ـ"),
+      row("8", "g", "", "", "", "", "", "", "ـ"),
+    ]);
+    expect(r.map((x) => x.reason ?? x.status)).toEqual(["BAD_SKU", "BAD_SKU", "OK", "NO_CONTENT", "NO_CONTENT", "NO_CONTENT", "NO_CONTENT", "NO_CONTENT"]);
   });
 
   it("rows with no sku and no barcode are rejected; sku identifies when the mapping has no barcode", () => {

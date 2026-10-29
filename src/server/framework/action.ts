@@ -54,6 +54,11 @@ export type ActionSpec<I, O> = {
    * statement then sees what the earlier caller committed.
    */
   run(ctx: { actor: Actor; tx: Prisma.TransactionClient; input: I; lockBusiness: (name: string) => Promise<void> }): Promise<O>;
+  /**
+   * What the idempotency row keeps instead of the value (a replay returns it). For values that carry
+   * data that must not be stored there, e.g. cells of an imported file. Default: the value.
+   */
+  storedValue?(value: O): O;
   /** Transaction timeout in ms (default Prisma's 5000). Only for bulk work (the catalog import). */
   timeoutMs?: number;
   /** What to record in the audit row. Default: the action name as entity and the input as changes. */
@@ -149,6 +154,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
         actorId: actor.userId,
         action: spec.name,
         timeoutMs: spec.timeoutMs,
+        storedValue: spec.storedValue,
         async run(tx) {
           const result = await spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) });
           const audit = spec.audit?.(input, result) ?? {

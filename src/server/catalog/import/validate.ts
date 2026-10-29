@@ -1,7 +1,7 @@
 // Pure row validation for the catalog import. No database, no clock, no mutation of inputs.
 // Task 9 builds the ExistingIndex from the database and stores the results (serializeRowResult).
 import { MAX_PRICE_MINOR } from "@/server/catalog/price-core";
-import { assertUnitFactor, normalizeBarcode, normalizeSearchText, parseMoneyText } from "@/server/domain/catalog";
+import { SKU_PATTERN, assertUnitFactor, normalizeBarcode, normalizeSearchText, parseMoneyText } from "@/server/domain/catalog";
 import type { Currency } from "@/server/domain/money";
 import type { Mapping } from "./mapping";
 
@@ -14,20 +14,25 @@ export const IMPORT_LIMITS = { name: 200, taxonomy: 120, unit: 40, sku: 64 } as 
  */
 const NUMERIC_BARCODE_LENGTHS: ReadonlySet<number> = new Set([8, 12, 13, 14]);
 
+/** One unit of an existing variant, with its current DEFAULT price per currency (minor units). */
+export type ExistingUnit = { unitId: string; name: string; factor: number; prices: Partial<Record<Currency, bigint>> };
+
 /** What the database already holds for one identifier (a barcode, or `skuKey(sku)`). */
 export type ExistingItem = {
   variantId: string;
   productId: string;
-  /** The product or variant is archived: its codes stay reserved (BARCODE_TAKEN), so a row cannot reuse them. */
+  /** The barcode, its unit, the variant or the product is archived: the code stays reserved, so a row cannot reuse it. */
   archived: boolean;
+  sku: string;
   nameAr: string;
   nameCkb: string | null;
   nameEn: string | null;
   categoryName: string | null;
   brandName: string | null;
-  unitName: string;
-  /** Current price per currency, minor units, DEFAULT list. */
-  prices: Partial<Record<Currency, bigint>>;
+  /** Barcode key: the unit that owns the code. SKU key: not used. */
+  unit: ExistingUnit | null;
+  /** The variant's active units (a SKU match picks the one whose factor equals the row's). */
+  units: readonly ExistingUnit[];
 };
 
 /** Keyed by normalized barcode, or by `skuKey(sku)` for a SKU. */
@@ -60,6 +65,8 @@ export type RowResult = {
   reason?: string;
   normalized?: NormalizedRow;
   matchedVariantId?: string;
+  /** The existing unit the row was compared with (and a price change applies to). */
+  matchedUnitId?: string;
   diff?: DiffEntry[];
 };
 
@@ -168,7 +175,11 @@ export function validateRows(
       }
       if (category.length > IMPORT_LIMITS.taxonomy || brand.length > IMPORT_LIMITS.taxonomy) throw new Reject("NAME_TOO_LONG");
       if (unit.length > IMPORT_LIMITS.unit) throw new Reject("NAME_TOO_LONG");
-      if (sku.length > IMPORT_LIMITS.sku) throw new Reject("BAD_SKU");
+      if (sku.length > IMPORT_LIMITS.sku || (sku !== "" && !SKU_PATTERN.test(sku))) throw new Reject("BAD_SKU");
+      // Same rule as the catalog actions: a text must keep letters or digits after normalization.
+      for (const text of [name, nameCkb, nameEn, category, brand, unit]) {
+        if (text !== "" && normalizeSearchText(text) === "") throw new Reject("NO_CONTENT");
+      }
 
       let factor: number | null = null;
       const factorText = get("factor");
@@ -197,6 +208,19 @@ export function validateRows(
       if (byBarcode && bySku && byBarcode.variantId !== bySku.variantId) throw new Reject("CONFLICTING_MATCH");
       const existing = byBarcode ?? bySku;
       if (existing?.archived) throw new Reject(byBarcode ? "ARCHIVED_BARCODE" : "ARCHIVED_SKU");
+      // The unit compared: the barcode's own unit, or (SKU match) the active unit of the row's factor.
+      let unitMatch: ExistingUnit | undefined;
+      if (existing) {
+        const wanted = factor ?? 1;
+        if (byBarcode) {
+          if (sku !== "" && sku !== byBarcode.sku) throw new Reject("SKU_MISMATCH");
+          unitMatch = byBarcode.unit ?? undefined;
+          if (!unitMatch || unitMatch.factor !== wanted) throw new Reject("UNIT_MISMATCH");
+        } else {
+          unitMatch = existing.units.find((u) => u.factor === wanted);
+          if (!unitMatch) throw new Reject("UNIT_MISMATCH");
+        }
+      }
 
       for (const k of claims) claimed.add(k);
       const normalized: NormalizedRow = {
@@ -216,11 +240,14 @@ export function validateRows(
         return;
       }
 
-      const diff = diffAgainst(normalized, existing);
+      const diff = diffAgainst(normalized, existing, unitMatch!);
+      // A SKU match whose barcode is new to the catalog: adding the code is a change too.
+      if (!byBarcode && barcode !== null) diff.push({ field: "barcode", before: null, after: barcode });
+      const matched = { matchedVariantId: existing.variantId, matchedUnitId: unitMatch!.unitId };
       results.push(
         diff.length > 0
-          ? { rowNumber, status: "CHANGED", normalized, matchedVariantId: existing.variantId, diff }
-          : { rowNumber, status: "SKIPPED", reason: "UNCHANGED", normalized, matchedVariantId: existing.variantId },
+          ? { rowNumber, status: "CHANGED", normalized, ...matched, diff }
+          : { rowNumber, status: "SKIPPED", reason: "UNCHANGED", normalized, ...matched },
       );
     } catch (e) {
       if (e instanceof Reject) {
@@ -234,7 +261,7 @@ export function validateRows(
 }
 
 /** What the file would change on an existing product. Only columns present in the file (non-empty cells) count; unit and factor never do. */
-function diffAgainst(n: NormalizedRow, e: ExistingItem): DiffEntry[] {
+function diffAgainst(n: NormalizedRow, e: ExistingItem, unit: ExistingUnit): DiffEntry[] {
   const diff: DiffEntry[] = [];
   if (n.name !== e.nameAr) diff.push({ field: "name", before: e.nameAr, after: n.name });
   if (n.nameCkb !== null && n.nameCkb !== (e.nameCkb ?? "")) diff.push({ field: "nameCkb", before: e.nameCkb, after: n.nameCkb });
@@ -246,7 +273,7 @@ function diffAgainst(n: NormalizedRow, e: ExistingItem): DiffEntry[] {
     diff.push({ field: "brand", before: e.brandName, after: n.brand });
   }
   if (n.price) {
-    const before = e.prices[n.price.currency];
+    const before = unit.prices[n.price.currency];
     if (before === undefined || before !== n.price.amountMinor) {
       diff.push({
         field: `price.${n.price.currency}`,

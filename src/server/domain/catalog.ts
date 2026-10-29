@@ -4,6 +4,8 @@ import { minorUnitDigits } from "./money";
 
 export const MAX_BARCODE_LENGTH = 64;
 export const MAX_UNIT_FACTOR = 100_000;
+/** The characters a SKU may use (createProduct and the import share it). */
+export const SKU_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
 const ARABIC_INDIC_ZERO = 0x0660;
 const PERSIAN_ZERO = 0x06f0;
