@@ -7,6 +7,7 @@ import {
   addVariant,
   archiveBarcode,
   archiveProduct,
+  archiveUnit,
   archiveVariant,
   createProduct,
   updateProduct,
@@ -135,9 +136,33 @@ describe("catalog search", () => {
 
     await product(a, { nameAr: "تحت", sku: "A_1" });
     await product(a, { nameAr: "فوق", sku: "AB1" });
-    // "a_1" must not behave like "a?1": the SKU-equality tier finds only A_1 first, and AB1 is not matched at all.
-    const lit = await names(a, "a_1");
-    expect(lit).toEqual(["تحت"]);
+    await product(a, { nameAr: "نسبة 5% خصم" });
+    await product(a, { nameAr: "اي شيء", sku: "AXY1" });
+    // "a_1" is not "a?1": the SKU tier finds A_1 only, and AB1 does not match at all.
+    expect((await search(a, { query: "a_1" })).items.map((i) => i.sku)).toEqual(["A_1"]);
+    expect((await search(a, { query: "A%1" })).items).toEqual([]);
+    expect((await names(a, "%"))).toEqual(["نسبة 5% خصم"]);
+  });
+
+  it("an exact SKU written with Arabic or Persian letters and digits hits the exact tier first", async () => {
+    const { a } = await world();
+    const biz = a.business.id;
+    const mk = async (nameAr: string, sku: string) => {
+      const pid = randomUUID();
+      const text = normalizeSearchText(`${nameAr} ${sku}`);
+      await db.rtProduct.create({ data: { id: pid, businessId: biz, nameAr, searchText: text } });
+      const v = await db.rtVariant.create({ data: { businessId: biz, productId: pid, sku, searchText: text } });
+      await db.rtUnit.create({ data: { businessId: biz, variantId: v.id, name: "حبة", factor: 1, isBase: true } });
+      return v.id;
+    };
+    const owner = await mk("منتج", "کد١"); // Persian kaf, Arabic-Indic digit
+    for (const q of ["كد1", "کد١", "كد١"]) {
+      expect((await search(a, { query: q })).items.map((i) => i.variantId), q).toEqual([owner]);
+    }
+    await mk("أأ ب كد1 اسم", "PLAIN-2"); // sorts before the owner by name and also matches as text
+    const two = await search(a, { query: "كد1" });
+    expect(two.items).toHaveLength(2);
+    expect(two.items[0]!.variantId).toBe(owner);
   });
 
   it("archived products are hidden unless asked", async () => {
@@ -222,7 +247,7 @@ describe("catalog search", () => {
     expect(await bad({ query: 5 })).toMatchObject({ ok: false, code: "INVALID_INPUT" });
   });
 
-  it("a cashier can search; CLOSED refuses", async () => {
+  it("a cashier can search (also SUSPENDED); an ARCHIVED (CLOSED) business refuses", async () => {
     const { a } = await world();
     await product(a, { nameAr: "صنف" });
     expect(await searchCatalog({ query: "صنف" }, a.as("cashier"))).toMatchObject({ ok: true });
@@ -232,25 +257,38 @@ describe("catalog search", () => {
     expect(await searchCatalog({ query: "صنف" }, a.as("cashier"))).toMatchObject({ ok: false, code: "READ_ONLY" });
   });
 
+  it("an archived unit is not matched by its barcodes, which stay active", async () => {
+    const { a } = await world();
+    const p = await product(a, { nameAr: "صنف", extraUnits: [{ name: "كرتون", factor: 6, barcodes: ["424242"] }] });
+    const carton = await db.rtUnit.findFirstOrThrow({ where: { variantId: p.variantId, isBase: false } });
+    expect((await search(a, { query: "424242" })).items[0]).toMatchObject({ unitId: carton.id, matchedBarcode: "424242" });
+    const r = await archiveUnit({ id: carton.id, expectedVersion: 1 }, a.as("owner"));
+    expect(r.ok).toBe(true);
+    expect(await db.rtBarcode.count({ where: { code: "424242", archivedAt: null } })).toBe(1);
+    expect(await names(a, "424242")).toEqual([]);
+    expect(await names(a, "424242", { includeArchived: true })).toEqual([]);
+    expect(await names(a, "صنف")).toEqual(["صنف"]);
+  });
+
   it("each hit carries the unit's current DEFAULT price in the business currency", async () => {
     const { a } = await world();
     await db.rtBusiness.update({ where: { id: a.business.id }, data: { defaultCurrency: "IQD" } });
     const p = await product(a, { nameAr: "سلعة", price: { currency: "IQD", amountMinor: 1500n }, extraUnits: [{ name: "كرتون", factor: 12, barcodes: ["9090"] }] });
     await product(a, { nameAr: "بلا سعر" });
     const q = await search(a, { query: "سلعة" });
-    expect(q.items[0]).toMatchObject({ productId: p.productId, unitId: p.baseUnitId, basePrice: { currency: "IQD", amountMinor: 1500n } });
+    expect(q.items[0]).toMatchObject({ productId: p.productId, unitId: p.baseUnitId, unitPrice: { currency: "IQD", amountMinor: 1500n } });
     // A carton scan shows the carton's own price (12 x 1500).
-    expect((await search(a, { query: "9090" })).items[0]!.basePrice).toEqual({ currency: "IQD", amountMinor: 18000n });
-    expect((await search(a, { query: "بلا سعر" })).items[0]!.basePrice).toBeUndefined();
+    expect((await search(a, { query: "9090" })).items[0]!.unitPrice).toEqual({ currency: "IQD", amountMinor: 18000n });
+    expect((await search(a, { query: "بلا سعر" })).items[0]!.unitPrice).toBeUndefined();
 
     // Default currency has no price, another currency has: that one is used.
     const usd = await product(a, { nameAr: "دولاري", price: { currency: "USD", amountMinor: 250n } });
-    expect((await search(a, { query: "دولاري" })).items[0]).toMatchObject({ productId: usd.productId, basePrice: { currency: "USD", amountMinor: 250n } });
+    expect((await search(a, { query: "دولاري" })).items[0]).toMatchObject({ productId: usd.productId, unitPrice: { currency: "USD", amountMinor: 250n } });
     // setPrice changes what search shows.
     const list = await db.rtPriceList.findFirstOrThrow({ where: { businessId: a.business.id, kind: "DEFAULT" } });
     const ch = await setPrice({ unitId: p.baseUnitId, priceListId: list.id, currency: "IQD", amountMinor: 2000n }, a.as("owner"));
     expect(ch.ok).toBe(true);
-    expect((await search(a, { query: "سلعة" })).items[0]!.basePrice).toEqual({ currency: "IQD", amountMinor: 2000n });
+    expect((await search(a, { query: "سلعة" })).items[0]!.unitPrice).toEqual({ currency: "IQD", amountMinor: 2000n });
   });
 
   describe("searchText follows the catalog actions", () => {
@@ -364,6 +402,57 @@ describe("catalog search", () => {
       expect(new Set(exact.seen).size).toBe(exact.seen.length);
     }, 120_000);
 
+    it("the cursor survives a 200-character Arabic name as the last row of a page", async () => {
+      const { a } = await world();
+      const long = "ع".repeat(200);
+      await product(a, { nameAr: "أ قصير" });
+      await product(a, { nameAr: long });
+      await product(a, { nameAr: "ي قصير" });
+      const first = await search(a, { query: "", limit: 2 });
+      expect(first.items.map((i) => i.nameAr)).toEqual(["أ قصير", long]);
+      expect(first.nextCursor).not.toBeNull();
+      expect(first.nextCursor!.length).toBeGreaterThan(500);
+      expect(first.nextCursor!.length).toBeLessThanOrEqual(2048);
+      const second = await search(a, { query: "", limit: 2, cursor: first.nextCursor });
+      expect(second.items.map((i) => i.nameAr)).toEqual(["ي قصير"]);
+      expect(second.nextCursor).toBeNull();
+      // Still strictly validated: unknown keys, wrong types and oversize are refused.
+      const enc = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+      for (const c of [enc({ a: "x", i: "y", extra: 1 }), enc({ s: -1 }), enc({ a: 5, i: "y" }), "A".repeat(2049)]) {
+        expect(await searchCatalog({ query: "", cursor: c }, a.as("cashier"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+      }
+    });
+
+    it("the exact-hit cursor walks barcode, SKU, then text hits one by one without repeats", async () => {
+      const { a } = await world();
+      // Query "7001": barcode of p1, SKU of p2, name text of p3 and p4.
+      const p1 = await product(a, { nameAr: "ز باركود", baseUnit: piece(["7001"]) });
+      const p2 = await product(a, { nameAr: "ي سكو", sku: "7001" });
+      const p3 = await product(a, { nameAr: "أ نص 7001" });
+      const p4 = await product(a, { nameAr: "ب نص 7001" });
+      const seen: string[] = [];
+      const cursors: unknown[] = [];
+      let cursor: string | null = null;
+      do {
+        const r = await search(a, { query: "7001", limit: 1, ...(cursor ? { cursor } : {}) });
+        expect(r.items).toHaveLength(1);
+        seen.push(r.items[0]!.productId);
+        cursor = r.nextCursor;
+        if (cursor) cursors.push(JSON.parse(Buffer.from(cursor, "base64url").toString()));
+      } while (cursor);
+      expect(seen).toEqual([p1.productId, p2.productId, p3.productId, p4.productId]);
+      expect(cursors.slice(0, 2)).toEqual([{ s: 1 }, { s: 2 }]);
+      expect(cursors[2]).toHaveProperty("a");
+      const all = await search(a, { query: "7001", limit: 10 });
+      expect(all.items.map((i) => i.productId)).toEqual(seen);
+      // A page boundary right after the exact hits: the next page starts the text matches.
+      const two = await search(a, { query: "7001", limit: 2 });
+      expect(two.items.map((i) => i.productId)).toEqual([p1.productId, p2.productId]);
+      const rest = await search(a, { query: "7001", limit: 2, cursor: two.nextCursor! });
+      expect(rest.items.map((i) => i.productId)).toEqual([p3.productId, p4.productId]);
+      expect(rest.nextCursor).toBeNull();
+    });
+
     it("search stays fast on 1500 products (loose smoke guard, not a benchmark)", async () => {
       const { a } = await world();
       const biz = a.business.id;
@@ -378,6 +467,15 @@ describe("catalog search", () => {
       const perCall = (performance.now() - t0) / 4;
       // Documented as a smoke guard: a regression to a per-hit query would blow far past this.
       expect(perCall).toBeLessThan(1500);
+
+      // The trigram GIN index is usable for a Latin term (the planner may still prefer a scan on a
+      // table this small, hence enable_seqscan=off). Arabic needs a UTF-8 ctype database (report).
+      const plan = await db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
+        const out = await tx.$queryRawUnsafe<{ "QUERY PLAN": string }[]>(`EXPLAIN SELECT id FROM "RtVariant" WHERE "searchText" LIKE '%q1499%'`);
+        return out.map((r) => r["QUERY PLAN"]).join("\n");
+      });
+      expect(plan).toContain("RtVariant_searchText_idx");
     }, 60_000);
   });
 });
