@@ -231,6 +231,8 @@ export const en: Messages = {
     STEP_NOT_AVAILABLE: "This step is not available yet; it arrives in a coming release.",
     USER_NOT_FOUND: "There is no account with this email. Ask the employee to create an account first, then try again.",
     STAFF_EXISTS: "This person is already on the business's team.",
+    DUPLICATE_NAME: "There is already an item with this name.",
+    CATEGORY_IN_USE: "This category cannot be archived because it still has active subcategories or products.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

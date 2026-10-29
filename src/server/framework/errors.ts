@@ -17,7 +17,9 @@ export type ErrorCode =
   | "BUSINESS_ARCHIVED"
   | "STEP_NOT_AVAILABLE"
   | "USER_NOT_FOUND"
-  | "STAFF_EXISTS";
+  | "STAFF_EXISTS"
+  | "DUPLICATE_NAME"
+  | "CATEGORY_IN_USE";
 
 export type Result<O> = { ok: true; value: O } | { ok: false; code: ErrorCode; message: string };
 
@@ -41,6 +43,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   STEP_NOT_AVAILABLE: "هذه الخطوة غير متاحة بعد، ستصل في إصدار قادم.",
   USER_NOT_FOUND: "لا يوجد حساب بهذا البريد الإلكتروني. اطلب من الموظف إنشاء حساب أولاً ثم أعد المحاولة.",
   STAFF_EXISTS: "هذا الشخص عضو في فريق المنشأة مسبقاً.",
+  DUPLICATE_NAME: "يوجد عنصر بهذا الاسم مسبقاً.",
+  CATEGORY_IN_USE: "لا يمكن أرشفة هذا القسم لأنه يحتوي على أقسام فرعية أو منتجات فعّالة.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */
