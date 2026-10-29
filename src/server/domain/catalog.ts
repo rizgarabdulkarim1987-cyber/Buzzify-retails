@@ -22,7 +22,8 @@ export function normalizeSearchText(input: string): string {
     .replace(/\u0640/g, "") // tatweel
     .replace(/[أإآ]/g, "ا")
     .replace(/ة/g, "ه")
-    .replace(/ى/g, "ي")
+    .replace(/[ىی]/g, "ي")
+    .replace(/ک/g, "ك")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
@@ -32,22 +33,29 @@ export function normalizeBarcode(input: string): string {
   const v = toAsciiDigits(input).trim();
   if (v.length === 0) throw new Error("Barcode is empty");
   if (v.length > MAX_BARCODE_LENGTH) throw new Error(`Barcode exceeds ${MAX_BARCODE_LENGTH} characters`);
-  if (!/^[\p{L}\p{N}\-./_]+$/u.test(v)) throw new Error("Barcode contains invalid characters");
+  if (!/^[A-Za-z0-9\-./_]+$/.test(v)) throw new Error("Barcode contains invalid characters");
   return v;
 }
+
+const MAX_MONEY_INT_DIGITS = 15;
 
 export function parseMoneyText(text: string, currency: Currency): bigint {
   const t = toAsciiDigits(text)
     .trim()
-    .replace(/\u066C/g, ",") // Arabic thousands separator
-    .replace(/\u066B/g, "."); // Arabic decimal separator
-  if (!/^[0-9][0-9,]*(\.[0-9]+)?$|^\.[0-9]+$/.test(t)) throw new Error("Invalid money amount");
-  const [intRaw, frac = ""] = t.split(".");
-  const intPart = intRaw.replace(/,/g, "");
+    .replace(/٬/g, ",") // Arabic thousands separator
+    .replace(/٫/g, "."); // Arabic decimal separator
+  const m = /^((?:\d{1,3}(?:,\d{3})+)|\d+)(?:\.(\d+))?$/.exec(t);
+  if (!m) throw new Error("Invalid money amount");
+  const intPart = m[1].replace(/,/g, "");
+  const frac = m[2] ?? "";
+  if (intPart.length > MAX_MONEY_INT_DIGITS) throw new Error("Money amount too large");
   const digits = minorUnitDigits(currency);
+  if (digits === 0) {
+    if (/[^0]/.test(frac)) throw new Error(`Fractions are not allowed for ${currency}`);
+    return BigInt(intPart);
+  }
   if (frac.length > digits) throw new Error(`Too many decimals for ${currency}`);
-  const minor = (intPart === "" ? "0" : intPart) + frac.padEnd(digits, "0");
-  return BigInt(minor);
+  return BigInt(intPart + frac.padEnd(digits, "0"));
 }
 
 export function assertUnitFactor(n: number): void {

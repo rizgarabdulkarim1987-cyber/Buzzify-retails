@@ -81,4 +81,41 @@ describe("catalog domain", () => {
     expect(suggestUnitPrice(0n, 5)).toBe(0n);
     expect(() => suggestUnitPrice(100n, 0)).toThrow();
   });
+
+  it("parseMoneyText refuses misplaced separators instead of guessing", () => {
+    const bad: Array<[string, "IQD" | "USD"]> = [
+      ["1,2", "IQD"], ["12,5", "IQD"], ["1,,2", "IQD"], ["1,20", "IQD"], [",5", "IQD"], ["1,2345", "IQD"],
+      ["1.200", "IQD"], ["1.200", "USD"], ["12.50", "IQD"], ["1.2,3", "USD"], ["1e3", "IQD"], ["-0", "IQD"],
+      [" 12 50", "IQD"], ["1,234,56", "USD"],
+    ];
+    for (const [t, c] of bad) expect(() => parseMoneyText(t, c), `${t} ${c}`).toThrow();
+    expect(parseMoneyText("1,234,567", "IQD")).toBe(1234567n);
+  });
+
+  it("parseMoneyText allows an all-zero IQD fraction only", () => {
+    expect(parseMoneyText("12.00", "IQD")).toBe(12n);
+    expect(parseMoneyText("1200.0", "IQD")).toBe(1200n);
+    expect(() => parseMoneyText("1200.1", "IQD")).toThrow();
+  });
+
+  it("parseMoneyText caps the integer part at 15 digits", () => {
+    expect(parseMoneyText("9".repeat(15), "IQD")).toBe(999_999_999_999_999n);
+    expect(() => parseMoneyText("1" + "0".repeat(15), "IQD")).toThrow();
+    expect(() => parseMoneyText("1" + "0".repeat(15), "USD")).toThrow();
+  });
+
+  it("normalizeSearchText folds Persian yeh and keheh and is idempotent", () => {
+    expect(normalizeSearchText("علی")).toBe(normalizeSearchText("علي"));
+    expect(normalizeSearchText("کتاب")).toBe(normalizeSearchText("كتاب"));
+    for (const x of ["أحمد ۳۰۰ کی ة", "مُحـمّد  ى"]) {
+      expect(normalizeSearchText(normalizeSearchText(x))).toBe(normalizeSearchText(x));
+    }
+  });
+
+  it("normalizeBarcode allows only ASCII letters, digits and - . / _", () => {
+    expect(() => normalizeBarcode("１２３")).toThrow();
+    expect(() => normalizeBarcode("abcé")).toThrow();
+    expect(() => normalizeBarcode("باركود")).toThrow();
+    expect(normalizeBarcode("٠١٢abc")).toBe("012abc");
+  });
 });
