@@ -399,7 +399,6 @@ function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> 
       const ref = attr(c.attrs, "r");
       const col = (ref ? columnIndex(ref) : null) ?? lastCol + 1;
       lastCol = col;
-      if (col >= MAX_COLUMNS) throw unreadable();
       const type = attr(c.attrs, "t");
       const v = elements(c.inner, "v").next();
       const vText = v.done ? "" : textOf(v.value.inner);
@@ -417,6 +416,11 @@ function readXlsx(bytes: Uint8Array): { cells: string[][]; numeric: Set<string> 
         isNumber = value !== "";
       }
       if (value === "") continue;
+      // Styled empty cells far to the right are common; only a real value beyond the cap is refused.
+      if (col >= MAX_COLUMNS) {
+        if (value.trim() === "") continue;
+        throw unreadable();
+      }
       let cols = byRow.get(rowIdx);
       if (!cols) {
         // Counted while scanning: the header plus MAX_IMPORT_ROWS data rows is the most we ever keep.

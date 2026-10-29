@@ -212,6 +212,22 @@ describe("parseImportFile: xlsx", () => {
     expect(codeOf(() => parseImportFile(csv(Array.from({ length: 201 }, (_, i) => `h${i}`).join(",") + "\n1"), "x.csv"))).toBe("IMPORT_UNREADABLE");
   });
 
+  it("styled empty cells far to the right are ignored, a value there is still refused", () => {
+    const rows = [`<row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c><c r="XFD1" s="1"/></row>`];
+    for (let r = 2; r <= 10001; r++) {
+      rows.push(`<row r="${r}"><c r="A${r}" t="inlineStr"><is><t>n</t></is></c><c r="XFD${r}" s="1"/><c r="ZZ${r}" t="inlineStr"><is><t> </t></is></c></row>`);
+    }
+    const ok = buildXlsx([], { sheetXmlOverride: `<worksheet><sheetData>${rows.join("")}</sheetData></worksheet>` });
+    const t = Date.now();
+    const r = parseImportFile(ok, "w.xlsx");
+    expect(Date.now() - t).toBeLessThan(2000);
+    expect(r.headers).toEqual(["name"]);
+    expect(r.rows).toHaveLength(10000);
+    expect(r.rows[0]).toEqual(["n"]);
+    const bad = `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="GS1" t="inlineStr"><is><t>x</t></is></c></row></sheetData></worksheet>`;
+    expect(codeOf(() => parseImportFile(buildXlsx([], { sheetXmlOverride: bad }), "b.xlsx"))).toBe("IMPORT_UNREADABLE");
+  });
+
   it("stripping phonetic runs is linear", () => {
     const sst = `<sst><si><t>a</t>${"<rPh></rPh>".repeat(80000)}</si></sst>`;
     const z = buildXlsx([["h"], [{ f: "x", v: 1 }]], { extraFiles: { "xl/sharedStrings.xml": strToU8(sst) } });
