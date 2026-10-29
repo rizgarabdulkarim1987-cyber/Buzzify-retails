@@ -236,7 +236,8 @@ export const en: Messages = {
     BARCODE_TAKEN: "This barcode is already used by another product in the business (even an archived one).",
     SKU_TAKEN: "This SKU is already used in the business.",
     UNIT_RULE: "This unit setup is not allowed: check the conversion factor, the quantity decimals and the unit name. The base unit cannot be archived and its factor cannot change.",
-    TRACKING_RULE: "This tracking setup is not allowed: tracking expiry requires batch tracking.",
+    TRACKING_RULE: "This tracking setup is not allowed: tracking expiry requires batch tracking, and an expiry alert lead time can only be set when expiry is tracked.",
+    LAST_VARIANT: "The only active variant of this product cannot be archived. Archive the product itself instead.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

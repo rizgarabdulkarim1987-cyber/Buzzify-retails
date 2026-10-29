@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { suggestUnitPrice } from "@/server/domain/catalog";
 import type { Currency } from "@/server/domain/money";
 import { RuleError, VersionConflictError } from "@/server/framework/errors";
 
@@ -15,6 +16,19 @@ import { RuleError, VersionConflictError } from "@/server/framework/errors";
  */
 
 type Tx = Prisma.TransactionClient;
+
+/**
+ * The largest price amount accepted, in minor units: 10^18, the same ceiling as parseMoneyText's
+ * 15 integer digits allow with room to spare, and well below the BIGINT column maximum (~9.2e18).
+ */
+export const MAX_PRICE_MINOR = 10n ** 18n;
+
+/** factor x base, refused (INVALID_INPUT) above MAX_PRICE_MINOR instead of overflowing the column. */
+export function derivedUnitPrice(baseMinor: bigint, factor: number): bigint {
+  const amount = suggestUnitPrice(baseMinor, factor);
+  if (amount > MAX_PRICE_MINOR) throw new RuleError("INVALID_INPUT");
+  return amount;
+}
 
 export type PriceListIds = { DEFAULT: string; WHOLESALE: string };
 
@@ -56,7 +70,7 @@ export type PriceInput = {
  * A concurrent change of the same open row gives VERSION_CONFLICT. Returns the new row's id.
  */
 export async function applyPrice(tx: Tx, p: PriceInput): Promise<string> {
-  if (p.amountMinor < 0n) throw new RuleError("INVALID_INPUT");
+  if (p.amountMinor < 0n || p.amountMinor > MAX_PRICE_MINOR) throw new RuleError("INVALID_INPUT");
   const key = { unitId: p.unitId, priceListId: p.priceListId, currency: p.currency };
   const open = await tx.rtPrice.findFirst({ where: { ...key, validTo: null }, select: { id: true, validFrom: true } });
   if (open) {

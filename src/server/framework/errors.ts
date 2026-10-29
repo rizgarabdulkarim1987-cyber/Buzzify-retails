@@ -23,13 +23,14 @@ export type ErrorCode =
   | "BARCODE_TAKEN"
   | "SKU_TAKEN"
   | "UNIT_RULE"
-  | "TRACKING_RULE";
+  | "TRACKING_RULE"
+  | "LAST_VARIANT";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
  * BARCODE_TAKEN names the product that owns the code). Only ever data of the caller's own business.
  */
-export type FailureDetails = Readonly<Record<string, string>>;
+export type FailureDetails = Readonly<Record<string, string | null>>;
 
 export type Result<O> =
   | { ok: true; value: O }
@@ -60,7 +61,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   BARCODE_TAKEN: "هذا الباركود مستخدم لصنف آخر في المنشأة (حتى لو كان مؤرشفاً).",
   SKU_TAKEN: "رمز الصنف (SKU) هذا مستخدم مسبقاً في المنشأة.",
   UNIT_RULE: "إعداد الوحدة غير مقبول: تحقق من معامل التحويل ودقة الكمية واسم الوحدة، ووحدة الأساس لا تُؤرشف ولا يتغير معاملها.",
-  TRACKING_RULE: "إعداد التتبع غير مقبول: تتبّع الصلاحية يتطلب التتبع بالدفعات.",
+  TRACKING_RULE: "إعداد التتبع غير مقبول: تتبّع الصلاحية يتطلب التتبع بالدفعات، ومدة التنبيه قبل انتهاء الصلاحية لا تُحدَّد إلا مع تتبّع الصلاحية.",
+  LAST_VARIANT: "لا يمكن أرشفة النسخة الوحيدة الفعّالة لهذا الصنف. أرشف الصنف نفسه بدلاً من ذلك.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

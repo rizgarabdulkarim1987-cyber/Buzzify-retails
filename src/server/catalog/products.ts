@@ -1,13 +1,13 @@
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { Currency, RtTrackingMode } from "@/generated/prisma/enums";
-import { assertUnitFactor, normalizeBarcode, normalizeSearchText, suggestUnitPrice } from "@/server/domain/catalog";
+import { assertUnitFactor, normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction } from "@/server/framework/action";
 import { ForbiddenError, NotFoundError, RuleError } from "@/server/framework/errors";
 import { updateVersioned } from "@/server/framework/versioned";
-import { applyPrice, ensureDefaultLists } from "./price-core";
+import { MAX_PRICE_MINOR, applyPrice, derivedUnitPrice, ensureDefaultLists } from "./price-core";
 
 /*
  * Products (the model: names, descriptions, category, brand, tracking), their variants (the
@@ -17,7 +17,11 @@ import { applyPrice, ensureDefaultLists } from "./price-core";
  * Every write needs catalog.manage and goes through defineAction (idempotent by key, audited,
  * version-checked on edits, refused while READ_ONLY/CLOSED). getProduct is open to any member.
  * Giving a price (createProduct, addVariant, addUnit) additionally needs price.change; without it
- * the whole call is refused (FORBIDDEN) and nothing is created.
+ * the whole call is refused (FORBIDDEN) and nothing is created. A larger unit's price is stored,
+ * not computed (spec 7.9): with a base price it gets the explicit amount or factor x base; addUnit
+ * without an explicit price derives one per currency from the base unit's current DEFAULT price,
+ * but only for a price.change holder (a stock officer's new unit has no price). Every amount is
+ * capped at MAX_PRICE_MINOR (INVALID_INPUT above it).
  *
  * Rules kept here (the database repeats the ones it can as constraints):
  * - A variant and its base unit are created in one transaction; the base unit is never archived
@@ -34,9 +38,18 @@ import { applyPrice, ensureDefaultLists } from "./price-core";
  * - searchText (product and variant) is rebuilt in the same transaction after every change that
  *   affects it: all names, the SKUs, the variant options and the active barcodes, normalized.
  *
+ * Concurrency: the checks above read several rows (the product's soldByWeight and its base units,
+ * a variant's unit names, the names and barcodes refreshSearchText copies) and then write, and
+ * READ COMMITTED alone would let two writers each pass on the old state, or let a slower
+ * refreshSearchText overwrite a fresher one. So EVERY action that changes a product or any row
+ * under it (variant, unit, barcode) takes lockBusiness(productLock(productId)) before it reads the
+ * rows it depends on. Actions addressed by a child id first look up the productId (a cheap read
+ * that decides nothing), take the lock, then re-read everything. createProduct needs no product
+ * lock: nobody else can reach the new product before it commits.
+ *
  * Lock order (to never deadlock): idempotency lock (framework), then "catalog.taxonomy" (only when
  * a category/brand is assigned, because archiveCategory counts active products under it), then
- * the per-product / per-variant lock, then the SKU counter row.
+ * the product lock, then the SKU counter row.
  */
 
 type Tx = Prisma.TransactionClient;
@@ -47,11 +60,9 @@ export const MAX_UNIT_NAME_LENGTH = 40;
 export const MAX_SKU_LENGTH = 64;
 export const SKU_PREFIX = "P";
 const SKU_DIGITS = 6;
-const MAX_MONEY_MINOR = 10n ** 18n;
 
 const TAXONOMY_LOCK = "catalog.taxonomy";
 const productLock = (productId: string) => `catalog.product:${productId}`;
-const variantLock = (variantId: string) => `catalog.variant:${variantId}`;
 
 // ---------------------------------------------------------------------------------------------
 // Input schemas
@@ -82,7 +93,7 @@ const barcodes = z.array(barcode).max(20).default([]);
 /** Money in minor units: a bigint or a string of digits (never a JS number). */
 const money = z
   .union([z.bigint(), z.string().regex(/^\d{1,19}$/).transform((v) => BigInt(v))])
-  .refine((v) => v >= 0n && v <= MAX_MONEY_MINOR);
+  .refine((v) => v >= 0n && v <= MAX_PRICE_MINOR);
 const price = z.object({ currency: z.enum(Currency), amountMinor: money }).strict();
 
 const sku = z
@@ -227,11 +238,20 @@ async function assertBarcodesFree(tx: Tx, codes: string[]): Promise<void> {
   if (codes.length === 0) return;
   const taken = await tx.rtBarcode.findFirst({
     where: { code: { in: codes } },
-    select: { code: true, unit: { select: { variant: { select: { product: { select: { id: true, nameAr: true } } } } } } },
+    select: {
+      code: true,
+      unit: { select: { variant: { select: { product: { select: { id: true, nameAr: true, nameCkb: true, nameEn: true } } } } } },
+    },
   });
   if (taken) {
     const product = taken.unit.variant.product;
-    throw new RuleError("BARCODE_TAKEN", { barcode: taken.code, productId: product.id, productName: product.nameAr });
+    throw new RuleError("BARCODE_TAKEN", {
+      barcode: taken.code,
+      productId: product.id,
+      productName: product.nameAr,
+      productNameCkb: product.nameCkb,
+      productNameEn: product.nameEn,
+    });
   }
 }
 
@@ -242,7 +262,8 @@ async function insertBarcode(tx: Tx, businessId: string, unitId: string, code: s
       select: { id: true, unitId: true, code: true, archivedAt: true, version: true },
     });
   } catch (err) {
-    // A concurrent caller committed the same code after our check; the transaction is aborted now.
+    // A concurrent caller committed the same code after our check; the transaction is aborted
+    // now, so the owner cannot be looked up and the details carry the code only.
     if (isUniqueViolation(err)) throw new RuleError("BARCODE_TAKEN", { barcode: code });
     throw err;
   }
@@ -275,7 +296,10 @@ async function assertSkuFree(tx: Tx, value: string): Promise<void> {
   if (used) throw new RuleError("SKU_TAKEN");
 }
 
-/** Rebuilds the normalized searchText of the product and every one of its variants. */
+/**
+ * Rebuilds the normalized searchText of the product (names + active variants' SKUs) and of every
+ * one of its variants (names + SKU + options + active barcodes). Call under the product lock.
+ */
 async function refreshSearchText(tx: Tx, productId: string): Promise<void> {
   // One level per query (see getProduct): no nested to-many selects inside a transaction.
   const product = await tx.rtProduct.findFirst({ where: { id: productId }, select: { nameAr: true, nameCkb: true, nameEn: true } });
@@ -283,7 +307,7 @@ async function refreshSearchText(tx: Tx, productId: string): Promise<void> {
   const variants = await tx.rtVariant.findMany({
     where: { productId },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true, sku: true, options: true },
+    select: { id: true, sku: true, options: true, archivedAt: true },
   });
   const codes = await tx.rtBarcode.findMany({
     where: { archivedAt: null, unit: { archivedAt: null, variant: { productId } } },
@@ -294,7 +318,7 @@ async function refreshSearchText(tx: Tx, productId: string): Promise<void> {
   const text = (parts: string[]) => normalizeSearchText(parts.join(" "));
   await tx.rtProduct.updateMany({
     where: { id: productId },
-    data: { searchText: text([...names, ...variants.map((v) => v.sku)]) },
+    data: { searchText: text([...names, ...variants.filter((v) => v.archivedAt === null).map((v) => v.sku)]) },
   });
   for (const v of variants) {
     const optionValues = v.options && typeof v.options === "object" && !Array.isArray(v.options) ? Object.values(v.options).map(String) : [];
@@ -305,12 +329,17 @@ async function refreshSearchText(tx: Tx, productId: string): Promise<void> {
 
 const unitSelect = { id: true, variantId: true, name: true, factor: true, isBase: true, quantityScale: true, archivedAt: true, version: true } as const;
 
-/** Checks that need no database: unit names, factors, sold-by-weight, unit prices need a base price. */
+/**
+ * Checks that need no database: unit names, factors, sold-by-weight, unit prices need a base
+ * price, and every derived price (factor x base) stays under MAX_PRICE_MINOR.
+ */
 function checkVariantParts(parts: { baseUnit: BaseUnitInput; extraUnits: ExtraUnitInput[]; price?: PriceInput }, soldByWeight: boolean): void {
   for (const u of parts.extraUnits) checkFactor(u.factor);
   checkUnitNames([parts.baseUnit.name, ...parts.extraUnits.map((u) => u.name)]);
   if (soldByWeight && parts.baseUnit.quantityScale < 1) throw new RuleError("UNIT_RULE");
   if (!parts.price && parts.extraUnits.some((u) => u.amountMinor !== undefined)) throw new RuleError("INVALID_INPUT");
+  const base = parts.price?.amountMinor;
+  if (base !== undefined) for (const u of parts.extraUnits) if (u.amountMinor === undefined) derivedUnitPrice(base, u.factor);
 }
 
 const wantsPrice = (parts: { extraUnits: ExtraUnitInput[]; price?: PriceInput }) =>
@@ -345,6 +374,10 @@ async function insertVariant(
     });
     variantId = row.id;
   } catch (err) {
+    // Someone committed this SKU after our check. With a manual SKU that is plainly SKU_TAKEN.
+    // With a generated one it means a concurrent MANUAL entry chose exactly the candidate the
+    // counter just handed us (the counter itself never repeats); the caller gave no SKU, so the
+    // message reads oddly, but retrying the same request draws the next number and succeeds.
     if (isUniqueViolation(err)) throw new RuleError("SKU_TAKEN");
     throw err;
   }
@@ -372,7 +405,7 @@ async function insertVariant(
     await applyPrice(tx, { ...at, unitId: base.id, amountMinor: v.price.amountMinor });
     // A larger unit's price is stored, not computed (spec 7.9): the explicit amount, or factor x base.
     for (const e of extras) {
-      const amountMinor = e.unit.amountMinor ?? suggestUnitPrice(v.price.amountMinor, e.unit.factor);
+      const amountMinor = e.unit.amountMinor ?? derivedUnitPrice(v.price.amountMinor, e.unit.factor);
       await applyPrice(tx, { ...at, unitId: e.id, amountMinor });
     }
   }
@@ -452,6 +485,9 @@ export const updateProduct = defineAction({
   input: updateInput,
   writes: true,
   async run({ tx, input, lockBusiness }) {
+    // Lock order: taxonomy (only when a category/brand is named), then the product.
+    if (input.categoryId || input.brandId) await lockBusiness(TAXONOMY_LOCK);
+    await lockBusiness(productLock(input.id));
     const current = await tx.rtProduct.findFirst({ where: { id: input.id, archivedAt: null }, select: productSelect });
     if (!current) throw new NotFoundError();
     const { id: productId, expectedVersion, ...changes } = input;
@@ -461,10 +497,7 @@ export const updateProduct = defineAction({
 
     const newCategory = data.categoryId && data.categoryId !== current.categoryId ? data.categoryId : null;
     const newBrand = data.brandId && data.brandId !== current.brandId ? data.brandId : null;
-    if (newCategory || newBrand) {
-      await lockBusiness(TAXONOMY_LOCK);
-      await checkTaxonomy(tx, newCategory, newBrand);
-    }
+    if (newCategory || newBrand) await checkTaxonomy(tx, newCategory, newBrand);
     if (next.soldByWeight) {
       const wholeOnly = await tx.rtUnit.count({
         where: { isBase: true, quantityScale: { lt: 1 }, variant: { productId, archivedAt: null } },
@@ -485,7 +518,8 @@ export const archiveProduct = defineAction({
   permission: "catalog.manage",
   input: z.object({ id, expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }) {
+  async run({ tx, input, lockBusiness }) {
+    await lockBusiness(productLock(input.id));
     const row = await tx.rtProduct.findFirst({ where: { id: input.id, archivedAt: null }, select: { id: true } });
     if (!row) throw new NotFoundError();
     await updateVersioned(tx.rtProduct, { id: input.id, archivedAt: null }, input.expectedVersion, { archivedAt: new Date() });
@@ -537,6 +571,40 @@ export const getProduct = defineAction({
 });
 
 // ---------------------------------------------------------------------------------------------
+// Product lock for child rows
+
+type LockFn = (name: string) => Promise<void>;
+
+/** A row is changeable only while it and every parent up to the product are active. */
+const activeUnit = { archivedAt: null, variant: { archivedAt: null, product: { archivedAt: null } } } as const;
+
+/*
+ * Child actions resolve their productId with a cheap read that decides nothing (a row never moves
+ * to another variant or product), take the product lock, then re-read everything they check.
+ * NOT_FOUND when the row does not exist in this business.
+ */
+async function lockProductOfVariant(tx: Tx, lock: LockFn, variantId: string): Promise<void> {
+  const row = await tx.rtVariant.findFirst({ where: { id: variantId }, select: { productId: true } });
+  if (!row) throw new NotFoundError();
+  await lock(productLock(row.productId));
+}
+
+async function lockProductOfUnit(tx: Tx, lock: LockFn, unitId: string): Promise<void> {
+  const row = await tx.rtUnit.findFirst({ where: { id: unitId }, select: { variant: { select: { productId: true } } } });
+  if (!row) throw new NotFoundError();
+  await lock(productLock(row.variant.productId));
+}
+
+async function lockProductOfBarcode(tx: Tx, lock: LockFn, barcodeId: string): Promise<void> {
+  const row = await tx.rtBarcode.findFirst({
+    where: { id: barcodeId },
+    select: { unit: { select: { variant: { select: { productId: true } } } } },
+  });
+  if (!row) throw new NotFoundError();
+  await lock(productLock(row.unit.variant.productId));
+}
+
+// ---------------------------------------------------------------------------------------------
 // Variants
 
 const optionsKey = (o: unknown): string => {
@@ -562,13 +630,14 @@ export const addVariant = defineAction({
     await lockBusiness(productLock(input.productId));
     const product = await tx.rtProduct.findFirst({
       where: { id: input.productId, archivedAt: null },
-      select: { id: true, soldByWeight: true, variants: { where: { archivedAt: null }, select: { options: true } } },
+      select: { id: true, soldByWeight: true },
     });
     if (!product) throw new NotFoundError();
     checkVariantParts(input, product.soldByWeight);
     if (input.price) await checkCurrency(tx, input.price.currency);
+    const siblings = await tx.rtVariant.findMany({ where: { productId: product.id, archivedAt: null }, select: { options: true } });
     const wanted = optionsKey(input.options);
-    if (product.variants.some((v) => optionsKey(v.options) === wanted)) throw new RuleError("DUPLICATE_NAME");
+    if (siblings.some((v) => optionsKey(v.options) === wanted)) throw new RuleError("DUPLICATE_NAME");
 
     const v = await insertVariant(tx, actor.businessId, product.id, input);
     await refreshSearchText(tx, product.id);
@@ -577,8 +646,67 @@ export const addVariant = defineAction({
   audit: (input, value) => audit("RtVariant", value.variantId, { input, created: value }),
 });
 
+/**
+ * Archives a variant. Its SKU, units and barcodes stay reserved. The last active variant of a
+ * product is refused (LAST_VARIANT): archive the product instead.
+ */
+export const archiveVariant = defineAction({
+  name: "catalog.variant.archive",
+  permission: "catalog.manage",
+  input: z.object({ variantId: id, expectedVersion: version }).strict(),
+  writes: true,
+  async run({ tx, input, lockBusiness }) {
+    await lockProductOfVariant(tx, lockBusiness, input.variantId);
+    const variant = await tx.rtVariant.findFirst({
+      where: { id: input.variantId, archivedAt: null, product: { archivedAt: null } },
+      select: { id: true, productId: true },
+    });
+    if (!variant) throw new NotFoundError();
+    const active = await tx.rtVariant.count({ where: { productId: variant.productId, archivedAt: null } });
+    if (active <= 1) throw new RuleError("LAST_VARIANT");
+    await updateVersioned(tx.rtVariant, { id: variant.id, archivedAt: null }, input.expectedVersion, { archivedAt: new Date() });
+    await refreshSearchText(tx, variant.productId);
+    return tx.rtVariant.findFirstOrThrow({ where: { id: variant.id }, select: { id: true, sku: true, archivedAt: true, version: true } });
+  },
+  audit: (input) => audit("RtVariant", input.variantId, { input }),
+});
+
 // ---------------------------------------------------------------------------------------------
 // Units
+
+/**
+ * The prices a new unit gets, per currency, on the DEFAULT list: the explicit price, plus factor x
+ * the base unit's current DEFAULT price for every other currency the base unit has (spec 7.9).
+ * Derived prices only for a price.change holder; nobody else gets any (an explicit price was
+ * already refused for them). Computed before any write, so an amount over the ceiling refuses the
+ * whole call.
+ */
+async function newUnitPrices(
+  tx: Tx,
+  actor: Actor,
+  variantId: string,
+  factor: number,
+  explicit: PriceInput | undefined,
+): Promise<Map<Currency, bigint>> {
+  const out = new Map<Currency, bigint>();
+  if (!can(actor.role, "price.change")) return out;
+  const base = await tx.rtUnit.findFirst({ where: { variantId, isBase: true }, select: { id: true } });
+  if (base) {
+    const now = new Date();
+    const current = await tx.rtPrice.findMany({
+      where: {
+        unitId: base.id,
+        priceList: { kind: "DEFAULT" },
+        validFrom: { lte: now },
+        OR: [{ validTo: null }, { validTo: { gt: now } }],
+      },
+      select: { currency: true, amountMinor: true },
+    });
+    for (const p of current) out.set(p.currency, derivedUnitPrice(p.amountMinor, factor));
+  }
+  if (explicit) out.set(explicit.currency, explicit.amountMinor);
+  return out;
+}
 
 /** A larger (non-base) unit of an active variant, with optional barcodes and price. */
 export const addUnit = defineAction({
@@ -592,14 +720,16 @@ export const addUnit = defineAction({
   async run({ actor, tx, input, lockBusiness }) {
     needsPricePermission(actor, input.price !== undefined);
     checkFactor(input.factor);
-    await lockBusiness(variantLock(input.variantId));
+    await lockProductOfVariant(tx, lockBusiness, input.variantId);
     const variant = await tx.rtVariant.findFirst({
       where: { id: input.variantId, archivedAt: null, product: { archivedAt: null } },
-      select: { id: true, productId: true, units: { where: { archivedAt: null }, select: { name: true } } },
+      select: { id: true, productId: true },
     });
     if (!variant) throw new NotFoundError();
-    checkUnitNames([...variant.units.map((u) => u.name), input.name]);
+    const siblings = await tx.rtUnit.findMany({ where: { variantId: variant.id, archivedAt: null }, select: { name: true } });
+    checkUnitNames([...siblings.map((u) => u.name), input.name]);
     if (input.price) await checkCurrency(tx, input.price.currency);
+    const prices = await newUnitPrices(tx, actor, variant.id, input.factor, input.price);
     await assertBarcodesFree(tx, input.barcodes);
 
     const unit = await tx.rtUnit.create({
@@ -614,16 +744,12 @@ export const addUnit = defineAction({
       select: unitSelect,
     });
     for (const code of input.barcodes) await insertBarcode(tx, actor.businessId, unit.id, code);
-    if (input.price) {
+    if (prices.size > 0) {
       const lists = await ensureDefaultLists(tx, actor.businessId);
-      await applyPrice(tx, {
-        businessId: actor.businessId,
-        unitId: unit.id,
-        priceListId: lists.DEFAULT,
-        currency: input.price.currency,
-        amountMinor: input.price.amountMinor,
-        validFrom: new Date(),
-      });
+      const validFrom = new Date();
+      for (const [currency, amountMinor] of prices) {
+        await applyPrice(tx, { businessId: actor.businessId, unitId: unit.id, priceListId: lists.DEFAULT, currency, amountMinor, validFrom });
+      }
     }
     await refreshSearchText(tx, variant.productId);
     return unit;
@@ -632,7 +758,7 @@ export const addUnit = defineAction({
 });
 
 /**
- * Renames a unit or changes its decimals or factor. The base unit's factor stays 1; any other
+ * Renames a unit or changes its decimals or factor. The base unit keeps factor 1; any other
  * factor can change only while unitIsLocked says no (always in R1, R2 adds stock movements).
  */
 export const updateUnit = defineAction({
@@ -643,11 +769,9 @@ export const updateUnit = defineAction({
     .strict(),
   writes: true,
   async run({ tx, input, lockBusiness }) {
-    const found = await tx.rtUnit.findFirst({ where: { id: input.id, archivedAt: null }, select: { variantId: true } });
-    if (!found) throw new NotFoundError();
-    await lockBusiness(variantLock(found.variantId));
+    await lockProductOfUnit(tx, lockBusiness, input.id);
     const unit = await tx.rtUnit.findFirst({
-      where: { id: input.id, archivedAt: null },
+      where: { id: input.id, ...activeUnit },
       select: { ...unitSelect, variant: { select: { productId: true, product: { select: { soldByWeight: true } } } } },
     });
     if (!unit) throw new NotFoundError();
@@ -684,9 +808,10 @@ export const archiveUnit = defineAction({
   permission: "catalog.manage",
   input: z.object({ id, expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }) {
+  async run({ tx, input, lockBusiness }) {
+    await lockProductOfUnit(tx, lockBusiness, input.id);
     const unit = await tx.rtUnit.findFirst({
-      where: { id: input.id, archivedAt: null },
+      where: { id: input.id, ...activeUnit },
       select: { id: true, isBase: true, variant: { select: { productId: true } } },
     });
     if (!unit) throw new NotFoundError();
@@ -707,9 +832,10 @@ export const addBarcode = defineAction({
   permission: "catalog.manage",
   input: z.object({ unitId: id, code: barcode }).strict(),
   writes: true,
-  async run({ actor, tx, input }) {
+  async run({ actor, tx, input, lockBusiness }) {
+    await lockProductOfUnit(tx, lockBusiness, input.unitId);
     const unit = await tx.rtUnit.findFirst({
-      where: { id: input.unitId, archivedAt: null, variant: { archivedAt: null, product: { archivedAt: null } } },
+      where: { id: input.unitId, ...activeUnit },
       select: { id: true, variant: { select: { productId: true } } },
     });
     if (!unit) throw new NotFoundError();
@@ -721,15 +847,16 @@ export const addBarcode = defineAction({
   audit: (input, value) => audit("RtBarcode", value.id, { input }),
 });
 
-/** Archives a barcode. It stays reserved: no other unit can take the code. */
+/** Archives a barcode of an active unit. It stays reserved: no other unit can take the code. */
 export const archiveBarcode = defineAction({
   name: "catalog.barcode.archive",
   permission: "catalog.manage",
   input: z.object({ id, expectedVersion: version }).strict(),
   writes: true,
-  async run({ tx, input }) {
+  async run({ tx, input, lockBusiness }) {
+    await lockProductOfBarcode(tx, lockBusiness, input.id);
     const row = await tx.rtBarcode.findFirst({
-      where: { id: input.id, archivedAt: null },
+      where: { id: input.id, archivedAt: null, unit: activeUnit },
       select: { id: true, unit: { select: { variant: { select: { productId: true } } } } },
     });
     if (!row) throw new NotFoundError();

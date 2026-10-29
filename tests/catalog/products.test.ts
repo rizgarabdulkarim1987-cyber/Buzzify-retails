@@ -7,6 +7,7 @@ import {
   archiveBarcode,
   archiveProduct,
   archiveUnit,
+  archiveVariant,
   createProduct,
   getProduct,
   updateProduct,
@@ -47,6 +48,32 @@ async function business(label: string) {
 }
 
 type Shop = Awaited<ReturnType<typeof business>>;
+
+/**
+ * Polls until at least `n` sessions of this database wait for a lock (row, index or advisory), or
+ * `stop()` says the work already finished. Files run one at a time, so the count is ours.
+ */
+async function untilWaiting(n: number, stop: () => boolean = () => false, ms = 8000): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end && !stop()) {
+    const [row] = await db.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*)::bigint AS count FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+    if (Number(row!.count) >= n) return true;
+    await new Promise((r) => setTimeout(r, 15));
+  }
+  return false;
+}
+
+/** A promise plus a flag telling whether it has settled. */
+function tracked<T>(p: Promise<T>): { promise: Promise<T>; done: () => boolean } {
+  let settled = false;
+  void p.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  return { promise: p, done: () => settled };
+}
 
 async function world() {
   await createPlan(db, { maxBranches: 3 });
@@ -227,7 +254,11 @@ describe("barcodes", () => {
     const { a } = await world();
     const owner = await product(a, { nameAr: "بيبسي", extraUnits: [{ name: "كرتون", factor: 24, barcodes: ["5449000000996"] }] });
     const r = await createProduct({ nameAr: "كولا", baseUnit: piece(["5449000000996"]) }, a.as("stock"));
-    expect(r).toMatchObject({ ok: false, code: "BARCODE_TAKEN", details: { barcode: "5449000000996", productId: owner.productId, productName: "بيبسي" } });
+    expect(r).toMatchObject({
+      ok: false,
+      code: "BARCODE_TAKEN",
+      details: { barcode: "5449000000996", productId: owner.productId, productName: "بيبسي", productNameCkb: null, productNameEn: null },
+    });
     expect(r.ok ? "" : r.message).not.toBe("");
     expect(await db.rtProduct.count({ where: { businessId: a.business.id } })).toBe(1);
     // The same code on another unit of the same product, or through addBarcode, is refused too.
@@ -301,16 +332,19 @@ describe("barcodes", () => {
     const holder = await product(a, { nameAr: "حامل" });
     let pending: ReturnType<typeof createProduct> | undefined;
     // Our insert is not committed yet, so the action's look-up does not see it; its own insert
-    // then waits on the unique index and fails once we commit.
+    // then waits on the unique index (we poll until it does) and fails once we commit.
     await db.$transaction(
       async (t) => {
         await t.rtBarcode.create({ data: { businessId: a.business.id, unitId: holder.baseUnitId, code: "RACE-1" } });
         pending = createProduct({ nameAr: "متأخر", sku: "LATE-1", baseUnit: piece(["RACE-1"]) }, a.as("stock"));
-        await new Promise((r) => setTimeout(r, 800));
+        expect(await untilWaiting(1)).toBe(true);
       },
-      { timeout: 10_000 },
+      { timeout: 15_000 },
     );
-    expect(await pending).toMatchObject({ ok: false, code: "BARCODE_TAKEN", details: { barcode: "RACE-1" } });
+    const late = await pending!;
+    expect(late).toMatchObject({ ok: false, code: "BARCODE_TAKEN", details: { barcode: "RACE-1" } });
+    // The database path was taken: the look-up never saw the code, so the owner is not named.
+    expect(late.ok ? null : late.details).not.toHaveProperty("productId");
     expect(await db.rtBarcode.count({ where: { businessId: a.business.id, code: "RACE-1" } })).toBe(1);
     expect(await db.rtProduct.count({ where: { businessId: a.business.id } })).toBe(1);
 
@@ -323,11 +357,13 @@ describe("barcodes", () => {
         await t.rtVariant.create({ data: { businessId: a.business.id, productId: holder.productId, sku: "RACE-SKU" } });
         pendingCode = addBarcode({ unitId: holder.baseUnitId, code: "RACE-2" }, a.as("stock"));
         pendingSku = createProduct({ nameAr: "متأخر", sku: "RACE-SKU", baseUnit: piece() }, a.as("manager"));
-        await new Promise((r) => setTimeout(r, 800));
+        expect(await untilWaiting(2)).toBe(true);
       },
-      { timeout: 10_000 },
+      { timeout: 15_000 },
     );
-    expect(await pendingCode).toMatchObject({ ok: false, code: "BARCODE_TAKEN" });
+    const code = await pendingCode!;
+    expect(code).toMatchObject({ ok: false, code: "BARCODE_TAKEN" });
+    expect(code.ok ? null : code.details).not.toHaveProperty("productId");
     expect(await pendingSku).toMatchObject({ ok: false, code: "SKU_TAKEN" });
     expect(await db.rtProduct.count({ where: { businessId: a.business.id } })).toBe(1);
   });
@@ -557,5 +593,209 @@ describe("lifecycle", () => {
     expect(await updateProduct({ id: p.productId, expectedVersion: 2, nameAr: "  " }, a.as("stock"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
     expect(await createProduct({ nameAr: "x".repeat(201), baseUnit: piece() }, a.as("stock"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
     expect(await db.rtAuditLog.count({ where: { businessId: a.business.id, action: { startsWith: "catalog.product" } } })).toBe(2);
+  });
+});
+
+type Tracked<T> = { promise: Promise<T>; done: () => boolean };
+
+describe("concurrency: one product lock for every change under a product", () => {
+  it("a concurrent soldByWeight switch and a whole-only base unit never both succeed", async () => {
+    const { a } = await world();
+    for (let round = 0; round < 3; round += 1) {
+      const p = await product(a, { nameAr: `وزن ${round}`, baseUnit: { name: "كغم", quantityScale: 3 } });
+      let upd: Tracked<Awaited<ReturnType<typeof updateProduct>>> | undefined;
+      let unit: Tracked<Awaited<ReturnType<typeof updateUnit>>> | undefined;
+      // We hold the product row, so updateProduct stops after its checks; updateUnit then runs.
+      await db.$transaction(
+        async (t) => {
+          await t.$queryRaw`SELECT id FROM "RtProduct" WHERE id = ${p.productId} FOR UPDATE`;
+          upd = tracked(updateProduct({ id: p.productId, expectedVersion: 1, soldByWeight: true }, a.as("stock")));
+          expect(await untilWaiting(1, upd.done)).toBe(true);
+          unit = tracked(updateUnit({ id: p.baseUnitId, expectedVersion: 1, quantityScale: 0 }, a.as("manager")));
+          await untilWaiting(2, unit.done);
+        },
+        { timeout: 20_000 },
+      );
+      const r = [await upd!.promise, await unit!.promise];
+      expect(r.filter((v) => v.ok)).toHaveLength(1);
+      const prod = await db.rtProduct.findUniqueOrThrow({ where: { id: p.productId } });
+      const base = await db.rtUnit.findUniqueOrThrow({ where: { id: p.baseUnitId } });
+      expect(prod.soldByWeight && base.quantityScale < 1).toBe(false);
+    }
+  });
+
+  it("a concurrent rename and addBarcode leave searchText with the new name and the new barcode", async () => {
+    const { a } = await world();
+    const p = await product(a, { nameAr: "اسم قديم", baseUnit: piece() });
+    let ren: Tracked<Awaited<ReturnType<typeof updateProduct>>> | undefined;
+    let bc: Tracked<Awaited<ReturnType<typeof addBarcode>>> | undefined;
+    // We hold the variant row, so the rename stops while rebuilding the variant's search text.
+    await db.$transaction(
+      async (t) => {
+        await t.$queryRaw`SELECT id FROM "RtVariant" WHERE id = ${p.variantId} FOR UPDATE`;
+        ren = tracked(updateProduct({ id: p.productId, expectedVersion: 1, nameAr: "اسم جديد" }, a.as("stock")));
+        expect(await untilWaiting(1, ren.done)).toBe(true);
+        bc = tracked(addBarcode({ unitId: p.baseUnitId, code: "4455667" }, a.as("manager")));
+        await untilWaiting(2, bc.done);
+      },
+      { timeout: 20_000 },
+    );
+    expect(await ren!.promise).toMatchObject({ ok: true });
+    expect(await bc!.promise).toMatchObject({ ok: true });
+    const prod = await db.rtProduct.findUniqueOrThrow({ where: { id: p.productId } });
+    const variant = await db.rtVariant.findUniqueOrThrow({ where: { id: p.variantId } });
+    expect(prod.searchText).toContain("اسم جديد");
+    expect(prod.searchText).not.toContain("قديم");
+    expect(variant.searchText).toContain("اسم جديد");
+    expect(variant.searchText).not.toContain("قديم");
+    expect(variant.searchText).toContain("4455667");
+  });
+
+  it("a concurrent archiveCategory and createProduct never leave an active product in an archived category", async () => {
+    const { a } = await world();
+    for (let round = 0; round < 4; round += 1) {
+      const c = await createCategory({ nameAr: `قسم ${round}` }, a.as("stock"));
+      if (!c.ok) throw new Error("category");
+      const r = await Promise.all([
+        createProduct({ nameAr: `صنف ${round}`, categoryId: c.value.id, baseUnit: piece() }, a.as("stock")),
+        archiveCategory({ id: c.value.id, expectedVersion: 1 }, a.as("manager")),
+      ]);
+      expect(r.filter((v) => v.ok)).toHaveLength(1);
+      const cat = await db.rtCategory.findUniqueOrThrow({ where: { id: c.value.id } });
+      const active = await db.rtProduct.count({ where: { categoryId: c.value.id, archivedAt: null } });
+      expect(cat.archivedAt !== null && active > 0).toBe(false);
+    }
+  });
+});
+
+describe("fix round 1", () => {
+  it("addUnit without a price stores factor x the current base price only for a price.change holder", async () => {
+    const { a } = await world();
+    const p = await product(a, { nameAr: "ماء", price: { currency: "IQD", amountMinor: 250n } }, "manager");
+    const pack = await addUnit({ variantId: p.variantId, name: "باكيت", factor: 12 }, a.as("manager"));
+    expect(pack).toMatchObject({ ok: true });
+    if (!pack.ok) return;
+    const packPrices = await db.rtPrice.findMany({ where: { unitId: pack.value.id } });
+    expect(packPrices.map((x) => [x.currency, x.amountMinor, x.validTo])).toEqual([["IQD", 3000n, null]]);
+
+    // A stock officer adds a unit: no price row is created for it.
+    const box = await addUnit({ variantId: p.variantId, name: "صندوق", factor: 24 }, a.as("stock"));
+    expect(box).toMatchObject({ ok: true });
+    if (!box.ok) return;
+    expect(await db.rtPrice.count({ where: { unitId: box.value.id } })).toBe(0);
+
+    // An explicit amount wins over the suggestion.
+    const half = await addUnit({ variantId: p.variantId, name: "نصف", factor: 6, price: { currency: "IQD", amountMinor: 1400n } }, a.as("manager"));
+    if (!half.ok) throw new Error("half");
+    expect((await db.rtPrice.findMany({ where: { unitId: half.value.id } })).map((x) => x.amountMinor)).toEqual([1400n]);
+
+    // A product with no base price: the manager's unit gets no price either.
+    const bare = await product(a, { nameAr: "بلا سعر" }, "manager");
+    const u = await addUnit({ variantId: bare.variantId, name: "كرتون", factor: 6 }, a.as("manager"));
+    if (!u.ok) throw new Error("unit");
+    expect(await db.rtPrice.count({ where: { unitId: u.value.id } })).toBe(0);
+  });
+
+  it("price amounts beyond the money ceiling are INVALID_INPUT, never an internal error", async () => {
+    const { a } = await world();
+    const huge = 10n ** 17n;
+    // factor x base overflows the ceiling (10^18).
+    expect(
+      await createProduct({ nameAr: "غالي", baseUnit: piece(), extraUnits: [{ name: "كرتون", factor: 100 }], price: { currency: "IQD", amountMinor: huge } }, a.as("manager")),
+    ).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(await createProduct({ nameAr: "غالي", baseUnit: piece(), price: { currency: "IQD", amountMinor: 10n ** 18n + 1n } }, a.as("manager"))).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+    });
+    expect(await createProduct({ nameAr: "غالي", baseUnit: piece(), price: { currency: "IQD", amountMinor: "99999999999999999999" } }, a.as("manager"))).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+    });
+    const p = await product(a, { nameAr: "غالي", price: { currency: "IQD", amountMinor: huge } }, "manager");
+    expect(await addUnit({ variantId: p.variantId, name: "كرتون", factor: 100 }, a.as("manager"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(await db.rtUnit.count({ where: { variantId: p.variantId } })).toBe(1);
+  });
+
+  it("updateUnit, archiveUnit and archiveBarcode refuse rows of an archived product or variant", async () => {
+    const { a } = await world();
+    const p = await product(a, { nameAr: "صنف", extraUnits: [{ name: "كرتون", factor: 6, barcodes: ["5050"] }] });
+    const carton = await db.rtUnit.findFirstOrThrow({ where: { variantId: p.variantId, isBase: false } });
+    const bc = await db.rtBarcode.findFirstOrThrow({ where: { code: "5050" } });
+    expect(await archiveProduct({ id: p.productId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await updateUnit({ id: carton.id, expectedVersion: 1, name: "ك" }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await archiveUnit({ id: carton.id, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await archiveBarcode({ id: bc.id, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+
+    // An archived variant of an active product.
+    const shirt = await product(a, { nameAr: "قميص", options: { size: "M" } });
+    const v = await addVariant(
+      { productId: shirt.productId, options: { size: "L" }, baseUnit: piece(["6060"]), extraUnits: [{ name: "دزينة", factor: 12 }] },
+      a.as("stock"),
+    );
+    if (!v.ok) throw new Error("variant");
+    expect(await archiveVariant({ variantId: v.value.variantId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: true });
+    const dozen = await db.rtUnit.findFirstOrThrow({ where: { variantId: v.value.variantId, isBase: false } });
+    const code = await db.rtBarcode.findFirstOrThrow({ where: { code: "6060" } });
+    expect(await updateUnit({ id: dozen.id, expectedVersion: 1, name: "ك" }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await archiveUnit({ id: dozen.id, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await archiveBarcode({ id: code.id, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+  });
+
+  it("a stock officer sending a price in addVariant or an extra unit amount is FORBIDDEN and nothing is created", async () => {
+    const { a } = await world();
+    const shirt = await product(a, { nameAr: "قميص", options: { size: "M" } });
+    expect(
+      await addVariant({ productId: shirt.productId, options: { size: "L" }, baseUnit: piece(["7070"]), price: { currency: "IQD", amountMinor: 5000n } }, a.as("stock")),
+    ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(
+      await createProduct({ nameAr: "بنطال", baseUnit: piece(["7171"]), extraUnits: [{ name: "دزينة", factor: 12, amountMinor: 50000n }] }, a.as("stock")),
+    ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(await db.rtVariant.count({ where: { businessId: a.business.id } })).toBe(1);
+    expect(await db.rtProduct.count({ where: { businessId: a.business.id } })).toBe(1);
+    expect(await db.rtBarcode.count({ where: { businessId: a.business.id } })).toBe(0);
+    expect(await db.rtPrice.count({ where: { businessId: a.business.id } })).toBe(0);
+  });
+
+  it("updateProduct with a foreign category or brand is NOT_FOUND", async () => {
+    const { a, b } = await world();
+    const foreignCat = await createCategory({ nameAr: "قسم ب" }, b.as("stock"));
+    const foreignBrand = await createBrand({ nameAr: "علامة ب" }, b.as("stock"));
+    if (!foreignCat.ok || !foreignBrand.ok) throw new Error("taxonomy");
+    const p = await product(a, { nameAr: "صنف" });
+    expect(await updateProduct({ id: p.productId, expectedVersion: 1, categoryId: foreignCat.value.id }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await updateProduct({ id: p.productId, expectedVersion: 1, brandId: foreignBrand.value.id }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await db.rtProduct.findUniqueOrThrow({ where: { id: p.productId } })).toMatchObject({ categoryId: null, brandId: null, version: 1 });
+  });
+
+  it("archiveVariant keeps SKU and barcodes reserved, refreshes search text and refuses the last active variant", async () => {
+    const { a, b } = await world();
+    const shirt = await product(a, { nameAr: "قميص", options: { size: "M" }, baseUnit: piece(["8181"]) });
+    const large = await addVariant({ productId: shirt.productId, options: { size: "L" }, baseUnit: piece(["8282"]) }, a.as("stock"));
+    if (!large.ok) throw new Error("variant");
+
+    expect(await archiveVariant({ variantId: large.value.variantId, expectedVersion: 1 }, a.as("cashier"))).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(await archiveVariant({ variantId: large.value.variantId, expectedVersion: 1 }, b.as("owner"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(await archiveVariant({ variantId: large.value.variantId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({
+      ok: true,
+      value: { id: large.value.variantId, version: 2 },
+    });
+    expect(await archiveVariant({ variantId: large.value.variantId, expectedVersion: 2 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    // Its SKU and barcode stay reserved.
+    expect(await createProduct({ nameAr: "x", sku: large.value.sku, baseUnit: piece() }, a.as("stock"))).toMatchObject({ ok: false, code: "SKU_TAKEN" });
+    expect(await createProduct({ nameAr: "x", baseUnit: piece(["8282"]) }, a.as("stock"))).toMatchObject({ ok: false, code: "BARCODE_TAKEN" });
+    // The product's search text no longer carries the archived variant's SKU.
+    const prod = await db.rtProduct.findUniqueOrThrow({ where: { id: shirt.productId } });
+    expect(prod.searchText).not.toContain(normalizeSearchText(large.value.sku));
+    expect(prod.searchText).toContain(normalizeSearchText(shirt.sku));
+    // The same option set can be added again once archived.
+    expect(await addVariant({ productId: shirt.productId, options: { size: "L" }, baseUnit: piece() }, a.as("stock"))).toMatchObject({ ok: true });
+
+    // The last active variant cannot be archived: archive the product instead.
+    const single = await product(a, { nameAr: "وحيد" });
+    expect(await archiveVariant({ variantId: single.variantId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "LAST_VARIANT" });
+    expect(await db.rtVariant.findUniqueOrThrow({ where: { id: single.variantId } })).toMatchObject({ archivedAt: null, version: 1 });
+    // Archived product: refused too.
+    expect(await archiveProduct({ id: shirt.productId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await archiveVariant({ variantId: shirt.variantId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
   });
 });
