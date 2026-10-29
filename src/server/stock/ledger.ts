@@ -1,5 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
-import { reduceValue } from "@/server/domain/stock";
+import { MAX_BASE_QTY, reduceValue } from "@/server/domain/stock";
 import { RuleError } from "@/server/framework/errors";
 
 /*
@@ -21,8 +21,13 @@ import { RuleError } from "@/server/framework/errors";
  *   is reported as STOCK_NEGATIVE too.
  * - Locks: postMovements takes lockBusiness(`stock:<variantId>`) for each distinct variant in
  *   ascending order, and nothing else. Callers take their document and idempotency locks first;
- *   the order everywhere is idempotency -> document -> stock:<variant> ascending. Deadlock and
- *   serialization failures are left to the framework's retry.
+ *   the order everywhere is idempotency -> document -> stock:<variant> ascending -> document
+ *   number. The framework retries nothing but an idempotency-key P2002: a deadlock (40P01) or a
+ *   serialization failure (40001) reaches the caller as an internal error. So a transaction makes
+ *   ONE postMovements call, or first takes lockBusiness(`stock:<id>`) itself for the union of every
+ *   variant it will post, in ascending order (the advisory lock is re-entrant, so postMovements
+ *   taking the same locks again is harmless). Two calls that each lock their own variants could
+ *   otherwise deadlock against another transaction doing the same in another order.
  * - Missing balance rows are inserted with INSERT ... ON CONFLICT DO NOTHING (createMany with
  *   skipDuplicates) and read back. The no-batch row has a null in its unique key, which Prisma's
  *   upsert cannot select, and a caught P2002 would abort the Postgres transaction, so neither
@@ -63,16 +68,27 @@ export type BalanceMismatch = {
 
 const keyOf = (variantId: string, batchId: string | null) => `${variantId}|${batchId ?? ""}`;
 
-/** The balance CHECK (qty >= 0), as Prisma surfaces it (SQLSTATE 23514 naming the constraint). */
-function isNegativeBalance(err: unknown): boolean {
+/**
+ * The balance CHECK (qty >= 0), as Prisma surfaces it (SQLSTATE 23514 naming the constraint).
+ * Called from a catch block, so it never throws itself: a meta that JSON cannot carry (a bigint, a
+ * cycle) is read as text where it can be and otherwise ignored.
+ */
+export function isNegativeBalance(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
-  const text = `${(err as { message?: unknown }).message ?? ""} ${JSON.stringify((err as { meta?: unknown }).meta ?? null)}`;
-  return text.includes("RtStockBalance_qty_nonneg");
+  const message = (err as { message?: unknown }).message;
+  let meta = "";
+  try {
+    meta = JSON.stringify((err as { meta?: unknown }).meta ?? null, (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v)) ?? "";
+  } catch {
+    meta = "";
+  }
+  return `${typeof message === "string" ? message : ""} ${meta}`.includes("RtStockBalance_qty_nonneg");
 }
 
 function assertLines(lines: LedgerLine[]): void {
   for (const l of lines) {
     if (l.qtyDelta === 0n) throw new RuleError("INVALID_INPUT");
+    if (l.qtyDelta > MAX_BASE_QTY || -l.qtyDelta > MAX_BASE_QTY) throw new RuleError("INVALID_INPUT");
     if (l.qtyDelta < 0n && l.valueDeltaMinor !== undefined) throw new RuleError("INVALID_INPUT");
     if (l.valueDeltaMinor !== undefined && l.valueDeltaMinor < 0n) throw new RuleError("INVALID_INPUT");
   }
@@ -81,7 +97,9 @@ function assertLines(lines: LedgerLine[]): void {
 /**
  * Writes one movement per line at one location and updates the balances, all or nothing.
  * STOCK_NEGATIVE when an outflow exceeds its (location, variant, batch) balance at that point of the
- * call; INVALID_INPUT for a zero quantity, a negative value, or a value on an outflow.
+ * call; INVALID_INPUT for a zero quantity, a quantity above MAX_BASE_QTY, a negative value, or a
+ * value on an outflow. Callers validate their lines (variant, batch of that variant, line of that
+ * document and variant) before calling: a reference the foreign keys refuse is an internal error.
  */
 export async function postMovements(
   tx: Tx,

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { convertMinor, lineValueMinor, parseRate } from "@/server/domain/stock";
+import { MAX_BASE_QTY, convertMinor, lineValueMinor, parseRate } from "@/server/domain/stock";
 import { defineAction } from "@/server/framework/action";
 import { scopedDb } from "@/server/framework/scoped-db";
-import { postMovements, rebuildBalances, variantAverage } from "@/server/stock/ledger";
+import { isNegativeBalance, postMovements, rebuildBalances, variantAverage } from "@/server/stock/ledger";
 import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createPlan } from "../helpers/fixtures";
 
@@ -423,6 +423,17 @@ describe("stock ledger", () => {
     // The ledger computes outflow values; a caller never passes one.
     await postOk(w, [{ variantId: v, qtyDelta: U, valueDeltaMinor: 10n }]);
     await refuse({ variantId: v, qtyDelta: -U, valueDeltaMinor: -10n });
+    // Above MAX_BASE_QTY is a refusal, not a database overflow.
+    await refuse({ variantId: v, qtyDelta: MAX_BASE_QTY + 1n });
     expect(await db.rtStockMovement.count()).toBe(1);
+  });
+
+  it("isNegativeBalance never throws on an error whose meta JSON cannot carry", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(isNegativeBalance({ message: "boom", meta: { qty: 5n } })).toBe(false);
+    expect(isNegativeBalance({ message: "x", meta: { constraint: "RtStockBalance_qty_nonneg", qty: 5n } })).toBe(true);
+    expect(isNegativeBalance({ message: 'violates check constraint "RtStockBalance_qty_nonneg"', meta: cyclic })).toBe(true);
+    expect(isNegativeBalance({ message: 7, meta: cyclic })).toBe(false);
   });
 });
