@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- the fluent-API tests probe methods the types deliberately hide */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { can } from "@/server/domain/permissions";
 import {
@@ -443,7 +444,11 @@ describe("runSupportRead", () => {
     const { a, admin, grantFor } = await world();
     const b = await business("B");
     await db.rtCategory.create({ data: { businessId: a.business.id, nameAr: "Mine" } });
-    await db.rtCategory.create({ data: { businessId: b.business.id, nameAr: "Secret B" } });
+    const bCategory = await db.rtCategory.create({ data: { businessId: b.business.id, nameAr: "Secret B" } });
+    const aCategory = await db.rtCategory.findFirstOrThrow({ where: { businessId: a.business.id } });
+    await db.rtCategory.create({ data: { businessId: a.business.id, parentId: aCategory.id, nameAr: "Child" } });
+    await db.rtProduct.create({ data: { businessId: a.business.id, categoryId: aCategory.id, nameAr: "P" } });
+    await db.rtProduct.create({ data: { businessId: b.business.id, categoryId: bCategory.id, nameAr: "Secret product" } });
     const grantId = await grantFor(["CATALOG_READ"]);
     const names = await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => {
       const mine = await tx.rtCategory.findMany({ select: { nameAr: true, businessId: true } });
@@ -453,8 +458,13 @@ describe("runSupportRead", () => {
       // Relations reached through include / relation filters stay inside business A as well.
       const withChildren = await tx.rtCategory.findMany({ include: { children: true, products: true } });
       const viaRelation = await tx.rtCategory.findMany({ where: { parent: { businessId: b.business.id } } });
+      expect(withChildren.length).toBeGreaterThan(0);
       expect(withChildren.every((r) => r.businessId === a.business.id)).toBe(true);
+      expect(withChildren.flatMap((r) => [...r.children, ...r.products]).every((r) => r.businessId === a.business.id)).toBe(true);
+      expect(withChildren.flatMap((r) => r.products).length).toBeGreaterThan(0);
       expect(viaRelation).toEqual([]);
+      expect(await tx.rtCategory.findMany({ where: { id: bCategory.id } })).toEqual([]);
+      expect(await tx.rtProduct.findMany({ where: { category: { id: bCategory.id } } })).toEqual([]);
       return { mine, widened, other };
     });
     expect(names.mine.every((r) => r.businessId === a.business.id)).toBe(true);
@@ -598,6 +608,71 @@ describe("support scopes limit readable models", () => {
         const err = await attempt(tx, model);
         if (union.has(model as never)) expect(err, model).toBeNull();
         else expect(err, model).toBeInstanceOf(ScopeError);
+      }
+    });
+  });
+});
+
+describe("support reads return plain promises (no fluent API bypass)", () => {
+  const CHAINS: Record<string, (r: any) => unknown> = {
+    business: (r) => r.business(),
+    "business.staff": (r) => r.business().staff(),
+    "business.supportGrants": (r) => r.business().supportGrants(),
+    "business.invitations": (r) => r.business().invitations(),
+  };
+
+  it("fluent relation methods do not exist on any read result", async () => {
+    const { a, admin, grantFor } = await world();
+    const product = await db.rtProduct.create({ data: { businessId: a.business.id, nameAr: "شاي" } });
+    const grantId = await grantFor(["CATALOG_READ"]);
+    await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => {
+      const p = tx.rtProduct as any;
+      const calls: Record<string, () => any> = {
+        findFirst: () => p.findFirst(),
+        findFirstOrThrow: () => p.findFirstOrThrow(),
+        findUnique: () => p.findUnique({ where: { id: product.id } }),
+        findUniqueOrThrow: () => p.findUniqueOrThrow({ where: { id: product.id } }),
+        findMany: () => p.findMany(),
+      };
+      for (const [op, call] of Object.entries(calls)) {
+        const result = call();
+        for (const [chain, fn] of Object.entries(CHAINS)) {
+          let outcome: unknown;
+          try {
+            outcome = await fn(result);
+          } catch {
+            outcome = "threw";
+          }
+          expect(outcome, `${op}.${chain}`).toBe("threw");
+        }
+        await result;
+      }
+    });
+  });
+
+  it("normal results still work: await, then, Promise.all", async () => {
+    const { a, admin, grantFor } = await world();
+    await db.rtProduct.create({ data: { businessId: a.business.id, nameAr: "شاي" } });
+    const grantId = await grantFor(["CATALOG_READ"]);
+    await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => {
+      expect(await tx.rtProduct.findMany()).toHaveLength(1);
+      expect(await tx.rtProduct.findMany().then((r) => r.length)).toBe(1);
+      const [n, rows] = await Promise.all([tx.rtProduct.count(), tx.rtProduct.findMany()]);
+      expect([n, rows.length]).toEqual([1, 1]);
+    });
+  });
+
+  it("scopes are unioned at read level: CATALOG_READ + STOCK_READ reads the catalog, STOCK_READ alone reads nothing", async () => {
+    const { a, admin, grantFor } = await world();
+    await db.rtProduct.create({ data: { businessId: a.business.id, nameAr: "شاي" } });
+    const both = await grantFor(["CATALOG_READ", "STOCK_READ"]);
+    await runSupportRead(both, admin.id, "STOCK_READ", async ({ db: tx }) => {
+      expect(await tx.rtProduct.count()).toBe(1);
+    });
+    const stockOnly = await grantFor(["STOCK_READ"]);
+    await runSupportRead(stockOnly, admin.id, "STOCK_READ", async ({ db: tx }) => {
+      for (const m of ["rtProduct", "rtCategory", "rtVariant", "rtPrice", "rtBranch", "rtStaff"]) {
+        await expect((tx as any)[m].count(), m).rejects.toBeInstanceOf(ScopeError);
       }
     });
   });

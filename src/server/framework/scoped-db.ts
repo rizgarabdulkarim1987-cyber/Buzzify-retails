@@ -520,6 +520,28 @@ const RAW_METHODS = new Set([
   "$runCommandRaw",
 ]);
 
+const UNDERLYING = new WeakMap<object, PromiseLike<unknown>>();
+
+/**
+ * A result handed to callers: awaitable and lazy like a PrismaPromise, but WITHOUT Prisma's fluent
+ * relation methods (`findFirst().business().staff()`), which would build new queries on the base
+ * client that never pass through the scope rewrite. Never return the raw PrismaPromise.
+ */
+export function plainPromise<T>(source: PromiseLike<T>): PromiseLike<T> & Promise<T> {
+  const wrapper = {
+    then: (ok?: never, fail?: never) => source.then(ok, fail),
+    catch: (fail?: never) => source.then(undefined, fail),
+    finally: (fn?: () => void) => Promise.resolve(source).finally(fn),
+    [Symbol.toStringTag]: "Promise",
+  } as unknown as PromiseLike<T> & Promise<T>;
+  UNDERLYING.set(wrapper, source);
+  return Object.freeze(wrapper);
+}
+
+/** The Prisma promise behind a plainPromise (the array form of $transaction needs the real ones). */
+const unwrapPlain = (p: unknown): unknown =>
+  typeof p === "object" && p !== null ? (UNDERLYING.get(p) ?? p) : p;
+
 /**
  * Which client a guard fronts:
  * - "client": a full client carrying the scope extension (the extension rewrites every query);
@@ -550,14 +572,14 @@ function guard(client: object, scope: Scope, kind: GuardKind): object {
         return (args?: unknown) => {
           // Resolve the delegate per call so nothing is cached outside the closure.
           const delegate = Reflect.get(client, key) as Record<string, (a: unknown) => unknown>;
-          if (kind !== "tx") return delegate[op]!.call(delegate, args);
+          if (kind !== "tx") return plainPromise(delegate[op]!.call(delegate, args) as PromiseLike<unknown>);
           let scoped: Args;
           try {
             scoped = scopeArgs(scope, model, op, args);
           } catch (err) {
             return Promise.reject(err);
           }
-          return delegate[op]!.call(delegate, scoped);
+          return plainPromise(delegate[op]!.call(delegate, scoped) as PromiseLike<unknown>);
         };
       },
     });
@@ -569,7 +591,7 @@ function guard(client: object, scope: Scope, kind: GuardKind): object {
       return base.$transaction((tx: object) => (arg as (t: object) => unknown)(guard(tx, scope, "extendedTx")), options);
     }
     // Array form: the operations are promises built from this facade's own delegates.
-    if (Array.isArray(arg)) return base.$transaction(arg, options);
+    if (Array.isArray(arg)) return base.$transaction(arg.map(unwrapPlain), options);
     return Promise.reject(new ScopeError("UNSUPPORTED_OPERATION", "$transaction"));
   };
 

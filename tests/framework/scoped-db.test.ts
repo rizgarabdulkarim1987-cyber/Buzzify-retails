@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- the fluent-API tests probe methods the types deliberately hide */
 import { describe, expect, it } from "vitest";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { resolveActor, type Actor } from "@/server/framework/actor";
@@ -580,5 +581,59 @@ describe("model classification", () => {
     // ...except the platform-managed tables, which are expressly allowed to.
     const platformWithBusiness = { ...modelFields(), RtSubscription: { scalars: ["id", "businessId"], relations: {} } };
     expect(classifyModels(platformWithBusiness).misclassified).toEqual([]);
+  });
+});
+
+describe("scopedDb results are plain promises (no fluent API bypass)", () => {
+  it("fluent relation chains do not exist on a transaction-scoped result, so unscoped relations stay unreachable", async () => {
+    const { one, owner } = await world();
+    await db.rtCategory.create({ data: { businessId: one.business.id, nameAr: "c" } });
+    const product = await db.rtProduct.create({ data: { businessId: one.business.id, nameAr: "p" } });
+    await db.$transaction(async (raw) => {
+      const tx = scopedDb(owner, raw) as any;
+      const calls: Record<string, () => any> = {
+        findFirst: () => tx.rtProduct.findFirst(),
+        findFirstOrThrow: () => tx.rtProduct.findFirstOrThrow(),
+        findUnique: () => tx.rtProduct.findUnique({ where: { id: product.id } }),
+        findUniqueOrThrow: () => tx.rtProduct.findUniqueOrThrow({ where: { id: product.id } }),
+        findMany: () => tx.rtProduct.findMany(),
+      };
+      const chains: Record<string, (r: any) => unknown> = {
+        business: (r) => r.business(),
+        "business.staff": (r) => r.business().staff(),
+        "business.supportGrants": (r) => r.business().supportGrants(),
+        "business.invitations": (r) => r.business().invitations(),
+      };
+      for (const [op, call] of Object.entries(calls)) {
+        for (const [chain, fn] of Object.entries(chains)) {
+          const result = call();
+          const outcome = await Promise.resolve()
+            .then(() => fn(result))
+            .then(
+              () => "resolved",
+              () => "threw",
+            );
+          expect(outcome, `${op}.${chain}`).toBe("threw");
+          await result;
+        }
+      }
+      expect(await tx.rtProduct.findMany().then((r: unknown[]) => r.length)).toBe(1);
+      const [n, rows] = await Promise.all([tx.rtProduct.count(), tx.rtProduct.findMany()]);
+      expect([n, rows.length]).toEqual([1, 1]);
+    });
+  });
+
+  it("the full client and its interactive transaction also hand back plain promises", async () => {
+    const { one, owner } = await world();
+    const product = await db.rtProduct.create({ data: { businessId: one.business.id, nameAr: "p" } });
+    const client = scopedDb(owner) as any;
+    const probe = async (c: any) => {
+      for (const r of [c.rtProduct.findFirst(), c.rtProduct.findUnique({ where: { id: product.id } })]) {
+        expect(typeof r.business, "fluent method present").toBe("undefined");
+        await r;
+      }
+    };
+    await probe(client);
+    await client.$transaction(async (t: any) => probe(t));
   });
 });

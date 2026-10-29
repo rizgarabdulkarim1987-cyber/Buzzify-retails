@@ -6,7 +6,7 @@ import { defineAction } from "@/server/framework/action";
 import type { Actor } from "@/server/framework/actor";
 import { NotFoundError, RuleError, SupportAccessError } from "@/server/framework/errors";
 import { gateOf } from "@/server/framework/gate";
-import { modelsReached, ScopeError, scopedDb } from "@/server/framework/scoped-db";
+import { modelsReached, plainPromise, ScopeError, scopedDb } from "@/server/framework/scoped-db";
 import { isPlatformAdmin } from "./platform-admin";
 
 export { SupportAccessError, SupportScope };
@@ -202,13 +202,16 @@ function readOnly<C extends object>(client: C, allowed: ReadonlySet<string>): C 
           // Fail closed: the model itself and every model reached through select, include, _count,
           // where and orderBy must be allowed by the grant's scopes; anything else is refused.
           try {
+            // Note: `_count: true` is always refused on catalog models: it counts every relation, and
+            // each catalog model has one to RtBusiness (not readable). Use `_count: { select: {...} }`.
             for (const m of modelsReached(modelName, args)) {
               if (!allowed.has(m)) throw new ScopeError("MODEL_NOT_IN_SCOPE", `${name}.${op} reaches ${m}`);
             }
           } catch (err) {
             return Promise.reject(err);
           }
-          return run.call(target, args);
+          // Plain promise: a raw PrismaPromise carries fluent relation methods that escape every check.
+          return plainPromise(run.call(target, args) as PromiseLike<unknown>);
         };
       },
     });
