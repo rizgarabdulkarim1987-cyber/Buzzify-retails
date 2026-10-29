@@ -15,6 +15,8 @@ const PERMISSION_LIST = [
   "ai.use",
   "multiBranch.access",
   "support.grant",
+  "catalog.manage",
+  "catalog.import",
 ] as const;
 
 export type Permission = (typeof PERMISSION_LIST)[number];
@@ -36,9 +38,11 @@ export const ROLE_PERMISSIONS: Readonly<Record<RtRole, readonly Permission[]>> =
     "staff.manage",
     "ai.use",
     "multiBranch.access",
+    "catalog.manage",
+    "catalog.import",
   ]),
   CASHIER: frozen([]),
-  STOCK: frozen(["stock.receive", "stock.transfer"]),
+  STOCK: frozen(["stock.receive", "stock.transfer", "catalog.manage"]),
   PURCHASING: frozen(["stock.receive", "ai.use"]),
   ACCOUNTANT: frozen(["cost.view", "data.export", "supplier.pay", "multiBranch.access"]),
   AUDITOR: frozen(["multiBranch.access"]),

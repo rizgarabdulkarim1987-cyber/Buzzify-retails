@@ -24,16 +24,16 @@ describe("permissions", () => {
 
   it("OWNER holds every permission", () => {
     const all = new Set(Object.values(ROLE_PERMISSIONS).flat());
-    expect(permissionsOf("OWNER").size).toBe(14);
-    expect(all.size).toBe(14);
+    expect(permissionsOf("OWNER").size).toBe(16);
+    expect(all.size).toBe(16);
   });
 
   it("pins the whole role matrix", () => {
     const expected: Record<RtRole, Permission[]> = {
       OWNER: [...PERMISSIONS],
-      MANAGER: ["price.change", "discount.override", "return.noInvoice", "refund", "count.adjust.approve", "stock.receive", "stock.transfer", "staff.manage", "ai.use", "multiBranch.access"],
+      MANAGER: ["price.change", "discount.override", "return.noInvoice", "refund", "count.adjust.approve", "stock.receive", "stock.transfer", "staff.manage", "ai.use", "multiBranch.access", "catalog.manage", "catalog.import"],
       CASHIER: [],
-      STOCK: ["stock.receive", "stock.transfer"],
+      STOCK: ["stock.receive", "stock.transfer", "catalog.manage"],
       PURCHASING: ["stock.receive", "ai.use"],
       ACCOUNTANT: ["cost.view", "data.export", "supplier.pay", "multiBranch.access"],
       AUDITOR: ["multiBranch.access"],
@@ -42,6 +42,16 @@ describe("permissions", () => {
     for (const role of Object.keys(expected) as RtRole[]) {
       expect([...permissionsOf(role)].sort()).toEqual([...expected[role]].sort());
     }
+  });
+
+  it("catalog.manage and catalog.import follow the matrix and the permission table stays frozen", () => {
+    const roles = Object.keys(ROLE_PERMISSIONS) as RtRole[];
+    expect(roles.filter((r) => can(r, "catalog.manage")).sort()).toEqual(["MANAGER", "OWNER", "STOCK"]);
+    expect(roles.filter((r) => can(r, "catalog.import")).sort()).toEqual(["MANAGER", "OWNER"]);
+    expect(PERMISSIONS).toContain("catalog.manage");
+    expect(PERMISSIONS).toContain("catalog.import");
+    expect(PERMISSIONS.length).toBe(16);
+    expect(Object.isFrozen(PERMISSIONS)).toBe(true);
   });
 
   it("the matrix is immutable at runtime and roles do not alias each other", () => {
