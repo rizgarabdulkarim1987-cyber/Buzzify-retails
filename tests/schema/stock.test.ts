@@ -42,6 +42,7 @@ async function line(w: World, documentId: string, lineNo = 1) {
   return db.rtStockLine.create({
     data: {
       businessId: w.business.id,
+      branchId: w.branch.id,
       documentId,
       lineNo,
       variantId: w.variant.id,
@@ -206,7 +207,7 @@ describe("stock schema", () => {
   it("line quantities are positive and line values never negative", async () => {
     const w = await world();
     const doc = await draft(w);
-    const base = { businessId: w.business.id, documentId: doc.id, variantId: w.variant.id, unitId: w.unit.id, enteredQuantity: "1" };
+    const base = { businessId: w.business.id, branchId: w.branch.id, documentId: doc.id, variantId: w.variant.id, unitId: w.unit.id, enteredQuantity: "1" };
     expect(await failure(db.rtStockLine.create({ data: { ...base, lineNo: 1, quantity: 0n } }))).toContain("RtStockLine_quantity_positive");
     expect(await failure(db.rtStockLine.create({ data: { ...base, lineNo: 1, quantity: -5n } }))).toContain("RtStockLine_quantity_positive");
     expect(await failure(db.rtStockLine.create({ data: { ...base, lineNo: 0, quantity: 1n } }))).toContain("RtStockLine_line_no_positive");
@@ -263,9 +264,9 @@ describe("stock schema", () => {
 
     // Lines: foreign document, variant, unit, batch; a batch of another variant.
     const doc = await draft(w);
-    const lineBase = { businessId: w.business.id, documentId: doc.id, lineNo: 1, variantId: w.variant.id, unitId: w.unit.id, quantity: 1n, enteredQuantity: "1" };
+    const lineBase = { businessId: w.business.id, branchId: w.branch.id, documentId: doc.id, lineNo: 1, variantId: w.variant.id, unitId: w.unit.id, quantity: 1n, enteredQuantity: "1" };
     expect(await failure(db.rtStockLine.create({ data: { ...lineBase, documentId: xPosted.doc.id } }))).toContain(
-      "RtStockLine_businessId_documentId_fkey",
+      "RtStockLine_businessId_branchId_documentId_fkey",
     );
     expect(await failure(db.rtStockLine.create({ data: { ...lineBase, variantId: x.variant.id } }))).toContain(
       "RtStockLine_businessId_variantId_fkey",
@@ -286,12 +287,12 @@ describe("stock schema", () => {
       "RtStockMovement_businessId_branchId_fkey",
     );
     expect(await failure(db.rtStockMovement.create({ data: { ...mvBase, documentId: xPosted.doc.id } }))).toContain(
-      "RtStockMovement_businessId_documentId_fkey",
+      "RtStockMovement_businessId_branchId_locationId_documentId_fkey",
     );
     const otherDoc = await draft(w);
     const otherLine = await line(w, otherDoc.id);
     expect(await failure(db.rtStockMovement.create({ data: { ...mvBase, lineId: otherLine.id } }))).toContain(
-      "RtStockMovement_businessId_documentId_lineId_fkey",
+      "RtStockMovement_businessId_documentId_variantId_lineId_fkey",
     );
     expect(await failure(db.rtStockMovement.create({ data: { ...mvBase, batchId: xBatch.id } }))).toContain(
       "RtStockMovement_businessId_variantId_batchId_fkey",
@@ -311,12 +312,48 @@ describe("stock schema", () => {
     );
   });
 
+  it("a line is in its document's branch", async () => {
+    const w = await world();
+    const doc = await draft(w);
+    const otherBranch = await db.rtBranch.create({ data: { businessId: w.business.id, name: "B2" } });
+    const data = { businessId: w.business.id, documentId: doc.id, lineNo: 1, variantId: w.variant.id, unitId: w.unit.id, quantity: 1n, enteredQuantity: "1" };
+    expect(await failure(db.rtStockLine.create({ data: { ...data, branchId: otherBranch.id } }))).toContain(
+      "RtStockLine_businessId_branchId_documentId_fkey",
+    );
+    expect((await db.rtStockLine.create({ data: { ...data, branchId: w.branch.id } })).branchId).toBe(w.branch.id);
+  });
+
+  it("a movement matches its document's branch and location and its line's variant", async () => {
+    const w = await world();
+    const { doc, line: l } = await postedWithMovement(w);
+    const base = { ...w.where, documentId: doc.id, lineId: l.id, variantId: w.variant.id, qtyDelta: 1000n, valueDeltaMinor: 0n };
+    // Another location of the same branch: the location exists, but it is not the document's.
+    const otherLoc = await db.rtLocation.create({ data: { businessId: w.business.id, branchId: w.branch.id, name: "الرف" } });
+    expect(await failure(db.rtStockMovement.create({ data: { ...base, locationId: otherLoc.id } }))).toContain(
+      "RtStockMovement_businessId_branchId_locationId_documentId_fkey",
+    );
+    // Another branch (with its own location) of the same business.
+    const otherBranch = await db.rtBranch.create({ data: { businessId: w.business.id, name: "B2" } });
+    const branchLoc = await db.rtLocation.create({ data: { businessId: w.business.id, branchId: otherBranch.id, name: "B2" } });
+    expect(
+      await failure(db.rtStockMovement.create({ data: { ...base, branchId: otherBranch.id, locationId: branchLoc.id } })),
+    ).toContain("RtStockMovement_businessId_branchId_locationId_documentId_fkey");
+    // Another variant of the same business than the line's.
+    const otherVariant = await db.rtVariant.create({ data: { businessId: w.business.id, productId: w.product.id, sku: `S-${++skuSeq}` } });
+    expect(await failure(db.rtStockMovement.create({ data: { ...base, variantId: otherVariant.id } }))).toContain(
+      "RtStockMovement_businessId_documentId_variantId_lineId_fkey",
+    );
+    await db.rtStockMovement.create({ data: base });
+  });
+
   it("every new model is classified in scoped-db and in the STOCK_READ support scope", () => {
     expect(BUSINESS_SCOPED_MODELS).toEqual(expect.arrayContaining(STOCK_MODELS));
-    // Documents, movements and balances live in a branch's location: branch-scoped (a branch-limited
-    // actor sees only its branches). Lines follow their document; batches and the counter are business-level.
-    expect(BRANCH_SCOPED_MODELS).toEqual(expect.arrayContaining(["RtStockDocument", "RtStockMovement", "RtStockBalance"]));
-    for (const m of ["RtBatch", "RtStockLine", "RtStockCounter"]) expect(BRANCH_SCOPED_MODELS).not.toContain(m);
+    // Documents, lines, movements and balances live in a branch's location: branch-scoped (a
+    // branch-limited actor sees only its branches). Batches and the counter are business-level.
+    expect(BRANCH_SCOPED_MODELS).toEqual(
+      expect.arrayContaining(["RtStockDocument", "RtStockLine", "RtStockMovement", "RtStockBalance"]),
+    );
+    for (const m of ["RtBatch", "RtStockCounter"]) expect(BRANCH_SCOPED_MODELS).not.toContain(m);
     expect([...SCOPE_MODELS.STOCK_READ].sort()).toEqual(
       ["RtBatch", "RtStockBalance", "RtStockDocument", "RtStockLine", "RtStockMovement"].sort(),
     );

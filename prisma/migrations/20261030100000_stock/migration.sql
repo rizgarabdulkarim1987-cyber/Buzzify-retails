@@ -58,6 +58,7 @@ CREATE TABLE "RtStockDocument" (
 CREATE TABLE "RtStockLine" (
     "id" TEXT NOT NULL,
     "businessId" TEXT NOT NULL,
+    "branchId" TEXT NOT NULL,
     "documentId" TEXT NOT NULL,
     "lineNo" INTEGER NOT NULL,
     "variantId" TEXT NOT NULL,
@@ -138,6 +139,12 @@ CREATE INDEX "RtStockDocument_businessId_importBatchId_idx" ON "RtStockDocument"
 CREATE UNIQUE INDEX "RtStockDocument_businessId_id_key" ON "RtStockDocument"("businessId", "id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "RtStockDocument_businessId_branchId_id_key" ON "RtStockDocument"("businessId", "branchId", "id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "RtStockDocument_businessId_branchId_locationId_id_key" ON "RtStockDocument"("businessId", "branchId", "locationId", "id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "RtStockDocument_businessId_number_key" ON "RtStockDocument"("businessId", "number");
 
 -- CreateIndex
@@ -150,7 +157,7 @@ CREATE INDEX "RtStockLine_businessId_variantId_idx" ON "RtStockLine"("businessId
 CREATE UNIQUE INDEX "RtStockLine_businessId_id_key" ON "RtStockLine"("businessId", "id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "RtStockLine_businessId_documentId_id_key" ON "RtStockLine"("businessId", "documentId", "id");
+CREATE UNIQUE INDEX "RtStockLine_businessId_documentId_variantId_id_key" ON "RtStockLine"("businessId", "documentId", "variantId", "id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "RtStockLine_businessId_documentId_lineNo_key" ON "RtStockLine"("businessId", "documentId", "lineNo");
@@ -196,7 +203,7 @@ ALTER TABLE "RtStockDocument" ADD CONSTRAINT "RtStockDocument_businessId_importB
 ALTER TABLE "RtStockLine" ADD CONSTRAINT "RtStockLine_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "RtBusiness"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RtStockLine" ADD CONSTRAINT "RtStockLine_businessId_documentId_fkey" FOREIGN KEY ("businessId", "documentId") REFERENCES "RtStockDocument"("businessId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RtStockLine" ADD CONSTRAINT "RtStockLine_businessId_branchId_documentId_fkey" FOREIGN KEY ("businessId", "branchId", "documentId") REFERENCES "RtStockDocument"("businessId", "branchId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RtStockLine" ADD CONSTRAINT "RtStockLine_businessId_variantId_fkey" FOREIGN KEY ("businessId", "variantId") REFERENCES "RtVariant"("businessId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -217,10 +224,10 @@ ALTER TABLE "RtStockMovement" ADD CONSTRAINT "RtStockMovement_businessId_branchI
 ALTER TABLE "RtStockMovement" ADD CONSTRAINT "RtStockMovement_businessId_branchId_locationId_fkey" FOREIGN KEY ("businessId", "branchId", "locationId") REFERENCES "RtLocation"("businessId", "branchId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RtStockMovement" ADD CONSTRAINT "RtStockMovement_businessId_documentId_fkey" FOREIGN KEY ("businessId", "documentId") REFERENCES "RtStockDocument"("businessId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "RtStockMovement" ADD CONSTRAINT "RtStockMovement_businessId_branchId_locationId_documentId_fkey" FOREIGN KEY ("businessId", "branchId", "locationId", "documentId") REFERENCES "RtStockDocument"("businessId", "branchId", "locationId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RtStockMovement" ADD CONSTRAINT "RtStockMovement_businessId_documentId_lineId_fkey" FOREIGN KEY ("businessId", "documentId", "lineId") REFERENCES "RtStockLine"("businessId", "documentId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "RtStockMovement" ADD CONSTRAINT "RtStockMovement_businessId_documentId_variantId_lineId_fkey" FOREIGN KEY ("businessId", "documentId", "variantId", "lineId") REFERENCES "RtStockLine"("businessId", "documentId", "variantId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RtStockMovement" ADD CONSTRAINT "RtStockMovement_businessId_variantId_fkey" FOREIGN KEY ("businessId", "variantId") REFERENCES "RtVariant"("businessId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;

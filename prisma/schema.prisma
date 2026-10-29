@@ -862,7 +862,9 @@ model RtBatch {
   @@unique([businessId, id])
   // Target of the (businessId, variantId, batchId) foreign keys: a batch of the row's own variant.
   @@unique([businessId, variantId, id])
-  // NULLS NOT DISTINCT in the migration.
+  // NULLS NOT DISTINCT in the migration. Prisma's compound-unique selector for this key cannot take
+  // null, so a row with a null column is found with findFirst and created with create-and-catch
+  // P2002 (never upsert on this key).
   @@unique([businessId, variantId, code, expiryDate])
 }
 
@@ -901,6 +903,10 @@ model RtStockDocument {
   movements   RtStockMovement[]
 
   @@unique([businessId, id])
+  // Targets of the line's and the movement's document keys: a line is in its document's branch, a
+  // movement in its document's branch and location.
+  @@unique([businessId, branchId, id])
+  @@unique([businessId, branchId, locationId, id])
   @@unique([businessId, number])
   @@unique([businessId, reversesDocumentId])
   @@index([businessId, createdAt])
@@ -911,11 +917,14 @@ model RtStockDocument {
 // amount in base units x 1000. A cost is entered per unit in `currency` with `rateMicro` (business
 // currency per 1 unit of `currency`, x 10^6) and converted to `valueMinor` in the business's
 // currency. batchCode/expiryDate are as typed; batchId is resolved when posting. Deleted with its
-// (draft) document; a line with movements cannot be deleted. In the migration: lineNo >= 1,
+// (draft) document; a line with movements cannot be deleted. branchId is its document's branch
+// (enforced by the document key), so a branch-limited actor only reaches its branches' lines.
+// In the migration: lineNo >= 1,
 // quantity > 0, costs and values >= 0, rate > 0, a cost has a currency.
 model RtStockLine {
   id              String    @id @default(cuid())
   businessId      String
+  branchId        String
   documentId      String
   lineNo          Int
   variantId       String
@@ -933,21 +942,24 @@ model RtStockLine {
   updatedAt       DateTime  @updatedAt
 
   business  RtBusiness        @relation(fields: [businessId], references: [id])
-  document  RtStockDocument   @relation(fields: [businessId, documentId], references: [businessId, id], onDelete: Cascade)
+  document  RtStockDocument   @relation(fields: [businessId, branchId, documentId], references: [businessId, branchId, id], onDelete: Cascade)
   variant   RtVariant         @relation(fields: [businessId, variantId], references: [businessId, id])
   unit      RtUnit            @relation(fields: [businessId, unitId], references: [businessId, id])
   batch     RtBatch?          @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
   movements RtStockMovement[]
 
   @@unique([businessId, id])
-  // Target of the movement's (businessId, documentId, lineId) key: a line of the movement's own document.
-  @@unique([businessId, documentId, id])
+  // Target of the movement's (businessId, documentId, variantId, lineId) key: a line of the
+  // movement's own document and variant.
+  @@unique([businessId, documentId, variantId, id])
   @@unique([businessId, documentId, lineNo])
   @@index([businessId, variantId])
 }
 
 // The stock ledger: append-only (a trigger in the migration refuses UPDATE and DELETE; no
-// updatedAt). In the migration: qtyDelta <> 0, and the value moves the same way as the quantity
+// updatedAt). Its document key carries branch and location, and its line key carries the variant,
+// so a movement always matches its document's location and its line's variant. In the migration:
+// qtyDelta <> 0, and the value moves the same way as the quantity
 // (or is 0).
 model RtStockMovement {
   id              String   @id @default(cuid())
@@ -965,8 +977,8 @@ model RtStockMovement {
   business RtBusiness      @relation(fields: [businessId], references: [id])
   branch   RtBranch        @relation(fields: [businessId, branchId], references: [businessId, id])
   location RtLocation      @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
-  document RtStockDocument @relation(fields: [businessId, documentId], references: [businessId, id])
-  line     RtStockLine     @relation(fields: [businessId, documentId, lineId], references: [businessId, documentId, id])
+  document RtStockDocument @relation(fields: [businessId, branchId, locationId, documentId], references: [businessId, branchId, locationId, id])
+  line     RtStockLine     @relation(fields: [businessId, documentId, variantId, lineId], references: [businessId, documentId, variantId, id])
   variant  RtVariant       @relation(fields: [businessId, variantId], references: [businessId, id])
   batch    RtBatch?        @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
 
@@ -996,7 +1008,9 @@ model RtStockBalance {
   variant  RtVariant  @relation(fields: [businessId, variantId], references: [businessId, id])
   batch    RtBatch?   @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
 
-  // NULLS NOT DISTINCT in the migration.
+  // NULLS NOT DISTINCT in the migration. Prisma's compound-unique selector for this key cannot take
+  // null, so a row with a null column is found with findFirst and created with create-and-catch
+  // P2002 (never upsert on this key).
   @@unique([businessId, locationId, variantId, batchId])
   @@index([businessId, variantId])
 }

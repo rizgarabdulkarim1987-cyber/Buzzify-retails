@@ -56,6 +56,31 @@ const modes: [string, <T>(actor: Actor, fn: (s: Scoped) => Promise<T>) => Promis
 ];
 
 describe.each(modes)("scopedDb through the %s", (_mode, run) => {
+  it("a cashier of branch A cannot read stock documents or lines of branch B", async () => {
+    const w = await world();
+    const businessId = w.one.business.id;
+    const p = await db.rtProduct.create({ data: { businessId, nameAr: "حليب" } });
+    const v = await db.rtVariant.create({ data: { businessId, productId: p.id, sku: "STK-1" } });
+    const u = await db.rtUnit.create({ data: { businessId, variantId: v.id, name: "حبة", factor: 1, isBase: true } });
+    const doc = async (branchId: string, locationId: string) => {
+      const d = await db.rtStockDocument.create({ data: { businessId, branchId, locationId, kind: "RECEIPT" } });
+      const l = await db.rtStockLine.create({
+        data: { businessId, branchId, documentId: d.id, lineNo: 1, variantId: v.id, unitId: u.id, quantity: 1000n, enteredQuantity: "1" },
+      });
+      return { d, l };
+    };
+    const a = await doc(w.one.branches.A!.id, w.locA.id);
+    const b = await doc(w.one.branches.B!.id, w.locB.id);
+    await run(w.cashier, async (s) => {
+      expect((await s.rtStockDocument.findMany()).map((d) => d.id)).toEqual([a.d.id]);
+      expect((await s.rtStockLine.findMany()).map((l) => l.id)).toEqual([a.l.id]);
+      expect(await s.rtStockLine.findMany({ where: { documentId: b.d.id } })).toEqual([]);
+      expect(await s.rtStockLine.findFirst({ where: { id: b.l.id } })).toBeNull();
+      expect(await s.rtStockLine.count()).toBe(1);
+    });
+    await run(w.owner, async (s) => expect(await s.rtStockLine.count()).toBe(2));
+  });
+
   it("a cashier of branch A cannot read a location of branch B", async () => {
     const w = await world();
     expect(w.cashier.branchIds).toEqual([w.one.branches.A!.id]);
@@ -564,6 +589,7 @@ describe("model classification", () => {
       "RtStaffBranch",
       "RtStockBalance",
       "RtStockDocument",
+      "RtStockLine",
       "RtStockMovement",
       "RtTerminal",
     ]);
