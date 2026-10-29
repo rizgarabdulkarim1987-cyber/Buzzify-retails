@@ -7,7 +7,7 @@ import type { Actor } from "@/server/framework/actor";
 import { defineAction } from "@/server/framework/action";
 import { ForbiddenError, NotFoundError, RuleError } from "@/server/framework/errors";
 import { updateVersioned } from "@/server/framework/versioned";
-import { MAX_PRICE_MINOR, applyPrice, derivedUnitPrice, ensureDefaultLists } from "./price-core";
+import { applyPrice, assertCurrencyEnabled, derivedUnitPrice, ensureDefaultLists, money } from "./price-core";
 
 /*
  * Products (the model: names, descriptions, category, brand, tracking), their variants (the
@@ -62,7 +62,7 @@ export const SKU_PREFIX = "P";
 const SKU_DIGITS = 6;
 
 const TAXONOMY_LOCK = "catalog.taxonomy";
-const productLock = (productId: string) => `catalog.product:${productId}`;
+export const productLock = (productId: string) => `catalog.product:${productId}`;
 
 // ---------------------------------------------------------------------------------------------
 // Input schemas
@@ -90,10 +90,6 @@ const barcode = z.string().transform((v, ctx) => {
 });
 const barcodes = z.array(barcode).max(20).default([]);
 
-/** Money in minor units: a bigint or a string of digits (never a JS number). */
-const money = z
-  .union([z.bigint(), z.string().regex(/^\d{1,19}$/).transform((v) => BigInt(v))])
-  .refine((v) => v >= 0n && v <= MAX_PRICE_MINOR);
 const price = z.object({ currency: z.enum(Currency), amountMinor: money }).strict();
 
 const sku = z
@@ -213,12 +209,6 @@ function checkUnitNames(names: string[]): void {
 
 function needsPricePermission(actor: Actor, wantsPrice: boolean): void {
   if (wantsPrice && !can(actor.role, "price.change")) throw new ForbiddenError("price.change");
-}
-
-/** The currency must be one the business has enabled. */
-async function checkCurrency(tx: Tx, currency: Currency): Promise<void> {
-  const biz = await tx.rtBusiness.findFirst({ select: { enabledCurrencies: true } });
-  if (!biz || !biz.enabledCurrencies.includes(currency)) throw new RuleError("INVALID_INPUT");
 }
 
 /** An active category/brand of this business, or NOT_FOUND. Call under the taxonomy lock. */
@@ -447,7 +437,7 @@ export const createProduct = defineAction({
     needsPricePermission(actor, wantsPrice(input));
     checkTracking(input);
     checkVariantParts(input, input.soldByWeight);
-    if (input.price) await checkCurrency(tx, input.price.currency);
+    if (input.price) await assertCurrencyEnabled(tx, input.price.currency);
     if (input.categoryId || input.brandId) {
       await lockBusiness(TAXONOMY_LOCK);
       await checkTaxonomy(tx, input.categoryId, input.brandId);
@@ -573,10 +563,10 @@ export const getProduct = defineAction({
 // ---------------------------------------------------------------------------------------------
 // Product lock for child rows
 
-type LockFn = (name: string) => Promise<void>;
+export type LockFn = (name: string) => Promise<void>;
 
 /** A row is changeable only while it and every parent up to the product are active. */
-const activeUnit = { archivedAt: null, variant: { archivedAt: null, product: { archivedAt: null } } } as const;
+export const activeUnit = { archivedAt: null, variant: { archivedAt: null, product: { archivedAt: null } } } as const;
 
 /*
  * Child actions resolve their productId with a cheap read that decides nothing (a row never moves
@@ -589,7 +579,7 @@ async function lockProductOfVariant(tx: Tx, lock: LockFn, variantId: string): Pr
   await lock(productLock(row.productId));
 }
 
-async function lockProductOfUnit(tx: Tx, lock: LockFn, unitId: string): Promise<void> {
+export async function lockProductOfUnit(tx: Tx, lock: LockFn, unitId: string): Promise<void> {
   const row = await tx.rtUnit.findFirst({ where: { id: unitId }, select: { variant: { select: { productId: true } } } });
   if (!row) throw new NotFoundError();
   await lock(productLock(row.variant.productId));
@@ -634,7 +624,7 @@ export const addVariant = defineAction({
     });
     if (!product) throw new NotFoundError();
     checkVariantParts(input, product.soldByWeight);
-    if (input.price) await checkCurrency(tx, input.price.currency);
+    if (input.price) await assertCurrencyEnabled(tx, input.price.currency);
     const siblings = await tx.rtVariant.findMany({ where: { productId: product.id, archivedAt: null }, select: { options: true } });
     const wanted = optionsKey(input.options);
     if (siblings.some((v) => optionsKey(v.options) === wanted)) throw new RuleError("DUPLICATE_NAME");
@@ -728,7 +718,7 @@ export const addUnit = defineAction({
     if (!variant) throw new NotFoundError();
     const siblings = await tx.rtUnit.findMany({ where: { variantId: variant.id, archivedAt: null }, select: { name: true } });
     checkUnitNames([...siblings.map((u) => u.name), input.name]);
-    if (input.price) await checkCurrency(tx, input.price.currency);
+    if (input.price) await assertCurrencyEnabled(tx, input.price.currency);
     const prices = await newUnitPrices(tx, actor, variant.id, input.factor, input.price);
     await assertBarcodesFree(tx, input.barcodes);
 

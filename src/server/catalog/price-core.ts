@@ -1,4 +1,6 @@
+import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
+import type { RtPriceListKind } from "@/generated/prisma/enums";
 import { suggestUnitPrice } from "@/server/domain/catalog";
 import type { Currency } from "@/server/domain/money";
 import { RuleError, VersionConflictError } from "@/server/framework/errors";
@@ -8,11 +10,9 @@ import { RuleError, VersionConflictError } from "@/server/framework/errors";
  * inside their own defineAction transaction (scoped client) and do the permission check
  * (`price.change`) BEFORE calling.
  *
- * Kept minimal on purpose (Task 5 needs them to store the optional price of createProduct/addUnit).
- * Task 6 owns the full price rules: the setPrice action, getPriceAt/resolvePrice, scheduling a
- * future price and locking the current row. A price row is never edited in place: a change closes
- * the open period (validTo) and opens a new dated row. The database EXCLUDE constraint
- * (RtPrice_no_overlap) is the final arbiter against overlapping periods.
+ * prices.ts holds the actions and the scheduling rule built on them. A price row is never edited in
+ * place: a change closes the open period (validTo) and opens a new dated row. The database EXCLUDE
+ * constraint (RtPrice_no_overlap) is the final arbiter against overlapping periods.
  */
 
 type Tx = Prisma.TransactionClient;
@@ -28,6 +28,17 @@ export function derivedUnitPrice(baseMinor: bigint, factor: number): bigint {
   const amount = suggestUnitPrice(baseMinor, factor);
   if (amount > MAX_PRICE_MINOR) throw new RuleError("INVALID_INPUT");
   return amount;
+}
+
+/** Money in minor units: a bigint or a string of digits (never a JS number), 0 to MAX_PRICE_MINOR. */
+export const money = z
+  .union([z.bigint(), z.string().regex(/^\d{1,19}$/).transform((v) => BigInt(v))])
+  .refine((v) => v >= 0n && v <= MAX_PRICE_MINOR);
+
+/** The currency must be one the business has enabled (INVALID_INPUT otherwise). */
+export async function assertCurrencyEnabled(tx: Tx, currency: Currency): Promise<void> {
+  const biz = await tx.rtBusiness.findFirst({ select: { enabledCurrencies: true } });
+  if (!biz || !biz.enabledCurrencies.includes(currency)) throw new RuleError("INVALID_INPUT");
 }
 
 export type PriceListIds = { DEFAULT: string; WHOLESALE: string };
@@ -60,30 +71,108 @@ export type PriceInput = {
   priceListId: string;
   currency: Currency;
   amountMinor: bigint;
-  validFrom: Date;
+  /** null: now (the real clock, read after the latest row is found). */
+  validFrom: Date | null;
+  /**
+   * Stale-edit guard. undefined: none. Otherwise the id of the latest row of the key that the
+   * caller saw (null: it saw no price); anything else gives VERSION_CONFLICT.
+   */
+  expectedLatestId?: string | null;
 };
 
+export type AppliedPrice = {
+  id: string;
+  validFrom: Date;
+  replacedPriceId: string | null;
+  previousAmountMinor: bigint | null;
+};
+
+/** Where a validFrom may lie: not before 2000 and not more than ten years ahead. */
+export const MIN_VALID_FROM = new Date("2000-01-01T00:00:00Z");
+export const MAX_VALID_FROM_AHEAD_MS = 10 * 366 * 86_400_000;
+
 /**
- * Makes `amountMinor` the price of (unit, list, currency) from `validFrom` on: closes the open
- * period at validFrom and opens a new row [validFrom, ∞). Refuses (INVALID_INPUT) a validFrom that
- * is not after the open period's start (rewriting history is Task 6's question, not allowed here).
- * A concurrent change of the same open row gives VERSION_CONFLICT. Returns the new row's id.
+ * Makes `amountMinor` the price of (unit, list, currency) from `validFrom` on: closes the latest
+ * period of the key (the open one) at validFrom and opens a new row [validFrom, infinity).
+ * Rules (the caller holds the product lock, so the read below cannot go stale):
+ * - expectedLatestId set and different from the latest row: VERSION_CONFLICT.
+ * - validFrom must be strictly after the latest row's validFrom (INVALID_INPUT otherwise,
+ *   details.reason "BEFORE_LATEST"): history is never rewritten and a scheduled row is never
+ *   replaced; a later price chains behind it. validFrom null (now) that lands on the very
+ *   millisecond the latest row started moves one millisecond on, so two quick edits both work.
+ * - No row exists yet: any validFrom is fine (a first price may be back-dated or scheduled).
+ * Returns what was replaced, for the audit trail.
  */
-export async function applyPrice(tx: Tx, p: PriceInput): Promise<string> {
+export async function applyPrice(tx: Tx, p: PriceInput): Promise<AppliedPrice> {
   if (p.amountMinor < 0n || p.amountMinor > MAX_PRICE_MINOR) throw new RuleError("INVALID_INPUT");
   const key = { unitId: p.unitId, priceListId: p.priceListId, currency: p.currency };
-  const open = await tx.rtPrice.findFirst({ where: { ...key, validTo: null }, select: { id: true, validFrom: true } });
+  const open = await tx.rtPrice.findFirst({
+    where: { ...key, validTo: null },
+    select: { id: true, validFrom: true, amountMinor: true },
+  });
+  if (p.expectedLatestId !== undefined && (open?.id ?? null) !== p.expectedLatestId) throw new VersionConflictError();
+  let validFrom = p.validFrom ?? new Date();
   if (open) {
-    if (open.validFrom.getTime() >= p.validFrom.getTime()) throw new RuleError("INVALID_INPUT");
+    if (p.validFrom === null && open.validFrom.getTime() === validFrom.getTime()) validFrom = new Date(validFrom.getTime() + 1);
+    if (open.validFrom.getTime() >= validFrom.getTime()) throw new RuleError("INVALID_INPUT", { reason: "BEFORE_LATEST" });
     const { count } = await tx.rtPrice.updateMany({
       where: { id: open.id, validTo: null },
-      data: { validTo: p.validFrom, version: { increment: 1 } },
+      data: { validTo: validFrom, version: { increment: 1 } },
     });
     if (count === 0) throw new VersionConflictError();
   }
   const row = await tx.rtPrice.create({
-    data: { businessId: p.businessId, ...key, amountMinor: p.amountMinor, validFrom: p.validFrom, validTo: null },
+    data: { businessId: p.businessId, ...key, amountMinor: p.amountMinor, validFrom, validTo: null },
     select: { id: true },
   });
-  return row.id;
+  return { id: row.id, validFrom, replacedPriceId: open?.id ?? null, previousAmountMinor: open?.amountMinor ?? null };
+}
+
+export type ResolvedPrice = {
+  id: string;
+  amountMinor: bigint;
+  currency: Currency;
+  listKind: RtPriceListKind;
+  priceListId: string;
+  validFrom: Date;
+  validTo: Date | null;
+};
+
+const resolvedSelect = {
+  id: true,
+  amountMinor: true,
+  currency: true,
+  priceListId: true,
+  validFrom: true,
+  validTo: true,
+  priceList: { select: { kind: true } },
+} as const;
+
+/**
+ * The price of a unit in a currency at an instant. wholesale=true tries the WHOLESALE list and
+ * falls back to DEFAULT when the unit has no wholesale price in that currency at that instant;
+ * wholesale=false uses DEFAULT only. null: no price. `at` is the sale instant the caller decides.
+ */
+export async function resolvePrice(
+  tx: Tx,
+  q: { unitId: string; currency: Currency; at: Date; wholesale: boolean },
+): Promise<ResolvedPrice | null> {
+  const kinds: RtPriceListKind[] = q.wholesale ? ["WHOLESALE", "DEFAULT"] : ["DEFAULT"];
+  for (const kind of kinds) {
+    const row = await tx.rtPrice.findFirst({
+      where: {
+        unitId: q.unitId,
+        currency: q.currency,
+        priceList: { kind },
+        validFrom: { lte: q.at },
+        OR: [{ validTo: null }, { validTo: { gt: q.at } }],
+      },
+      select: resolvedSelect,
+    });
+    if (row) {
+      const { priceList, ...rest } = row;
+      return { ...rest, listKind: priceList.kind };
+    }
+  }
+  return null;
 }
