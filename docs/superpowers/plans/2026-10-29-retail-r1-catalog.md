@@ -39,7 +39,7 @@
 
 ---
 
-### المهمة 1: المنطق النقي والصلاحيات
+### Task 1: المنطق النقي والصلاحيات
 
 **الملفات:** إنشاء `src/server/domain/catalog.ts`؛ تعديل `src/server/domain/permissions.ts`؛ اختبارات `tests/domain/catalog.test.ts` و`tests/domain/permissions.test.ts` (يُحدَّث الجدول المثبَّت).
 
@@ -53,7 +53,7 @@
 - [ ] **4. شغّل** الاختبارات ← تنجح.
 - [ ] **5. Commit** `feat: catalog domain rules and permissions`
 
-### المهمة 2: المخطط والترحيل والتصنيف
+### Task 2: المخطط والترحيل والتصنيف
 
 **الملفات:** تعديل `prisma/schema.prisma` + ترحيل جديد؛ تعديل `src/server/framework/scoped-db.ts`؛ اختبار `tests/schema/catalog.test.ts`.
 
@@ -65,7 +65,7 @@
 - [ ] **4. شغّل** الاختبارات ← تنجح. تحقق أن الامتدادات تُنشأ في الترحيل (`CREATE EXTENSION IF NOT EXISTS`) وتعمل محلياً وفي CI.
 - [ ] **5. Commit** `feat: catalog schema and constraints`
 
-### المهمة 3: نطاق الدعم `catalog.read` يقتصر على جداول الكتالوج
+### Task 3: نطاق الدعم `catalog.read` يقتصر على جداول الكتالوج
 
 **الملفات:** تعديل `src/server/framework/scoped-db.ts` و`src/server/admin/support.ts`؛ اختبار `tests/admin/support.test.ts` (إضافات).
 
@@ -74,7 +74,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة:** `'a CATALOG_READ grant reads products but not staff, setup progress, support grants or capabilities'`؛ `'a grant without CATALOG_READ cannot read the catalog'`.
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ** خريطة ثابتة `SCOPE_MODELS: Record<SupportScope, readonly ModelName[]>` تُمرَّر إلى غلاف القراءة، مع بقاء الباقي مرفوضاً. **4. شغّل** ← تنجح. **5. Commit** `feat: support scopes limit readable models`
 
-### المهمة 4: الأقسام والعلامات
+### Task 4: الأقسام والعلامات
 
 **الملفات:** إنشاء `src/server/catalog/taxonomy.ts`؛ اختبار `tests/catalog/taxonomy.test.ts`.
 
@@ -83,7 +83,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة:** `'a stock officer creates and renames categories, a cashier cannot'`؛ `'a category cannot become its own ancestor'`؛ `'archiving a category with active children is refused'`؛ `'a stale version gives VERSION_CONFLICT'`؛ `'another business never sees or edits these rows'`؛ `'every write is refused in READ_ONLY'`؛ `'the same idempotency key does not create twice'`.
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ** (شجرة بعمق أقصى 4). **4. شغّل** ← تنجح. **5. Commit** `feat: categories and brands`
 
-### المهمة 5: الأصناف والنسخ والوحدات والباركود
+### Task 5: الأصناف والنسخ والوحدات والباركود
 
 **الملفات:** إنشاء `src/server/catalog/products.ts`؛ اختبار `tests/catalog/products.test.ts`؛ ErrorCodes جديدة في `errors.ts` ورسائلها في الرسائل الثلاث (`BARCODE_TAKEN`, `UNIT_RULE`, `TRACKING_RULE`).
 
@@ -92,7 +92,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة:** `'a carton of 24 and a piece are two units of one variant with their own barcodes'`؛ `'a shirt in two sizes and two colours makes four variants with unique SKUs'`؛ `'an existing barcode in createProduct is refused with BARCODE_TAKEN naming the product that owns it'`؛ `'a barcode on an archived product still blocks reuse'`؛ `'SKU is generated per business when empty and never reused'`؛ `'tracksExpiry without BATCH is refused'`؛ `'SERIAL and BATCH are never combined and soldByWeight needs a fractional unit'`؛ `'a stock officer creates a product without a price and is refused when giving a price'`؛ `'a cashier cannot create or edit'`؛ `'two concurrent createProduct calls with the same barcode create exactly one'`؛ `'double submit with the same key creates one product'`؛ `'archive keeps the product readable and frees nothing'`.
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ** (توليد SKU بزيادة ذرية على `RtCatalogCounter`؛ التحقق من الباركود قبل الإدراج وقيد القاعدة هو الحَكَم، ويُحوَّل خرقه إلى `BARCODE_TAKEN`). **4. شغّل** ← تنجح. **5. Commit** `feat: products, variants, units and barcodes`
 
-### المهمة 6: الأسعار المؤرَّخة
+### Task 6: الأسعار المؤرَّخة
 
 **الملفات:** إنشاء `src/server/catalog/prices.ts`؛ اختبار `tests/catalog/prices.test.ts`.
 
@@ -101,7 +101,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة:** `'changing a price closes the old row and the old date still returns the old price'`؛ `'a future validFrom schedules a price and the current one stays until then'`؛ `'a price can not start before the current one started'`؛ `'carton suggestion is factor times the base price per currency and is not applied automatically'`؛ `'raising the base price does not change the carton price'`؛ `'dinar and dollar prices coexist for one unit'`؛ `'a unit with no wholesale price falls back to the default list'`؛ `'a manager changes prices, a stock officer cannot'`؛ `'a stale price edit gives VERSION_CONFLICT'`.
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ** داخل معاملة واحدة مع قفل الصف الحالي. **4. شغّل** ← تنجح. **5. Commit** `feat: dated prices and price lists`
 
-### المهمة 7: البحث
+### Task 7: البحث
 
 **الملفات:** إنشاء `src/server/catalog/search.ts`؛ اختبار `tests/catalog/search.test.ts`.
 
@@ -110,7 +110,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة:** `'a barcode scan returns the unit that owns it first'`؛ `'Arabic spelling variants and Arabic digits find the same product'`؛ `'a partial name finds products in any language'`؛ `'archived products are hidden unless asked'`؛ `'results are paged and the cursor walks all 1500 seeded products without gaps or repeats'`؛ `'another business never appears'`؛ `'a leading-zero barcode matches only with its zeros'`؛ `'1500 products search in under 200 ms'` (حد مريح، لا اختبار توقيت هشّ: يقيس الخطة بـEXPLAIN أو يستعمل هامشاً واسعاً).
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ.** **4. شغّل** ← تنجح. **5. Commit** `feat: fast Arabic-aware catalog search`
 
-### المهمة 8: محرك الاستيراد (قراءة وتحقق)
+### Task 8: محرك الاستيراد (قراءة وتحقق)
 
 **الملفات:** إنشاء `src/server/catalog/import/{parse.ts,validate.ts,mapping.ts}`؛ تعديل `prisma/schema.prisma` + ترحيل (`RtImportBatch {status STAGED|VALIDATED|COMMITTED|FAILED, fileName, fileHash, columns Json, mapping Json?, stats Json}`, `RtImportRow {batchId, rowNumber, raw Json, status OK|REJECTED|SKIPPED|CHANGED|COMMITTED, reason?, matchedVariantId?, diff Json?}`)؛ اختبارات `tests/catalog/import/{parse,validate}.test.ts`.
 
@@ -119,7 +119,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة:** `'a UTF-8 CSV with BOM keeps Arabic names'`؛ `'a Windows-1256 CSV is detected and decoded'`؛ `'an xlsx numeric barcode cell that lost its zeros or became scientific notation is rejected with a clear reason'`؛ `'a text barcode cell keeps its leading zeros'`؛ `'formulas are never evaluated'`؛ `'a zip bomb or an over 5 MB file is refused'`؛ `'more than 10000 rows is refused'`؛ `'prices in Arabic digits and separators parse; negative, fractional dinar and unknown currency are rejected'`؛ `'a barcode repeated inside the file rejects the later rows'`؛ `'a row whose barcode belongs to an archived product is rejected'`؛ `'a row matching an existing barcode is CHANGED with a diff, or SKIPPED when identical'`؛ `'a missing name rejects the row and others stay OK'`.
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ.** **4. شغّل** ← تنجح. **5. Commit** `feat: import parsing and validation engine`
 
-### المهمة 9: إجراءات الاستيراد
+### Task 9: إجراءات الاستيراد
 
 **الملفات:** إنشاء `src/server/catalog/import/actions.ts`؛ اختبار `tests/catalog/import/actions.test.ts`؛ تعديل `next.config.ts` (`serverActions.bodySizeLimit` يتسع للملف الأقصى).
 
@@ -128,7 +128,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة:** `'importing 1200 rows with mixed errors saves only the valid ones and keeps the rest with reasons'`؛ `'uploading the same file again changes nothing'`؛ `'two commits of one batch create nothing the second time'`؛ `'CHANGED rows are only applied when the user chose UPDATE'`؛ `'an update that changes the price closes the old price, and needs price.change'`؛ `'a manager imports, a stock officer and a cashier cannot'`؛ `'READ_ONLY refuses every import step'`؛ `'the rejected-rows file neutralises formula-looking cells'`؛ `'another business cannot read or commit this batch'`؛ `'a batch whose rows were committed cannot be deleted'`.
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ** (الالتزام على شرائح داخل معاملات مع حالة صفوف تُسجَّل لكل شريحة؛ إعادة المحاولة بعد انقطاع تكمل ما لم يُلتزم). **4. شغّل** ← تنجح. **5. Commit** `feat: staged, previewed catalog import`
 
-### المهمة 10: واجهة الكتالوج والإدخال السريع
+### Task 10: واجهة الكتالوج والإدخال السريع
 
 **الملفات:** إنشاء `src/app/retail/catalog/{page.tsx,loading.tsx,new/page.tsx,[productId]/page.tsx}` ومكوناتها؛ تعديل ملفات الرسائل الثلاثة؛ رابط في `/retail/home`؛ اختبار `tests/e2e/catalog.spec.ts`.
 
@@ -137,7 +137,7 @@
 - [ ] **1. اكتب الاختبارات الفاشلة (e2e):** `'a keyboard-only user adds three products in a row by scanning barcodes'`؛ `'scanning an existing barcode opens that product instead of creating a duplicate'`؛ `'a cashier sees the catalog but no edit controls'`؛ `'a 120-character Arabic product name does not break the list at 375px'`؛ `'the list shows prices with the interface digits'`.
 - [ ] **2. شغّل** ← تفشل. **3. نفّذ** بالرموز (`tokens.css`) وأنماط الغلاف الموجودة؛ لا مهارات تصميم جديدة، التزم بما هو قائم. **4. شغّل** `npm test && npx playwright test tests/e2e/catalog.spec.ts` ← تنجح. **5. Commit** `feat: catalog screens and quick entry`
 
-### المهمة 11: واجهة الاستيراد، خطوة الإعداد 4، واختبار قبول R1
+### Task 11: واجهة الاستيراد، خطوة الإعداد 4، واختبار قبول R1
 
 **الملفات:** إنشاء `src/app/retail/catalog/import/{page.tsx,[batchId]/page.tsx}`؛ تعديل `src/server/setup/progress.ts` (الخطوة 4 متاحة)؛ تعديل صفحة الإعداد؛ اختبارات `tests/setup/progress.test.ts` (تحديث)، `tests/e2e/import.spec.ts`، `tests/acceptance/r1.test.ts`.
 
