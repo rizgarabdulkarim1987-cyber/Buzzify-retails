@@ -142,6 +142,8 @@ export type ScopeErrorCode =
   | "UNKNOWN_FIELD"
   | "BRANCH_RELATION"
   | "UNSCOPED_RELATION"
+  // Raised when a read touches a model outside the set a support grant's scopes allow.
+  | "MODEL_NOT_IN_SCOPE"
   // Raised by the read-only wrapper a support actor gets (src/server/admin/support.ts).
   | "READ_ONLY_ACTOR";
 
@@ -362,6 +364,77 @@ function walkArgs(scope: Scope, model: string, args: Args): void {
   walkSelection(scope, model, args.include);
   walkWhere(scope, model, args.where);
   walkOrderBy(scope, model, args.orderBy);
+}
+
+/**
+ * Every model a read reaches: `model` itself plus each model named through select, include,
+ * _count, where (including AND/OR/NOT and relation filters) and orderBy, however deeply nested.
+ * Used by the support read-only wrapper to refuse models outside a grant's scopes. Fails closed:
+ * an unknown model throws ScopeError('UNSCOPED_MODEL').
+ */
+export function modelsReached(model: string, args: unknown): Set<string> {
+  const seen = new Set<string>([model]);
+  const visitWhere = (m: string, where: unknown): void => {
+    if (Array.isArray(where)) return where.forEach((w) => visitWhere(m, w));
+    if (!isObject(where)) return;
+    const { relations } = fieldsOf(m);
+    for (const [key, value] of Object.entries(where)) {
+      if (LOGICAL.has(key)) {
+        visitWhere(m, value);
+        continue;
+      }
+      const target = own(relations, key);
+      if (target === undefined) continue;
+      seen.add(target);
+      if (!isObject(value)) continue;
+      const direct: Args = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (RELATION_FILTERS.has(k)) visitWhere(target, v);
+        else direct[k] = v;
+      }
+      visitWhere(target, direct);
+    }
+  };
+  const visitOrderBy = (m: string, orderBy: unknown): void => {
+    if (Array.isArray(orderBy)) return orderBy.forEach((o) => visitOrderBy(m, o));
+    if (!isObject(orderBy)) return;
+    const { relations } = fieldsOf(m);
+    for (const [key, value] of Object.entries(orderBy)) {
+      const target = own(relations, key);
+      if (target === undefined) continue;
+      seen.add(target);
+      visitOrderBy(target, value);
+    }
+  };
+  const visitSelection = (m: string, selection: unknown): void => {
+    if (!isObject(selection)) return;
+    const { relations } = fieldsOf(m);
+    for (const [key, value] of Object.entries(selection)) {
+      if (!value) continue;
+      if (key === "_count") {
+        const counted = isObject(value) && isObject(value.select) ? value.select : value === true ? relations : {};
+        for (const [rel, sub] of Object.entries(counted)) {
+          const target = own(relations, rel);
+          if (!sub || target === undefined) continue;
+          seen.add(target);
+          if (isObject(sub)) visitWhere(target, sub.where);
+        }
+        continue;
+      }
+      const target = own(relations, key);
+      if (target === undefined) continue;
+      seen.add(target);
+      if (isObject(value)) visitArgs(target, value);
+    }
+  };
+  const visitArgs = (m: string, a: Args): void => {
+    visitSelection(m, a.select);
+    visitSelection(m, a.include);
+    visitWhere(m, a.where);
+    visitOrderBy(m, a.orderBy);
+  };
+  if (isObject(args)) visitArgs(model, args);
+  return seen;
 }
 
 function checkDataKeys(model: string, data: Args): void {

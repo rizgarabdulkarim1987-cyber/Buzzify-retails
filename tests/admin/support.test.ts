@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { can } from "@/server/domain/permissions";
 import {
   grantSupport,
+  readableModels,
   resolveSupportActor,
   revokeSupport,
   runSupportRead,
+  SCOPE_MODELS,
   SupportAccessError,
   type SupportScope,
 } from "@/server/admin/support";
-import { ScopeError } from "@/server/framework/scoped-db";
+import { BUSINESS_SCOPED_MODELS, ScopeError, UNSCOPED_MODELS } from "@/server/framework/scoped-db";
 import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createPlan, createPlatformAdmin, createUser } from "../helpers/fixtures";
 
@@ -266,9 +268,10 @@ describe("resolveSupportActor", () => {
 
   it("a revoked or expired grant reads nothing", async () => {
     const { a, admin, grantFor } = await world();
-    const grantId = await grantFor(["STOCK_READ"], 2);
+    const grantId = await grantFor(["CATALOG_READ"], 2);
+    await db.rtCategory.create({ data: { businessId: a.business.id, nameAr: "x" } });
     const { expiresAt } = await db.rtSupportGrant.findUniqueOrThrow({ where: { id: grantId } });
-    const read = () => runSupportRead(grantId, admin.id, "STOCK_READ", async ({ db: tx }) => tx.rtBranch.count());
+    const read = () => runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => tx.rtCategory.count());
     // Only Date is faked (timers stay real so the database driver keeps working).
     const at = (ms: number) => vi.useFakeTimers({ toFake: ["Date"], now: ms });
 
@@ -334,20 +337,21 @@ describe("resolveSupportActor", () => {
 describe("runSupportRead", () => {
   it("every support read writes an audit row first, and fails if the audit cannot be written", async () => {
     const { a, admin, grantFor } = await world();
-    const grantId = await grantFor(["STOCK_READ"]);
+    const grantId = await grantFor(["CATALOG_READ"]);
+    await db.rtCategory.create({ data: { businessId: a.business.id, nameAr: "Main" } });
 
     // Success: one audit row naming the grant and scope, holding no read payload.
-    const value = await runSupportRead(grantId, admin.id, "STOCK_READ", async ({ db: tx, actor }) => ({
-      branches: await tx.rtBranch.findMany({ select: { name: true } }),
+    const value = await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx, actor }) => ({
+      branches: await tx.rtCategory.findMany({ select: { nameAr: true } }),
       actor: actor.viaSupportGrantId,
     }));
-    expect(value.branches).toEqual([{ name: "Main" }]);
+    expect(value.branches).toEqual([{ nameAr: "Main" }]);
     const rows = await db.rtAuditLog.findMany({ where: { action: "support.read" } });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ businessId: a.business.id, actorId: admin.id, entityId: grantId });
     expect(rows[0]!.changes).toEqual({
       grantId,
-      scope: "stock.read",
+      scope: "catalog.read",
       actorId: admin.id,
       viaSupportGrantId: grantId,
     });
@@ -360,7 +364,7 @@ describe("runSupportRead", () => {
     try {
       let ran = false;
       await expect(
-        runSupportRead(grantId, admin.id, "STOCK_READ", async () => {
+        runSupportRead(grantId, admin.id, "CATALOG_READ", async () => {
           ran = true;
           return "secret";
         }),
@@ -438,17 +442,18 @@ describe("runSupportRead", () => {
   it("a grant for business A cannot read business B", async () => {
     const { a, admin, grantFor } = await world();
     const b = await business("B");
-    await db.rtBranch.create({ data: { businessId: b.business.id, name: "Secret B" } });
-    const grantId = await grantFor(["STOCK_READ"]);
-    const names = await runSupportRead(grantId, admin.id, "STOCK_READ", async ({ db: tx }) => {
-      const mine = await tx.rtBranch.findMany({ select: { name: true, businessId: true } });
+    await db.rtCategory.create({ data: { businessId: a.business.id, nameAr: "Mine" } });
+    await db.rtCategory.create({ data: { businessId: b.business.id, nameAr: "Secret B" } });
+    const grantId = await grantFor(["CATALOG_READ"]);
+    const names = await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => {
+      const mine = await tx.rtCategory.findMany({ select: { nameAr: true, businessId: true } });
       // Even an explicit attempt to widen the filter stays inside business A.
-      const widened = await tx.rtBranch.findMany({ where: { OR: [{ businessId: b.business.id }, {}] } });
-      const other = await tx.rtBranch.findFirst({ where: { businessId: b.business.id } });
+      const widened = await tx.rtCategory.findMany({ where: { OR: [{ businessId: b.business.id }, {}] } });
+      const other = await tx.rtCategory.findFirst({ where: { businessId: b.business.id } });
       // Relations reached through include / relation filters stay inside business A as well.
-      const withBusiness = await tx.rtBranch.findMany({ include: { business: { select: { id: true, name: true } } } });
-      const viaRelation = await tx.rtBranch.findMany({ where: { business: { id: b.business.id } } });
-      expect(withBusiness.every((r) => r.business.id === a.business.id)).toBe(true);
+      const withChildren = await tx.rtCategory.findMany({ include: { children: true, products: true } });
+      const viaRelation = await tx.rtCategory.findMany({ where: { parent: { businessId: b.business.id } } });
+      expect(withChildren.every((r) => r.businessId === a.business.id)).toBe(true);
       expect(viaRelation).toEqual([]);
       return { mine, widened, other };
     });
@@ -509,5 +514,91 @@ describe("runSupportRead", () => {
     }
     const rows = await db.rtAuditLog.findMany({ where: { action: "support.read" } });
     expect(rows.map((r) => (r.changes as { scope: string }).scope).sort()).toEqual(["catalog.read", "sales.read", "stock.read"]);
+  });
+});
+
+describe("support scopes limit readable models", () => {
+  const delegate = (m: string) => m.charAt(0).toLowerCase() + m.slice(1);
+  type Reader = Record<string, { findMany: (a?: unknown) => Promise<unknown> }>;
+  const attempt = (tx: unknown, model: string, args?: unknown) =>
+    (tx as Reader)[delegate(model)]!.findMany(args).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+  it("a CATALOG_READ grant reads products but not staff, setup progress, support grants or capabilities", async () => {
+    const { a, admin, grantFor } = await world();
+    await db.rtProduct.create({ data: { businessId: a.business.id, nameAr: "شاي" } });
+    const grantId = await grantFor(["CATALOG_READ"]);
+    await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => {
+      expect(await tx.rtProduct.findMany()).toHaveLength(1);
+      expect(await tx.rtProduct.count()).toBe(1);
+      for (const model of ["RtStaff", "RtSetupProgress", "RtSupportGrant", "RtCapability", "RtBusiness", "RtBranch", "RtCatalogCounter"]) {
+        const err = await attempt(tx, model);
+        expect(err, model).toBeInstanceOf(ScopeError);
+        expect((err as ScopeError).code, model).toBe("MODEL_NOT_IN_SCOPE");
+      }
+      expect(await attempt(tx, "RtStaff", {})).toBeInstanceOf(ScopeError);
+    });
+  });
+
+  it("a grant without CATALOG_READ cannot read the catalog", async () => {
+    const { a, admin, grantFor } = await world();
+    await db.rtProduct.create({ data: { businessId: a.business.id, nameAr: "شاي" } });
+    const grantId = await grantFor(["STOCK_READ", "SALES_READ"]);
+    await runSupportRead(grantId, admin.id, "STOCK_READ", async ({ db: tx }) => {
+      for (const model of SCOPE_MODELS.CATALOG_READ) {
+        const err = await attempt(tx, model);
+        expect(err, model).toBeInstanceOf(ScopeError);
+      }
+      await expect(tx.rtProduct.count()).rejects.toBeInstanceOf(ScopeError);
+    });
+  });
+
+  it("nested include, select, _count and relation filters cannot reach a model outside the scope", async () => {
+    const { a, admin, grantFor } = await world();
+    await db.rtProduct.create({ data: { businessId: a.business.id, nameAr: "شاي" } });
+    const grantId = await grantFor(["CATALOG_READ"]);
+    await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => {
+      const p = tx.rtProduct as unknown as { findMany: (a: unknown) => Promise<unknown> };
+      const attempts: Record<string, unknown> = {
+        "include business": { include: { business: true } },
+        "select business": { select: { business: { select: { id: true } } } },
+        "include variant.business": { include: { variants: { include: { business: true } } } },
+        "select deep": { select: { variants: { select: { product: { select: { business: { select: { id: true } } } } } } } },
+        "_count business": { select: { _count: { select: { business: true } } } },
+        "where relation filter": { where: { business: { is: { name: "A" } } } },
+        "where in OR": { where: { OR: [{ NOT: { business: { name: "A" } } }] } },
+        "where some": { where: { variants: { some: { business: { name: "A" } } } } },
+        "orderBy relation": { orderBy: { business: { name: "asc" } } },
+      };
+      for (const [name, args] of Object.entries(attempts)) {
+        const err = await p.findMany(args).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err, name).toBeInstanceOf(ScopeError);
+      }
+      // A relation that stays inside the catalog is fine.
+      await expect(p.findMany({ include: { variants: true, category: true, brand: true } })).resolves.toHaveLength(1);
+    });
+  });
+
+  it("denies by default: the readable set is exactly the union of the map, every other model is refused", async () => {
+    const { admin, grantFor } = await world();
+    const all = ["CATALOG_READ", "STOCK_READ", "SALES_READ"] as const;
+    const grantId = await grantFor([...all]);
+    const union = new Set(all.flatMap((s) => SCOPE_MODELS[s]));
+    expect(new Set(readableModels(all))).toEqual(union);
+    expect(readableModels([])).toEqual([]);
+    // Every mapped model is a real business-scoped model, so a typo cannot silently widen anything.
+    for (const m of union) expect(BUSINESS_SCOPED_MODELS).toContain(m);
+    await runSupportRead(grantId, admin.id, "CATALOG_READ", async ({ db: tx }) => {
+      for (const model of [...BUSINESS_SCOPED_MODELS, ...UNSCOPED_MODELS, "RtAuditLog"]) {
+        const err = await attempt(tx, model);
+        if (union.has(model as never)) expect(err, model).toBeNull();
+        else expect(err, model).toBeInstanceOf(ScopeError);
+      }
+    });
   });
 });
