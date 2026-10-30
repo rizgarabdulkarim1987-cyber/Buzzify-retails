@@ -1,5 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Every real role holding catalog.import also holds multiBranch.access, so a branch-limited importer
+// (the onHand guard) is reached by withholding that one permission while `flags.limitBranches` is set.
+const flags = vi.hoisted(() => ({ limitBranches: false }));
+vi.mock("@/server/domain/permissions", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/server/domain/permissions")>();
+  return {
+    ...real,
+    can: (role: Parameters<typeof real.can>[0], p: Parameters<typeof real.can>[1]) => (flags.limitBranches && p === "multiBranch.access" ? false : real.can(role, p)),
+  };
+});
+
 import type { RtTrackingMode } from "@/generated/prisma/client";
 import { businessToday } from "@/server/domain/stock";
 import { reverseStockDocument } from "@/server/stock/adjust";
@@ -27,16 +39,17 @@ let seq = 0;
 
 type ItemOpts = { trackingMode?: RtTrackingMode; tracksExpiry?: boolean; isTestData?: boolean; archived?: boolean };
 
-/** An active business with branch Main (one location) and staff: owner, manager, stock officer, cashier. */
+/** An active business with branches Main and Second (one location each) and staff: owner, manager, stock officer, cashier (Main), "far" manager (Second only). */
 async function shop(label = "A") {
   if ((await db.rtPlan.count()) === 0) await createPlan(db, { maxBranches: 3 });
   const w = await createBusinessWithStaff(db, {
-    branches: ["Main"],
+    branches: ["Main", "Second"],
     staff: [
       { key: "owner", role: "OWNER" },
       { key: "manager", role: "MANAGER", branches: ["Main"] },
       { key: "stock", role: "STOCK", branches: ["Main"] },
       { key: "cashier", role: "CASHIER", branches: ["Main"] },
+      { key: "far", role: "MANAGER", branches: ["Second"] },
     ],
   });
   const businessId = w.business.id;
@@ -48,6 +61,9 @@ async function shop(label = "A") {
     data: { businessId, planCode: "basic", status: "ACTIVE", currentPeriodStart: new Date(Date.now() - DAY), currentPeriodEnd: new Date(Date.now() + 30 * DAY) },
   });
   const location = await db.rtLocation.create({ data: { businessId, branchId: w.branches.Main!.id, name: "المخزن الرئيسي" } });
+  await db.rtLocation.create({ data: { businessId, branchId: w.branches.Second!.id, name: "مخزن الفرع" } });
+  // Main stays the oldest branch (the owner's default place).
+  await db.rtBranch.update({ where: { id: w.branches.Second!.id }, data: { createdAt: new Date(Date.now() + 60_000) } });
   const as = (who: string, k = key()) => ({ userId: w.staff[who]!.user.id, businessId, idempotencyKey: k });
 
   /** One product, one variant, a base piece (with `code`) and a carton of 24 (with `code`-C when given). */
@@ -500,5 +516,100 @@ describe("opening stock import", () => {
     expect(idem).not.toContain("123457");
     expect(idem).not.toContain("246914");
     expect(idem).not.toContain("765432");
+  });
+
+  it("the cost column stays hidden without cost.view, before validation and after any re-mapping", async () => {
+    const s = await shop();
+    await s.item("9101");
+    const text = csv([row({ barcode: "9101", quantity: "2", cost: "4321" }), row({ barcode: "9101", quantity: "x", cost: "8765" })]);
+    // Staged by the owner, not validated yet: the manager already sees no cost.
+    const staged = await stage(s, text);
+    const before = value(await getOpeningImport({ batchId: staged.batchId }, s.as("manager")));
+    expect(before.rows.map((r) => r.raw[4])).toEqual(["", ""]);
+    // The manager cannot un-map or move the cost column, nor read it through another field.
+    for (const mapping of [{ ...staged.suggestedMapping, cost: null }, { ...staged.suggestedMapping, cost: null, batch: 4 }]) {
+      expect(await validateOpeningImport({ batchId: staged.batchId, mapping }, s.as("manager"))).toMatchObject({
+        ok: false,
+        code: "STOCK_RULE",
+        details: { reason: "COST_COLUMN_LOCKED" },
+      });
+    }
+    // The owner may un-map it; it stays hidden from the manager in every view.
+    const v = value(await validateOpeningImport({ batchId: staged.batchId, mapping: { ...staged.suggestedMapping, cost: null } }, s.as("owner")));
+    expect(v.firstRejected[0]!.raw[4]).toBe("8765");
+    const after = value(await getOpeningImport({ batchId: staged.batchId }, s.as("manager")));
+    expect(after.rows.map((r) => r.raw[4])).toEqual(["", ""]);
+    expect(value(await downloadOpeningRejected({ batchId: staged.batchId }, s.as("manager")))).not.toContain("8765");
+
+    // A cost column the headers do not name: hidden once it was mapped as cost, also after the
+    // owner un-maps it and the manager re-validates with cost: null.
+    const odd = await stage(s, csv([["9101", "2", "5555"], ["9101", "y", "6666"]], ["الباركود", "الكمية", "مبلغ"]));
+    expect(odd.suggestedMapping.cost).toBeNull();
+    value(await validateOpeningImport({ batchId: odd.batchId, mapping: { ...odd.suggestedMapping, cost: 2 } }, s.as("owner")));
+    value(await validateOpeningImport({ batchId: odd.batchId, mapping: odd.suggestedMapping }, s.as("owner")));
+    const m = value(await validateOpeningImport({ batchId: odd.batchId, mapping: odd.suggestedMapping }, s.as("manager")));
+    expect(m.firstRejected).toEqual([{ rowNumber: 2, reason: "BAD_QUANTITY", raw: ["9101", "y", ""] }]);
+    const page = value(await getOpeningImport({ batchId: odd.batchId }, s.as("manager")));
+    expect(page.rows.map((r) => r.raw[2])).toEqual(["", ""]);
+    const file = value(await downloadOpeningRejected({ batchId: odd.batchId }, s.as("manager")));
+    expect(file).not.toContain("6666");
+    expect(value(await downloadOpeningRejected({ batchId: odd.batchId }, s.as("owner")))).toContain("6666");
+  });
+
+  it("stock that arrives after validation is not doubled by a later commit", async () => {
+    const s = await shop();
+    const x = await s.item("9201");
+    const y = await s.item("9202");
+    const z = await s.item("9203");
+    const a = await stageAndValidate(s, csv([row({ barcode: "9201", quantity: "5" }), row({ barcode: "9202", quantity: "1" })]));
+    const b = await stageAndValidate(s, csv([row({ barcode: "9201", quantity: "3" }), row({ barcode: "9203", quantity: "2" })]));
+    const c = await stageAndValidate(s, csv([row({ barcode: "9202", quantity: "4" })]));
+    for (const v of [a, b, c]) expect(v.summary.hasStock).toBe(0);
+    value(await commitOpeningImport({ batchId: a.batchId }, s.as("owner")));
+    // B overlaps A on x: by default that row is skipped, the rest posts.
+    const rb = value(await commitOpeningImport({ batchId: b.batchId }, s.as("owner")));
+    expect(rb.stats).toMatchObject({ posted: 1, skipped: 1, skippedHasStock: 1 });
+    expect((await rowsOf(b.batchId)).map((r) => [r.status, r.reason])).toEqual([
+      ["SKIPPED", "SKIPPED_HAS_STOCK"],
+      ["COMMITTED", "POSTED"],
+    ]);
+    expect(await s.onHand(x.variantId)).toBe(5n * U);
+    expect(await s.onHand(z.variantId)).toBe(2n * U);
+    // With includeHasStock: true the overlapping row posts (an OPENING adds).
+    const rc = value(await commitOpeningImport({ batchId: c.batchId, includeHasStock: true }, s.as("owner")));
+    expect(rc.stats).toMatchObject({ posted: 1, skippedHasStock: 0 });
+    expect(await s.onHand(y.variantId)).toBe(5n * U);
+  });
+
+  it("an earlier import of the same file that posted nothing does not block it", async () => {
+    const s = await shop();
+    const text = csv([row({ barcode: "9399", quantity: "1" })]);
+    const first = await stageAndValidate(s, text);
+    expect(value(await commitOpeningImport({ batchId: first.batchId }, s.as("owner"))).stats).toMatchObject({ posted: 0, rejected: 1 });
+    await s.item("9399");
+    const again = await stageAndValidate(s, text);
+    expect(value(await commitOpeningImport({ batchId: again.batchId }, s.as("owner"))).stats).toMatchObject({ posted: 1 });
+    // Now it posted: a third upload is refused.
+    expect(await stageOpeningImport({ fileName: "x.csv", contentBase64: b64(text) }, s.as("owner"))).toMatchObject({
+      ok: false,
+      code: "IMPORT_SAME_FILE",
+      details: { batchId: again.batchId },
+    });
+  });
+
+  it("on-hand quantities are hidden from a caller who cannot reach the batch's location", async () => {
+    const s = await shop();
+    const a = await s.item("9401");
+    await postOpening(s, [{ variantId: a.variantId, unitId: a.piece, quantity: "7" }]);
+    const v = await stageAndValidate(s, csv([row({ barcode: "9401", quantity: "1" })]));
+    expect(v.hasStock).toEqual([{ rowNumber: 1, variantId: a.variantId, onHand: 7n * U }]);
+    flags.limitBranches = true;
+    try {
+      expect(value(await getOpeningImport({ batchId: v.batchId }, s.as("manager"))).rows[0]!.onHand).toBe(7n * U);
+      const far = value(await getOpeningImport({ batchId: v.batchId }, s.as("far")));
+      expect(far.rows[0]).toMatchObject({ reason: "HAS_STOCK", onHand: null });
+    } finally {
+      flags.limitBranches = false;
+    }
   });
 });

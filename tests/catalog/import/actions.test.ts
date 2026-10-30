@@ -610,6 +610,25 @@ describe("catalog import actions", () => {
     expect(await db.rtImportRow.count({ where: { batchId: old.batchId } })).toBe(0);
   });
 
+  it("the purge leaves a stale batch that has stock documents and removes one that has none", async () => {
+    const { a } = await world();
+    const businessId = a.business.id;
+    const longAgo = new Date(Date.now() - 8 * DAY);
+    const opening = (fileHash: string) =>
+      db.rtImportBatch.create({
+        data: { businessId, kind: "OPENING_STOCK", status: "VALIDATED", fileName: "s.csv", fileHash, columns: [], stats: {}, createdById: a.staff.owner!.user.id, createdAt: longAgo },
+      });
+    const withDoc = await opening("h1");
+    const without = await opening("h2");
+    const location = await db.rtLocation.create({ data: { businessId, branchId: a.branches.A!.id, name: "مخزن" } });
+    await db.rtStockDocument.create({
+      data: { businessId, branchId: a.branches.A!.id, locationId: location.id, kind: "OPENING", importBatchId: withDoc.id },
+    });
+    expect(await purgeStaleImportBatches(db)).toBe(1);
+    expect((await db.rtImportBatch.findMany({ select: { id: true } })).map((b) => b.id)).toEqual([withDoc.id]);
+    expect(await db.rtImportBatch.count({ where: { id: without.id } })).toBe(0);
+  });
+
   it("a row whose product changed after validation is not written (STALE_ROW)", async () => {
     const { a } = await world();
     const bread = await existing(a, "خبز", "960", 250n);

@@ -221,12 +221,13 @@ async function saveStaff(tx: Tx, actor: Actor, d: z.infer<typeof staffData>) {
 
 /**
  * True when the catalog completes step 4: a real (not trial) active product right now, or, at any
- * time in the past, a real (non-trial) import that committed a row (that part never turns false).
+ * time in the past, a real (non-trial) CATALOG import that committed a row (that part never turns
+ * false; an opening-stock import does not count).
  */
 async function catalogReady(tx: Tx): Promise<boolean> {
   const product = await tx.rtProduct.findFirst({ where: { archivedAt: null, isTestData: false }, select: { id: true } });
   if (product) return true;
-  const imported = await tx.rtImportRow.findFirst({ where: { status: "COMMITTED", batch: { is: { isTestData: false } } }, select: { id: true } });
+  const imported = await tx.rtImportRow.findFirst({ where: { status: "COMMITTED", batch: { is: { isTestData: false, kind: "CATALOG" } } }, select: { id: true } });
   return imported !== null;
 }
 

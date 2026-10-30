@@ -40,8 +40,8 @@ import {
  *
  * 1. stageOpeningImport: the file is parsed (same limits as the catalog import: 5 MB, 10,000 rows,
  *    200 columns, formulas never evaluated) and its rows stored raw in an RtImportBatch of kind
- *    OPENING_STOCK. A file whose sha256 matches an OPENING_STOCK batch of this business that has
- *    posted anything (COMMITTED, or a committed row of an interrupted commit) is refused with
+ *    OPENING_STOCK. A file whose sha256 matches an OPENING_STOCK batch of this business that posted
+ *    at least one row (a committed row; a batch that posted nothing does not count) is refused with
  *    IMPORT_SAME_FILE, also after its documents were reversed: the stock would double.
  * 2. validateOpeningImport: a column map is applied and each row checked with the rules of a draft
  *    line at posting (posting.ts checkLine and postTypedLines): the item by barcode (the barcode's
@@ -65,11 +65,18 @@ import {
  *    includeHasStock: true; otherwise they become SKIPPED / SKIPPED_HAS_STOCK. That choice is stored
  *    by the first slice, so a resumed commit cannot change it. Each slice re-checks its rows under the
  *    locks (the catalog may have changed since validation) and rejects the ones that fail, with the
- *    reason, before posting the rest.
+ *    reason, before posting the rest. Without includeHasStock it also reads the stock at the location
+ *    under the variant locks: a row whose item got stock since validation from anything but this
+ *    batch (another file, a manual opening) is SKIPPED_HAS_STOCK too, so stock never doubles.
  *
- * Costs: the stored rows keep the parsed cost (the document needs it), but what a caller sees shows
- * the file's cost column, and the total value, only with cost.view; idempotency records keep no cell
- * of the file and no value (storedValue). Reads (list, get, the rejected-rows CSV) also work in
+ * Costs: the stored rows keep the parsed cost (the document needs it). Without cost.view every cell
+ * of a cost column is blank in what a caller sees (rows, firstRejected, the rejected CSV): the column
+ * the headers name as cost, the mapped one, and every column ever mapped as cost (`costColumns` on
+ * the batch, never shrinks). Such a caller cannot un-map or move the cost column, nor map another
+ * field onto a cost column (STOCK_RULE {reason: COST_COLUMN_LOCKED}). The total value is returned
+ * only with cost.view; idempotency records keep no cell of the file and no value (storedValue).
+ * On-hand quantities in getOpeningImport are shown only to a caller who can reach the batch's
+ * location. Reads (list, get, the rejected-rows CSV) also work in
  * READ_ONLY; every write is refused there.
  *
  * Locks, in this order: idempotency (framework) -> `stock.import:<batchId>` -> `stock.import.file:
@@ -138,8 +145,12 @@ const mappingInput = z
   .partialRecord(z.enum(OPENING_COLUMNS), column)
   .transform((m): OpeningMapping => Object.fromEntries(OPENING_COLUMNS.map((c) => [c, m[c] ?? null])) as OpeningMapping);
 
-/** What the batch keeps in its `mapping` column: the column map and the location the rows go to. */
-type StoredMapping = { columns: OpeningMapping; branchId: string; locationId: string };
+/**
+ * What the batch keeps in its `mapping` column: the column map, the location the rows go to, every
+ * column that was ever mapped as cost (only grows: they stay hidden from callers without cost.view
+ * whatever a later validation maps), and the HAS_STOCK choice once the first slice stored it.
+ */
+type StoredMapping = { columns: OpeningMapping; branchId: string; locationId: string; costColumns?: number[]; includeHasStock?: boolean };
 
 export type RowFlag = "HAS_STOCK" | "EXPIRED" | "COST_MISSING";
 
@@ -187,11 +198,22 @@ const storedMapping = (batch: Batch): StoredMapping | null => (batch.mapping as 
 const headersOf = (batch: Batch) => (Array.isArray(batch.columns) ? batch.columns.map((c) => (typeof c === "string" ? c : "")) : []);
 const cellsOf = (raw: Prisma.JsonValue) => (Array.isArray(raw) ? raw.map((c) => (typeof c === "string" ? c : "")) : []);
 
-/** The file's cells as shown to this caller: the cost column is blanked without cost.view. */
-function shownCells(cells: string[], mapping: StoredMapping | null, seeCost: boolean): string[] {
-  const col = mapping?.columns.cost ?? null;
-  if (seeCost || col === null || col >= cells.length) return cells;
-  return cells.map((c, i) => (i === col ? "" : c));
+/**
+ * The columns that hold (or held) costs: the one the headers name as cost (autoMapOpeningHeaders),
+ * the one mapped as cost now, and every one mapped as cost before. Hidden without cost.view.
+ */
+function costColumnsOf(headers: readonly string[], mapping: StoredMapping | null): Set<number> {
+  const out = new Set<number>(mapping?.costColumns ?? []);
+  const auto = autoMapOpeningHeaders(headers).cost;
+  if (auto !== null) out.add(auto);
+  if (mapping && mapping.columns.cost !== null) out.add(mapping.columns.cost);
+  return out;
+}
+
+/** The file's cells as shown to this caller: every cost column (costColumnsOf) is blank without cost.view. */
+function shownCells(cells: string[], hidden: ReadonlySet<number>, seeCost: boolean): string[] {
+  if (seeCost || hidden.size === 0) return cells;
+  return cells.map((c, i) => (hidden.has(i) ? "" : c));
 }
 
 async function hasCommittedRows(tx: Tx, batchIds: string[]): Promise<boolean> {
@@ -201,17 +223,17 @@ async function hasCommittedRows(tx: Tx, batchIds: string[]): Promise<boolean> {
 
 /**
  * Refuses (IMPORT_SAME_FILE, naming the earlier batch) when another OPENING_STOCK batch of this
- * file posted anything: COMMITTED, or a committed row of an interrupted commit. Reversing its
- * documents does not lift this (ruling).
+ * file posted at least one row (a committed row; a batch that posted nothing does not block).
+ * Reversing its documents does not lift this (ruling): its rows stay committed.
  */
 async function refuseSameFile(tx: Tx, fileHash: string, exceptBatchId: string | null): Promise<void> {
   const same = await tx.rtImportBatch.findMany({
     where: { kind: "OPENING_STOCK", fileHash, ...(exceptBatchId ? { id: { not: exceptBatchId } } : {}) },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true, status: true },
+    select: { id: true },
   });
   for (const b of same) {
-    if (b.status === "COMMITTED" || (await hasCommittedRows(tx, [b.id]))) throw new RuleError("IMPORT_SAME_FILE", { batchId: b.id });
+    if (await hasCommittedRows(tx, [b.id])) throw new RuleError("IMPORT_SAME_FILE", { batchId: b.id });
   }
 }
 
@@ -520,6 +542,16 @@ export const validateOpeningImport = defineAction({
     if (OPENING_COLUMNS.some((c) => mapping[c] !== null && mapping[c]! >= width)) throw new RuleError("INVALID_INPUT");
     const problems = validateOpeningMapping(mapping);
     if (problems.length > 0) throw new RuleError("INVALID_INPUT", { problems: problems.join(",") });
+    const previous = storedMapping(batch);
+    const seeCost = can(actor.role, "cost.view");
+    const hiddenBefore = costColumnsOf(headersOf(batch), previous);
+    if (!seeCost) {
+      // Without cost.view the cost column cannot be un-mapped or moved (that would show it in clear),
+      // and no other field may read a cost column: STOCK_RULE {reason: COST_COLUMN_LOCKED}.
+      const locked = previous?.columns.cost ?? autoMapOpeningHeaders(headersOf(batch)).cost;
+      const misuse = OPENING_COLUMNS.some((c) => c !== "cost" && mapping[c] !== null && hiddenBefore.has(mapping[c]!));
+      if ((locked !== null && mapping.cost !== locked) || misuse) throw new RuleError("STOCK_RULE", { reason: "COST_COLUMN_LOCKED" });
+    }
 
     const place = await defaultPlace(tx);
     const biz = await businessOf(tx);
@@ -612,18 +644,19 @@ export const validateOpeningImport = defineAction({
       if (r.normalized?.flags.includes("EXPIRED")) summary.expired += 1;
       if (r.normalized?.flags.includes("COST_MISSING")) summary.costMissing += 1;
     }
-    const saved: StoredMapping = { columns: mapping, branchId: place.branchId, locationId: place.locationId };
+    const costColumns = [...new Set([...hiddenBefore, ...(mapping.cost !== null ? [mapping.cost] : [])])].sort((a, b) => a - b);
+    const saved: StoredMapping = { columns: mapping, branchId: place.branchId, locationId: place.locationId, costColumns };
     await tx.rtImportBatch.updateMany({
       where: { id: batch.id },
       data: { status: "VALIDATED", mapping: json(saved), stats: json(summary), version: { increment: 1 } },
     });
-    const seeCost = can(actor.role, "cost.view");
+    const hidden = costColumnsOf(headersOf(batch), saved);
     return {
       summary,
       firstRejected: results
         .filter((r) => r.status === "REJECTED")
         .slice(0, PAGE_SIZE)
-        .map((r) => ({ rowNumber: r.rowNumber, reason: r.reason ?? "", raw: shownCells(cells[r.rowNumber - 1] ?? [], saved, seeCost) })),
+        .map((r) => ({ rowNumber: r.rowNumber, reason: r.reason ?? "", raw: shownCells(cells[r.rowNumber - 1] ?? [], hidden, seeCost) })),
       hasStock: results
         .filter((r) => r.reason === "HAS_STOCK")
         .slice(0, PAGE_SIZE)
@@ -644,7 +677,7 @@ export type OpeningCommitStats = { total: number; posted: number; skipped: numbe
 export type ImportDocument = { documentId: string; number: number | null };
 
 export type OpeningSliceResult =
-  | { done: false; posted: number; rejected: number; documentId: string | null; number: number | null }
+  | { done: false; posted: number; rejected: number; skipped: number; documentId: string | null; number: number | null }
   | {
       done: true;
       stats: OpeningCommitStats;
@@ -694,19 +727,40 @@ export const commitOpeningSlice = defineAction({
     entityId: input.batchId,
     changes: value.done
       ? { done: true, stats: value.stats, alreadyCommitted: value.alreadyCommitted }
-      : { done: false, posted: value.posted, rejected: value.rejected, documentId: value.documentId, number: value.number },
+      : { done: false, posted: value.posted, rejected: value.rejected, skipped: value.skipped, documentId: value.documentId, number: value.number },
   }),
 });
 
-/** Stores the HAS_STOCK choice once (first slice): post (UPDATE), or the rows become SKIPPED_HAS_STOCK. */
-async function saveHasStockChoice(tx: Tx, batchId: string, include: boolean): Promise<void> {
-  const open = await tx.rtImportRow.findFirst({ where: { batchId, status: "OK", reason: "HAS_STOCK", resolution: null }, select: { id: true } });
-  if (!open) return;
+/**
+ * The HAS_STOCK choice, stored once by the first slice (on the batch, and on the rows flagged at
+ * validation: post (UPDATE), or SKIPPED_HAS_STOCK); later slices and resumed calls use the stored one.
+ */
+async function hasStockChoice(tx: Tx, batchId: string, mapping: StoredMapping, include: boolean): Promise<boolean> {
+  if (mapping.includeHasStock !== undefined) return mapping.includeHasStock;
+  await tx.rtImportBatch.updateMany({ where: { id: batchId }, data: { mapping: json({ ...mapping, includeHasStock: include }) } });
   await tx.rtImportRow.updateMany({
     where: { batchId, status: "OK", reason: "HAS_STOCK", resolution: null },
     // The column allows the catalog's two choices: UPDATE (post it) or SKIP.
     data: include ? { resolution: "UPDATE" } : { status: "SKIPPED", reason: "SKIPPED_HAS_STOCK", resolution: "SKIP" },
   });
+  return include;
+}
+
+/**
+ * The variants (of `variantIds`) that have stock at the location now that did not come from this
+ * batch's own documents: an earlier slice of this import does not count, an OPENING posted by
+ * someone else since validation does. Call under the variants' locks.
+ */
+async function stockedElsewhere(tx: Tx, batchId: string, locationId: string, variantIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(variantIds)];
+  const balances = await tx.rtStockBalance.groupBy({ by: ["variantId"], where: { locationId, variantId: { in: ids } }, _sum: { qty: true } });
+  const own = (await importDocuments(tx, batchId)).map((d) => d.documentId);
+  const mine = new Map<string, bigint>();
+  if (own.length > 0) {
+    const moves = await tx.rtStockMovement.groupBy({ by: ["variantId"], where: { locationId, documentId: { in: own }, variantId: { in: ids } }, _sum: { qtyDelta: true } });
+    for (const m of moves) mine.set(m.variantId, m._sum.qtyDelta ?? 0n);
+  }
+  return new Set(balances.filter((b) => (b._sum.qty ?? 0n) - (mine.get(b.variantId) ?? 0n) > 0n).map((b) => b.variantId));
 }
 
 async function importDocuments(tx: Tx, batchId: string): Promise<ImportDocument[]> {
@@ -752,7 +806,7 @@ async function runSlice(actor: Actor, tx: Tx, input: z.infer<typeof commitInput>
   await refuseSameFile(tx, batch.fileHash, batch.id);
   const mapping = storedMapping(batch);
   if (!mapping) throw new RuleError("IMPORT_NOT_VALIDATED");
-  await saveHasStockChoice(tx, batch.id, input.includeHasStock);
+  const includeHasStock = await hasStockChoice(tx, batch.id, mapping, input.includeHasStock);
 
   const rows = (await tx.rtImportRow.findMany({
     where: { batchId: batch.id, status: "OK" },
@@ -781,21 +835,30 @@ async function runSlice(actor: Actor, tx: Tx, input: z.infer<typeof commitInput>
   const today = businessToday(new Date(), biz.timezone);
   const catalog = await catalogOf(tx, lines);
   const moved = await movedOf(tx, mapping.locationId, lines.map((l) => l.variantId));
+  // Stock that arrived since validation (another file, a manual opening): without includeHasStock
+  // such rows are skipped like the ones flagged at validation, so the stock never doubles.
+  const stocked = includeHasStock ? new Set<string>() : await stockedElsewhere(tx, batch.id, mapping.locationId, lines.map((l) => l.variantId));
 
   // Re-checked under the locks: a row the catalog no longer allows is rejected with its reason.
   const live: { row: Pending; line: LineData; quantity: bigint }[] = [];
   const rejected = new Map<string, string[]>();
+  const skipped: string[] = [];
   rows.forEach((row, i) => {
     try {
-      live.push({ row, line: lines[i]!, quantity: checkRow(lines[i]!, catalog, biz, today, moved).quantity });
+      const quantity = checkRow(lines[i]!, catalog, biz, today, moved).quantity;
+      if (stocked.has(lines[i]!.variantId)) skipped.push(row.id);
+      else live.push({ row, line: lines[i]!, quantity });
     } catch (err) {
       if (!(err instanceof Reject)) throw err;
       rejected.set(err.reason, [...(rejected.get(err.reason) ?? []), row.id]);
     }
   });
   for (const [reason, ids] of rejected) await tx.rtImportRow.updateMany({ where: { id: { in: ids } }, data: { status: "REJECTED", reason } });
-  const rejectedCount = rows.length - live.length;
-  if (live.length === 0) return { done: false, posted: 0, rejected: rejectedCount, documentId: null, number: null };
+  if (skipped.length > 0) {
+    await tx.rtImportRow.updateMany({ where: { id: { in: skipped } }, data: { status: "SKIPPED", reason: "SKIPPED_HAS_STOCK", resolution: "SKIP" } });
+  }
+  const rejectedCount = rows.length - live.length - skipped.length;
+  if (live.length === 0) return { done: false, posted: 0, rejected: rejectedCount, skipped: skipped.length, documentId: null, number: null };
 
   await tx.rtStockDocument.create({
     data: {
@@ -828,7 +891,7 @@ async function runSlice(actor: Actor, tx: Tx, input: z.infer<typeof commitInput>
   });
   const posted = await postDocumentInTx(tx, actor, documentId, lockBusiness);
   await tx.rtImportRow.updateMany({ where: { id: { in: live.map((l) => l.row.id) } }, data: { status: "COMMITTED", reason: "POSTED" } });
-  return { done: false, posted: live.length, rejected: rejectedCount, documentId, number: posted.number };
+  return { done: false, posted: live.length, rejected: rejectedCount, skipped: skipped.length, documentId, number: posted.number };
 }
 
 export type OpeningCommitResult = { stats: OpeningCommitStats; alreadyCommitted: boolean; documents: ImportDocument[]; valueMinor?: bigint };
@@ -892,6 +955,10 @@ export const getOpeningImport = defineAction({
     const batch = await findBatch(tx, input.batchId);
     const mapping = storedMapping(batch);
     const seeCost = can(actor.role, "cost.view");
+    const hidden = costColumnsOf(headersOf(batch), mapping);
+    // On-hand quantities are of the batch's location: shown only when this caller can reach it.
+    const seeStock =
+      mapping !== null && (await tx.rtLocation.findFirst({ where: { id: mapping.locationId, branchId: mapping.branchId }, select: { id: true } })) !== null;
     const where = { batchId: batch.id, ...(input.status ? { status: input.status } : {}) };
     const found = await tx.rtImportRow.findMany({
       where,
@@ -907,9 +974,9 @@ export const getOpeningImport = defineAction({
         status: r.status,
         reason: r.reason,
         flags: n?.flags ?? [],
-        onHand: n?.onHand ? BigInt(n.onHand) : null,
+        onHand: seeStock && n?.onHand ? BigInt(n.onHand) : null,
         variantId: r.matchedVariantId,
-        raw: shownCells(cellsOf(r.raw), mapping, seeCost),
+        raw: shownCells(cellsOf(r.raw), hidden, seeCost),
       };
     });
     return {
@@ -965,7 +1032,7 @@ export const downloadOpeningRejected = defineAction({
   input: z.object({ batchId: id }).strict(),
   async run({ actor, tx, input }): Promise<string> {
     const batch = await findBatch(tx, input.batchId);
-    const mapping = storedMapping(batch);
+    const hidden = costColumnsOf(headersOf(batch), storedMapping(batch));
     const seeCost = can(actor.role, "cost.view");
     const headers = headersOf(batch);
     const rows = await tx.rtImportRow.findMany({
@@ -975,7 +1042,7 @@ export const downloadOpeningRejected = defineAction({
     });
     const lines = [[...headers, "reason"].map(csvCell).join(",")];
     for (const r of rows) {
-      const raw = shownCells(cellsOf(r.raw), mapping, seeCost);
+      const raw = shownCells(cellsOf(r.raw), hidden, seeCost);
       lines.push([...headers.map((_, i) => raw[i] ?? ""), r.reason ?? ""].map(csvCell).join(","));
     }
     return `﻿${lines.join("\r\n")}\r\n`;
