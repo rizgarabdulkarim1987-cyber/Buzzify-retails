@@ -64,16 +64,22 @@ describe("ai.intake switch: who may set it", () => {
     const w = await world();
     await w.set(w.a.business.id, true);
     await w.set(w.a.business.id, false, w.admin.id, "توقف مؤقت لحين الدفع");
-    const audit = await db.rtAuditLog.findMany({ orderBy: { at: "asc" } });
+    const audit = await db.rtAuditLog.findMany();
     expect(audit).toHaveLength(2);
-    expect(audit[0]).toMatchObject({
+    // Looked up by state, not by time: two audit rows can share a timestamp.
+    const byState = (enabled: boolean) => audit.find((row) => (row.changes as { enabled?: unknown }).enabled === enabled);
+    expect(byState(true)).toMatchObject({
       businessId: w.a.business.id,
       actorId: w.admin.id,
       action: "platform.feature.override",
       entity: "RtFeatureOverride",
       changes: { feature: "ai.intake", enabled: true, reason: REASON },
     });
-    expect(audit[1]).toMatchObject({ changes: { feature: "ai.intake", enabled: false, reason: "توقف مؤقت لحين الدفع" } });
+    expect(byState(false)).toMatchObject({
+      businessId: w.a.business.id,
+      actorId: w.admin.id,
+      changes: { feature: "ai.intake", enabled: false, reason: "توقف مؤقت لحين الدفع" },
+    });
   });
 
   it("the same key sent twice (a retry after a lost answer) records one change", async () => {

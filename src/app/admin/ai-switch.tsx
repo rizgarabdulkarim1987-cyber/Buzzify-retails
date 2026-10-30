@@ -24,9 +24,9 @@ type Props = {
 /**
  * One business's row of the admin table with its ai.intake master switch as the last cell: the
  * current state, and a button that asks for a reason (in a full-width row under it) before moving
- * it the other way. One change at a time; the key is kept
- * while the same change is retried after a lost answer. Focus goes to the reason when the form
- * opens and back to the button when it closes (never to the page).
+ * it the other way. One change at a time; the key is kept while the same change is retried after
+ * a lost answer. Focus goes to the reason when the form opens and back to the button when it
+ * closes (never to the page).
  */
 export function AiSwitchRow({ businessId, businessName, enabled, t, children, columns }: Props) {
   const a = t.adminAi;

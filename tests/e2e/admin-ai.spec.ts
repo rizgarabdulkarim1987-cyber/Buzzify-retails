@@ -25,9 +25,31 @@ async function move(page: Page, to: "on" | "off", reason: string) {
   await expect(r.getByTestId("ai-switch-toggle")).toBeFocused();
 }
 
+/**
+ * The seeded shop's switch is shared by every e2e spec and later R1b specs assume it is off:
+ * turn it off if an earlier, interrupted run left it on.
+ */
+async function ensureOff(page: Page) {
+  await page.goto("/admin");
+  const state = row(page).getByTestId("ai-state");
+  await expect(state).toBeVisible();
+  if ((await state.getAttribute("data-state")) === "on") await move(page, "off", "إعادة الحالة الافتراضية بعد الاختبار");
+}
+
+test.afterAll(async ({ browser }, testInfo) => {
+  const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+  try {
+    const page = await context.newPage();
+    await signIn(page, ADMIN.email);
+    await ensureOff(page);
+  } finally {
+    await context.close();
+  }
+});
+
 test("the platform admin turns a shop's AI reading on and off with a reason", async ({ page }) => {
   await signIn(page, ADMIN.email);
-  await page.goto("/admin");
+  await ensureOff(page);
   const r = row(page);
   await expect(r.getByTestId("ai-state")).toHaveAttribute("data-state", "off");
   await expect(r.getByTestId("ai-state")).toHaveText(ar.adminAi.off);
@@ -51,7 +73,7 @@ test("the platform admin turns a shop's AI reading on and off with a reason", as
   await page.reload();
   await expect(row(page).getByTestId("ai-state")).toHaveAttribute("data-state", "on");
 
-  // Back to off, so the shared seed stays as it was.
+  // Back to off, so the shared seed stays as it was (afterAll turns it off too if this test fails before here).
   await move(page, "off", "انتهت التجربة، إيقاف مؤقت");
   await expect(row(page).getByTestId("ai-state")).toHaveText(ar.adminAi.off);
 });

@@ -54,6 +54,20 @@ const aiAction = defineAction({
   },
 });
 
+let writes = 0;
+const aiWrite = defineAction({
+  name: "test.aiWrite",
+  permission: null,
+  input: z.object({ note: z.string() }),
+  writes: true,
+  precondition: aiEnabledPrecondition,
+  async run({ input }) {
+    writes += 1;
+    return { note: input.note };
+  },
+  audit: (input) => ({ entity: "Test", entityId: "t", changes: { note: input.note } }),
+});
+
 describe("feature overrides", () => {
   it("the feature name is ai.intake", () => {
     expect(AI_INTAKE_FEATURE).toBe("ai.intake");
@@ -140,5 +154,21 @@ describe("assertAiEnabled", () => {
     await w.set(w.a.businessId, false);
     expect(await aiAction({}, meta)).toMatchObject({ ok: false, code: "AI_DISABLED" });
     expect(runs).toBe(1);
+  });
+
+  it("a replay of an earlier success with the same key is refused once the switch is off", async () => {
+    const w = await world();
+    writes = 0;
+    const meta = { userId: w.a.ownerId, businessId: w.a.businessId, idempotencyKey: "replay-1" };
+    await w.set(w.a.businessId, true);
+    const first = await aiWrite({ note: "x" }, meta);
+    expect(first).toEqual({ ok: true, value: { note: "x" } });
+    // While on, the same key replays the stored success without running again.
+    expect(await aiWrite({ note: "x" }, meta)).toEqual(first);
+    expect(writes).toBe(1);
+
+    await w.set(w.a.businessId, false);
+    expect(await aiWrite({ note: "x" }, meta)).toMatchObject({ ok: false, code: "AI_DISABLED" });
+    expect(writes).toBe(1);
   });
 });
