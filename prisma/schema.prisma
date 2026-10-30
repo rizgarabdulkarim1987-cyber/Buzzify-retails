@@ -842,6 +842,12 @@ enum RtStockDocumentStatus {
   POSTED
 }
 
+// The way an ADJUSTMENT moves stock (a WRITE_OFF is always OUT); null for every other kind.
+enum RtStockDirection {
+  IN
+  OUT
+}
+
 // A batch of a variant: an optional lot code and an optional expiry date (a date, no time). One row
 // per (variant, code, expiryDate) with NULLs equal (NULLS NOT DISTINCT), so "no code, no date" is a
 // single batch too. In the migration: a code is never blank.
@@ -874,6 +880,8 @@ model RtBatch {
 // document has a number and postedAt; number >= 1; reversesDocumentId is set exactly for a
 // REVERSAL and never names the document itself. A document is reversed at most once (unique).
 // importBatchId: the opening-stock import batch an OPENING document came from (Task 7).
+// direction: set exactly for an ADJUSTMENT or a WRITE_OFF, and OUT for a WRITE_OFF; those two kinds
+// always carry a reason (CHECKs in migration 20261030110000_stock_direction).
 model RtStockDocument {
   id                 String                @id @default(cuid())
   businessId         String
@@ -885,6 +893,7 @@ model RtStockDocument {
   supplierRef        String?
   note               String?
   reason             String?
+  direction          RtStockDirection?
   reversesDocumentId String?
   importBatchId      String?
   postedAt           DateTime?

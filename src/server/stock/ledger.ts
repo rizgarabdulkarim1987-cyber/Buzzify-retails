@@ -15,10 +15,17 @@ import { RuleError } from "@/server/framework/errors";
  *   batch row's value drops by that amount (one batch row's value may drift, even below zero, by
  *   rounding; the total is the source of truth). The last outflow that empties the variant takes
  *   the whole remaining value, so no drift accumulates. Inflows add the caller's valueDeltaMinor;
- *   outflow values are computed here and never passed in.
+ *   outflow values are computed here and never passed in, except with `exactValues`.
+ * - exactValues (a REVERSAL only, spec 6b.3): every outflow carries its own valueDeltaMinor (<= 0)
+ *   and an inflow may too (>= 0), so a reversal restores the original values exactly instead of
+ *   taking the current average. It still refuses, with STOCK_NEGATIVE, a line that would take its
+ *   (location, variant, batch) quantity below zero OR the variant's TOTAL value at the location
+ *   below zero. One batch row's value is never checked alone: a batch can sit at qty 0 with an
+ *   offsetting value after average-cost outflows. It may leave a variant at qty 0 with a value
+ *   (the next outflow that empties it takes that value).
  * - No negative stock: the whole call is checked in memory (lines in order) BEFORE anything is
- *   written, so a STOCK_NEGATIVE leaves no row. The balance CHECK (qty >= 0) is the backstop and
- *   is reported as STOCK_NEGATIVE too.
+ *   written, so a refusal leaves nothing behind (the caller's transaction commits nothing). The
+ *   balance CHECK (qty >= 0) is the backstop and is reported as STOCK_NEGATIVE too.
  * - Locks: postMovements takes lockBusiness(`stock:<variantId>`) for each distinct variant in
  *   ascending order, and nothing else. Callers take their document and idempotency locks first;
  *   the order everywhere is idempotency -> document -> stock:<variant> ascending -> document
@@ -42,7 +49,10 @@ export type LedgerLine = {
   batchId: string | null;
   /** Base units x QTY_SCALE; positive in, negative out, never zero. */
   qtyDelta: bigint;
-  /** Inflows only (>= 0, default 0). An outflow's value is computed by the ledger. */
+  /**
+   * Inflows: >= 0, default 0. Outflows: never given (the ledger computes it), except with
+   * exactValues, where it is required and <= 0.
+   */
   valueDeltaMinor?: bigint;
 };
 
@@ -52,7 +62,12 @@ export type PostMovementsInput = {
   branchId: string;
   locationId: string;
   lines: LedgerLine[];
+  /** A REVERSAL's exact negation: the caller's values on outflows too (see the header). */
+  exactValues?: boolean;
 };
+
+/** The value written for each line, in the order of the input lines. */
+export type PostedMovement = { lineId: string; valueDeltaMinor: bigint };
 
 type Amount = { qty: bigint; valueMinor: bigint };
 
@@ -85,29 +100,37 @@ export function isNegativeBalance(err: unknown): boolean {
   return `${typeof message === "string" ? message : ""} ${meta}`.includes("RtStockBalance_qty_nonneg");
 }
 
-function assertLines(lines: LedgerLine[]): void {
+function assertLines(lines: LedgerLine[], exactValues: boolean): void {
   for (const l of lines) {
     if (l.qtyDelta === 0n) throw new RuleError("INVALID_INPUT");
     if (l.qtyDelta > MAX_BASE_QTY || -l.qtyDelta > MAX_BASE_QTY) throw new RuleError("INVALID_INPUT");
-    if (l.qtyDelta < 0n && l.valueDeltaMinor !== undefined) throw new RuleError("INVALID_INPUT");
-    if (l.valueDeltaMinor !== undefined && l.valueDeltaMinor < 0n) throw new RuleError("INVALID_INPUT");
+    if (l.qtyDelta > 0n) {
+      if (l.valueDeltaMinor !== undefined && l.valueDeltaMinor < 0n) throw new RuleError("INVALID_INPUT");
+    } else if (exactValues) {
+      if (l.valueDeltaMinor === undefined || l.valueDeltaMinor > 0n) throw new RuleError("INVALID_INPUT");
+    } else if (l.valueDeltaMinor !== undefined) {
+      throw new RuleError("INVALID_INPUT");
+    }
   }
 }
 
 /**
- * Writes one movement per line at one location and updates the balances, all or nothing.
- * STOCK_NEGATIVE when an outflow exceeds its (location, variant, batch) balance at that point of the
- * call; INVALID_INPUT for a zero quantity, a quantity above MAX_BASE_QTY, a negative value, or a
- * value on an outflow. Callers validate their lines (variant, batch of that variant, line of that
- * document and variant) before calling: a reference the foreign keys refuse is an internal error.
+ * Writes one movement per line at one location and updates the balances, all or nothing, and
+ * returns the value written for each line. STOCK_NEGATIVE when an outflow exceeds its (location,
+ * variant, batch) balance at that point of the call, or (exactValues) would take the variant's
+ * total value below zero; INVALID_INPUT for a zero quantity, a quantity above MAX_BASE_QTY, a
+ * negative inflow value, or a value on an outflow (missing or positive with exactValues). Callers
+ * validate their lines (variant, batch of that variant, line of that document and variant) before
+ * calling: a reference the foreign keys refuse is an internal error.
  */
 export async function postMovements(
   tx: Tx,
   p: PostMovementsInput,
   lockBusiness: (name: string) => Promise<void>,
-): Promise<void> {
-  assertLines(p.lines);
-  if (p.lines.length === 0) return;
+): Promise<PostedMovement[]> {
+  const exactValues = p.exactValues === true;
+  assertLines(p.lines, exactValues);
+  if (p.lines.length === 0) return [];
   const variantIds = [...new Set(p.lines.map((l) => l.variantId))].sort();
   for (const v of variantIds) await lockBusiness(`stock:${v}`);
 
@@ -131,7 +154,12 @@ export async function postMovements(
     let value: bigint;
     if (l.qtyDelta < 0n) {
       if (row.qty + l.qtyDelta < 0n) throw new RuleError("STOCK_NEGATIVE");
-      value = -reduceValue(total.qty, total.valueMinor, -l.qtyDelta);
+      if (exactValues) {
+        value = l.valueDeltaMinor!;
+        if (total.valueMinor + value < 0n) throw new RuleError("STOCK_NEGATIVE");
+      } else {
+        value = -reduceValue(total.qty, total.valueMinor, -l.qtyDelta);
+      }
     } else {
       value = l.valueDeltaMinor ?? 0n;
     }
@@ -186,6 +214,7 @@ export async function postMovements(
     if (isNegativeBalance(err)) throw new RuleError("STOCK_NEGATIVE");
     throw err;
   }
+  return movements.map((m) => ({ lineId: m.lineId, valueDeltaMinor: m.valueDeltaMinor }));
 }
 
 /** The variant's totals at the location across every batch (the weighted average is value / qty). */

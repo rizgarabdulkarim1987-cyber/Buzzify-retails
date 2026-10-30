@@ -34,6 +34,7 @@ async function shop(opts: { currencies?: Currency[] } = {}) {
       { key: "owner", role: "OWNER" },
       { key: "stock", role: "STOCK", branches: ["Main"] },
       { key: "cashier", role: "CASHIER", branches: ["Main"] },
+      { key: "purchasing", role: "PURCHASING", branches: ["Main"] },
     ],
   });
   const businessId = w.business.id;
@@ -495,5 +496,36 @@ describe("stock receipts and opening balances", () => {
     expect(results[7]).toMatchObject({ ok: true, value: { number: 1 } });
     const next = await receiveOk(a, "RECEIPT", [line(itemA, "1", { cost: iqd("10") })]);
     expect(next.number).toBe(7);
+  });
+  it("receipt actions refuse other kinds of document and imported ones", async () => {
+    const s = await shop();
+    const it1 = await s.item();
+    const place = { businessId: s.businessId, branchId: s.branches.Main!.id, locationId: s.locations.Main! };
+    const importBatch = await db.rtImportBatch.create({
+      data: { businessId: s.businessId, kind: "OPENING_STOCK", fileName: "a.csv", fileHash: "h", columns: [], stats: {}, createdById: "u" },
+    });
+    // Drafts the receipt actions did not create: an adjustment, a write-off and an imported OPENING.
+    const others = [
+      await db.rtStockDocument.create({ data: { ...place, kind: "ADJUSTMENT", direction: "IN", reason: "COUNT_FIX" } }),
+      await db.rtStockDocument.create({ data: { ...place, kind: "WRITE_OFF", direction: "OUT", reason: "DAMAGED" } }),
+      await db.rtStockDocument.create({ data: { ...place, kind: "OPENING", importBatchId: importBatch.id } }),
+    ];
+    for (const doc of others) {
+      await db.rtStockLine.create({
+        data: { businessId: place.businessId, branchId: place.branchId, documentId: doc.id, lineNo: 1, variantId: it1.variantId, unitId: it1.piece, quantity: 1000n, enteredQuantity: "1" },
+      });
+      const input = { documentId: doc.id, expectedVersion: doc.version };
+      for (const who of ["purchasing", "owner"]) {
+        const kindRefusal = { ok: false, code: "STOCK_RULE", details: { reason: "KIND" } };
+        expect(await postStockDocument(input, s.as(who))).toMatchObject(kindRefusal);
+        expect(await discardStockDraft(input, s.as(who))).toMatchObject(kindRefusal);
+        expect(await saveStockDraft({ ...input, kind: "RECEIPT", lines: [] }, s.as(who))).toMatchObject(kindRefusal);
+      }
+      expect(await db.rtStockDocument.findFirstOrThrow({ where: { id: doc.id } })).toMatchObject({ status: "DRAFT", kind: doc.kind, version: 1 });
+      expect(await db.rtStockLine.count({ where: { documentId: doc.id } })).toBe(1);
+    }
+    expect(await db.rtStockMovement.count()).toBe(0);
+    // The purchasing officer still receives.
+    expect((await receiveOk(s, "RECEIPT", [line(it1, "1", { cost: iqd("10") })], "purchasing")).number).toBe(1);
   });
 });

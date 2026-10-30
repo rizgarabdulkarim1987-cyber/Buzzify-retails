@@ -192,7 +192,7 @@ describe("stock schema", () => {
     const target = await db.rtStockDocument.create({
       data: { ...w.where, kind: "OPENING", status: "POSTED", number: 2, postedAt: new Date(), postedById: "u1" },
     });
-    expect(await failure(db.rtStockDocument.create({ data: { ...w.where, kind: "ADJUSTMENT", reversesDocumentId: target.id } }))).toContain(
+    expect(await failure(db.rtStockDocument.create({ data: { ...w.where, kind: "ADJUSTMENT", direction: "IN", reason: "LOST", reversesDocumentId: target.id } }))).toContain(
       "RtStockDocument_reversal_names_document",
     );
     expect(await failure(db.rtStockDocument.create({ data: { ...w.where, kind: "REVERSAL" } }))).toContain(
@@ -202,6 +202,20 @@ describe("stock schema", () => {
     expect(
       await failure(db.rtStockDocument.update({ where: { id: self.id }, data: { kind: "REVERSAL", reversesDocumentId: self.id } })),
     ).toContain("RtStockDocument_not_self_reversal");
+  });
+
+  it("only an adjustment or a write-off has a direction and a reason, and a write-off goes out", async () => {
+    const w = await world();
+    const create = (data: Record<string, unknown>) => db.rtStockDocument.create({ data: { ...w.where, kind: "ADJUSTMENT", ...data } as never });
+    expect(await create({ direction: "IN", reason: "COUNT_FIX" })).toMatchObject({ direction: "IN" });
+    expect(await create({ kind: "WRITE_OFF", direction: "OUT", reason: "DAMAGED" })).toMatchObject({ direction: "OUT" });
+    expect(await failure(create({ reason: "LOST" }))).toContain("RtStockDocument_direction_of_kind");
+    expect(await failure(create({ kind: "WRITE_OFF", direction: "IN", reason: "DAMAGED" }))).toContain("RtStockDocument_direction_of_kind");
+    expect(await failure(create({ kind: "RECEIPT", direction: "IN" }))).toContain("RtStockDocument_direction_of_kind");
+    expect(await failure(create({ direction: "OUT" }))).toContain("RtStockDocument_adjustment_has_reason");
+    expect(await failure(create({ kind: "WRITE_OFF", direction: "OUT" }))).toContain("RtStockDocument_adjustment_has_reason");
+    // Receipts and openings take neither.
+    expect(await create({ kind: "RECEIPT" })).toMatchObject({ direction: null, reason: null });
   });
 
   it("line quantities are positive and line values never negative", async () => {

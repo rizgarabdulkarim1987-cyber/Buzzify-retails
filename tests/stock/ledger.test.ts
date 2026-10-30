@@ -28,6 +28,7 @@ const post = defineAction({
         valueDeltaMinor: z.bigint().optional(),
       }),
     ),
+    exactValues: z.boolean().optional(),
   }),
   writes: true,
   timeoutMs: 30_000,
@@ -118,10 +119,11 @@ type World = Awaited<ReturnType<typeof world>>;
 type Move = { variantId: string; batchId?: string | null; qtyDelta: bigint; valueDeltaMinor?: bigint };
 
 /** Posts `moves` at place `p` of `w` in one transaction; resolves to the action result. */
-function postAt(w: World, moves: Move[], p = 0) {
+function postAt(w: World, moves: Move[], p = 0, exactValues?: boolean) {
   const place = w.places[p]!;
   return post(
     {
+      ...(exactValues === undefined ? {} : { exactValues }),
       documentId: place.documentId,
       branchId: place.branchId,
       locationId: place.locationId,
@@ -426,6 +428,57 @@ describe("stock ledger", () => {
     // Above MAX_BASE_QTY is a refusal, not a database overflow.
     await refuse({ variantId: v, qtyDelta: MAX_BASE_QTY + 1n });
     expect(await db.rtStockMovement.count()).toBe(1);
+  });
+
+  it("exactValues takes the caller's outflow values and still refuses a negative total", async () => {
+    const w = await world();
+    const v = w.variants[0]!;
+    const a = await w.batch(v, "A");
+    const b = await w.batch(v, "B");
+    const exact = (moves: Move[]) => postAt(w, moves, 0, true);
+    // Malformed: an outflow without a value or with a positive one, an inflow with a negative one.
+    await postOk(w, [{ variantId: v, qtyDelta: 1n * U, valueDeltaMinor: 100n }]);
+    for (const m of [
+      { variantId: v, qtyDelta: -1n * U },
+      { variantId: v, qtyDelta: -1n * U, valueDeltaMinor: 5n },
+      { variantId: v, qtyDelta: 1n * U, valueDeltaMinor: -5n },
+    ]) {
+      expect(await exact([m])).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    }
+    expect(await exact([{ variantId: v, qtyDelta: -1n * U, valueDeltaMinor: -100n }])).toMatchObject({ ok: true });
+
+    // 10 at 100 on A and 10 at 300 on B; 10 leave A at the average 200, so A sits at qty 0 with
+    // value -1000 and B at 10 / 3000: the variant has 10 worth 2000.
+    await postOk(w, [
+      { variantId: v, batchId: a.id, qtyDelta: 10n * U, valueDeltaMinor: 1000n },
+      { variantId: v, batchId: b.id, qtyDelta: 10n * U, valueDeltaMinor: 3000n },
+    ]);
+    await postOk(w, [{ variantId: v, batchId: a.id, qtyDelta: -10n * U }]);
+    expect(await balance(w, v, a.id)).toEqual({ qty: 0n, valueMinor: -1000n });
+    const before = await db.rtStockMovement.count();
+    // B's own row holds 3000, but the variant's total would drop to -1000: refused, nothing written.
+    expect(await exact([{ variantId: v, batchId: b.id, qtyDelta: -10n * U, valueDeltaMinor: -3000n }])).toMatchObject({
+      ok: false,
+      code: "STOCK_NEGATIVE",
+    });
+    // A line that is fine followed by one that goes below zero: nothing of the call is kept.
+    expect(
+      await exact([
+        { variantId: v, batchId: b.id, qtyDelta: -1n * U, valueDeltaMinor: -100n },
+        { variantId: v, batchId: a.id, qtyDelta: -1n * U, valueDeltaMinor: -100n },
+      ]),
+    ).toMatchObject({ ok: false, code: "STOCK_NEGATIVE" });
+    expect(await db.rtStockMovement.count()).toBe(before);
+    // Within the total, the caller's values are written as given.
+    expect(await exact([{ variantId: v, batchId: b.id, qtyDelta: -10n * U, valueDeltaMinor: -2000n }])).toMatchObject({ ok: true });
+    expect((await movementValues(w)).at(-1)).toEqual([-10n * U, -2000n]);
+    expect(await balance(w, v, b.id)).toEqual({ qty: 0n, valueMinor: 1000n });
+    expect(await exact([{ variantId: v, batchId: a.id, qtyDelta: 5n * U, valueDeltaMinor: 777n }])).toMatchObject({ ok: true });
+    expect(await average({ locationId: w.places[0]!.locationId, variantId: v }, w.meta())).toEqual({
+      ok: true,
+      value: { qty: 5n * U, valueMinor: 777n },
+    });
+    expect((await rebuild(w, false)).mismatches).toEqual([]);
   });
 
   it("isNegativeBalance never throws on an error whose meta JSON cannot carry", () => {
