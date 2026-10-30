@@ -1,6 +1,7 @@
 "use server";
 
-import { addBarcode, addUnit, archiveBarcode, archiveProduct, archiveUnit, archiveVariant, addVariant, createProduct, unarchiveProduct, updateProduct, updateUnit } from "@/server/catalog/products";
+import { addBarcode, addUnit, archiveBarcode, archiveProduct, archiveUnit, archiveVariant, addVariant, createProduct, getProduct, unarchiveProduct, updateProduct, updateUnit } from "@/server/catalog/products";
+import { lookupBarcode, readBarcodeFromImage, type BarcodeRead } from "@/server/intake/barcode";
 import { setPrice } from "@/server/catalog/prices";
 import { catalogContext } from "@/server/catalog/context";
 import { searchCatalog, type CatalogHit } from "@/server/catalog/search";
@@ -332,4 +333,64 @@ export async function addVariantAction(key: unknown, input: Wire): Promise<UiRes
       ),
     ack,
   );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Barcode scan (src/server/intake/barcode.ts). The camera decodes in the browser; these only look
+// the code up, read a photo with AI when the browser could not, and list an item's units for
+// linking (which itself is addBarcodeAction above). Answers carry names, ids, SKU and flags only.
+
+/** At most this much base64 for one barcode photo (made smaller in the browser; the server allows 8 MB of bytes). */
+const MAX_SCAN_BASE64 = 4 * 1024 * 1024;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** What a scanned or typed code belongs to here (no AI, not behind the AI switch). */
+export async function scanLookupAction(code: unknown): Promise<UiResult<BarcodeRead>> {
+  let normalized: string;
+  try {
+    normalized = normalizeBarcode(str(code));
+  } catch {
+    return fail("BAD_BARCODE");
+  }
+  return call("", (m) => lookupBarcode({ code: normalized }, m));
+}
+
+/**
+ * Reads a barcode's digits from one photo with AI (the browser could not decode it). `key` is this
+ * attempt's idempotency key: the screen sends the same photo again with the same key after a lost
+ * answer, and the server then answers from the first attempt (it may wait up to a minute for it).
+ */
+export async function scanReadImageAction(key: unknown, input: Wire): Promise<UiResult<BarcodeRead>> {
+  const data = input.data;
+  if (typeof data !== "string" || data.length === 0 || data.length > MAX_SCAN_BASE64 || !BASE64.test(data)) return fail("INVALID_INPUT");
+  const image = { contentType: str(input.contentType).slice(0, 64), bytes: new Uint8Array(Buffer.from(data, "base64")) };
+  return call(key, (m) => readBarcodeFromImage({ image }, m));
+}
+
+export type ScanItem = {
+  productId: string;
+  variantId: string;
+  nameAr: string;
+  nameCkb: string | null;
+  nameEn: string | null;
+  sku: string;
+  /** Active units, the base unit first. */
+  units: { id: string; name: string; isBase: boolean }[];
+};
+
+/** One item picked to link a code to, with the units a code can go on. */
+export async function scanItemAction(productId: unknown, variantId: unknown): Promise<UiResult<ScanItem>> {
+  const pid = optId(productId);
+  const vid = optId(variantId);
+  if (!pid || !vid || pid.length > 64 || vid.length > 64) return fail("NOT_FOUND");
+  const product = await call("", (m) => getProduct({ id: pid }, m));
+  if (!product.ok) return product;
+  const p = product.value;
+  const variant = p.variants.find((v) => v.id === vid);
+  if (!variant) return fail("NOT_FOUND");
+  const units = variant.units
+    .filter((u) => u.archivedAt === null)
+    .sort((a, b) => Number(b.isBase) - Number(a.isBase))
+    .map((u) => ({ id: u.id, name: u.name, isBase: u.isBase }));
+  return { ok: true, value: { productId: p.id, variantId: variant.id, nameAr: p.nameAr, nameCkb: p.nameCkb, nameEn: p.nameEn, sku: variant.sku, units } };
 }

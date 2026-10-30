@@ -23,6 +23,8 @@ type Props = {
   currency: "IQD" | "USD";
   /** Opened from setup step 4: a "these are trial items" box is offered (off by default). */
   trialOption?: boolean;
+  /** A code from the scan screen: filled in and checked at once, the cursor on the name. */
+  initialBarcode?: string;
 };
 
 type Added = { id: string; productId: string; name: string; barcode: string; price: string | null };
@@ -37,12 +39,12 @@ const KEEP = 10;
  * Enter saves and the form is empty again with the cursor back on the barcode, with no page
  * change. A barcode that already exists opens that product instead (no duplicate is made).
  */
-export function QuickEntry({ locale, t, categories: initialCategories, canPrice, currency, trialOption = false }: Props) {
+export function QuickEntry({ locale, t, categories: initialCategories, canPrice, currency, trialOption = false, initialBarcode }: Props) {
   const router = useRouter();
   const hydrated = useHydrated();
   const e = t.catalog.entry;
   const listId = useId();
-  const [barcode, setBarcode] = useState("");
+  const [barcode, setBarcode] = useState(initialBarcode ?? "");
   const [name, setName] = useState("");
   const [categoryText, setCategoryText] = useState("");
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -69,7 +71,12 @@ export function QuickEntry({ locale, t, categories: initialCategories, canPrice,
   const lookupToken = useRef(0);
   const statusRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => barcodeRef.current?.focus(), []);
+  useEffect(() => {
+    // A scanned code is checked like a typed one (an existing product opens instead).
+    if (initialBarcode) submitBarcode();
+    else barcodeRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the form opens
+  }, []);
   // An error at phone width can sit below the fold (the cursor stays in the fields): show it.
   useEffect(() => {
     if (status?.tone === "danger") statusRef.current?.scrollIntoView({ block: "nearest" });

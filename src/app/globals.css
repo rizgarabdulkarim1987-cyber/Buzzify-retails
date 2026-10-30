@@ -2586,3 +2586,277 @@ textarea.input {
   margin: 0;
   padding: var(--space-3);
 }
+
+/* Barcode scan and AI settings ------------------------------------------------------------------ */
+
+.scan,
+.scan-link,
+.ai-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.scan .section,
+.ai-settings .section {
+  margin: 0;
+}
+
+.scan-camera,
+.scan-result {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.scan h2:focus,
+.scan h4:focus,
+.ai-settings h2:focus {
+  outline: none;
+}
+
+/* The live picture: never wider than the page, a short frame on a phone. */
+.scan-view {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  max-block-size: 55dvh;
+  border-radius: var(--radius);
+  background: var(--color-bar);
+}
+
+.scan-view[hidden] {
+  display: none;
+}
+
+.scan-video {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+/* Where to hold the code: a plain outline, nothing moves. */
+.scan-frame {
+  position: absolute;
+  inset: 30% 12%;
+  border: 2px solid var(--color-bar-ink);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 100vmax oklch(0 0 0 / 0.25);
+  pointer-events: none;
+}
+
+.scan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.scan-actions .btn {
+  min-block-size: var(--control-h);
+}
+
+.scan-pick {
+  position: relative;
+  cursor: pointer;
+}
+
+.scan-pick:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.scan-pick[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.scan-manual {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.scan-manual-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.scan-manual-row .input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: var(--control-h);
+}
+
+.scan-manual-row .btn {
+  flex: none;
+}
+
+.scan-manual .hint,
+.scan-result p,
+.scan-link p {
+  margin: 0;
+}
+
+.scan-notices {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.scan-notices:empty {
+  display: none;
+}
+
+.scan-notices:focus {
+  outline: none;
+}
+
+.scan-item-name {
+  overflow-wrap: anywhere;
+}
+
+.scan-flags {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.scan-flags:empty {
+  display: none;
+}
+
+.scan-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-warn-soft);
+  color: var(--color-warn);
+  font-size: var(--text-sm);
+}
+
+.scan-warn .icon {
+  flex: none;
+  margin-block-start: 0.125rem;
+}
+
+.scan-ai {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.scan .btn[aria-busy="true"],
+.ai-settings .btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+.scan-link {
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.scan-link h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.scan-hits {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scan-hit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-block-size: var(--control-h);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.scan-hit:hover {
+  border-color: var(--color-accent-line);
+}
+
+.scan-hit > :first-child {
+  min-inline-size: 0;
+}
+
+.scan-units {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.scan-units legend {
+  display: grid;
+  gap: var(--space-1);
+  padding: 0;
+  margin-block-end: var(--space-2);
+}
+
+.scan-units h4 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.scan-unit {
+  min-block-size: var(--control-h);
+}
+
+.ai-consent,
+.ai-usage {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ai-consent p,
+.ai-usage p {
+  margin: 0;
+}
+
+.ai-consent-state {
+  font-weight: 600;
+}
+
+.ai-consent-state[data-state="CURRENT"] {
+  color: var(--color-success);
+}
+
+.ai-consent-state[data-state="OUTDATED"],
+.ai-consent-state[data-state="NONE"] {
+  color: var(--color-warn);
+}
+
+.ai-usage-figure {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.ai-meter {
+  inline-size: 100%;
+  block-size: 0.75rem;
+}
+
+.ai-revoke,
+.ai-confirm {
+  display: grid;
+  gap: var(--space-2);
+}

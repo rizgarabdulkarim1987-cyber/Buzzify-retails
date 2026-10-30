@@ -118,3 +118,16 @@ export const StockIcon = () => (
     <path d="M8 14V8h5" />
   </Icon>
 );
+
+export const BarcodeIcon = () => (
+  <Icon>
+    <path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2" />
+    <path d="M8 8v8M11 8v8M14 8v8M16.5 8v8" />
+  </Icon>
+);
+
+export const SparkIcon = () => (
+  <Icon>
+    <path d="M12 3.5 13.8 9a1 1 0 0 0 .7.7l5.5 1.8-5.5 1.8a1 1 0 0 0-.7.7L12 19.5 10.2 14a1 1 0 0 0-.7-.7L4 11.5l5.5-1.8a1 1 0 0 0 .7-.7z" />
+  </Icon>
+);

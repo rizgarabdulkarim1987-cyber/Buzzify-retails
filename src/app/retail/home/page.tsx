@@ -2,9 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { can } from "@/server/domain/permissions";
 import { getI18n } from "../../_lib/i18n";
-import { PackageIcon, StockIcon } from "../../_ui/icons";
+import { BarcodeIcon, PackageIcon, SparkIcon, StockIcon } from "../../_ui/icons";
 import { StateBlock } from "../../_ui/state";
 import { requireShell } from "../_shell";
+import { aiSettingsLink, scanEntry, scanRole } from "../catalog/scan/_lib/rules";
+import { loadAiStatus } from "../stock/receive/photo/_lib/load";
 
 export default async function RetailHomePage() {
   const shell = await requireShell();
@@ -25,6 +27,13 @@ export default async function RetailHomePage() {
   if (!shell.branch) redirect("/retail/select");
   const canSetUp = shell.options?.ok === true && can(shell.options.value.role, "staff.manage");
   const canViewStock = shell.options?.ok === true && can(shell.options.value.role, "stock.view");
+  // Scanning follows the catalog roles only; the AI settings card also needs the AI status (read
+  // only for the owner and the manager, who are the only ones it could show to).
+  const role = shell.options?.ok === true ? scanRole(shell.options.value.role) : null;
+  const showScan = role !== null && scanEntry(role) === "SHOW";
+  const wantsAi = role !== null && shell.businessId !== null && (role.isOwner || (role.isManager && role.canUseAi));
+  const aiStatus = wantsAi ? await loadAiStatus({ userId: shell.user.id, businessId: shell.businessId!, idempotencyKey: "" }) : "UNAVAILABLE";
+  const showAiSettings = role !== null && aiSettingsLink(role, aiStatus) === "SHOW";
 
   return (
     <main className="page">
@@ -49,6 +58,20 @@ export default async function RetailHomePage() {
             <StockIcon />
             <strong>{t.stock.title}</strong>
             <span className="muted">{t.stock.homeCardBody}</span>
+          </Link>
+        ) : null}
+        {showScan ? (
+          <Link href="/retail/catalog/scan" className="business-link" data-testid="open-scan">
+            <BarcodeIcon />
+            <strong>{t.catalog.scan.title}</strong>
+            <span className="muted">{t.catalog.scan.homeCardBody}</span>
+          </Link>
+        ) : null}
+        {showAiSettings ? (
+          <Link href="/retail/settings/ai" className="business-link" data-testid="open-ai-settings">
+            <SparkIcon />
+            <strong>{t.aiSettings.title}</strong>
+            <span className="muted">{t.aiSettings.homeCardBody}</span>
           </Link>
         ) : null}
       </nav>

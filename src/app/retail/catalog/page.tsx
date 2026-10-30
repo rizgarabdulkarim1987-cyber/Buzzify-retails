@@ -66,6 +66,11 @@ export default async function CatalogPage({ searchParams }: { searchParams: Sear
                 </Link>
               ) : null}
               {access.canManage ? (
+                <Link href="/retail/catalog/scan" className="btn btn-secondary" data-testid="catalog-scan">
+                  {t.catalog.scan.open}
+                </Link>
+              ) : null}
+              {access.canManage ? (
                 <Link href="/retail/catalog/new" className="btn btn-primary" data-testid="catalog-add">
                   {t.catalog.list.add}
                 </Link>
