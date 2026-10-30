@@ -2,7 +2,7 @@
 // Money is BigInt minor units; quantities are exact decimal text. Never Number for money.
 import { createHash } from "node:crypto";
 import type { Currency } from "@/generated/prisma/enums";
-import { normalizeSearchText, parseMoneyText, toAsciiDigits } from "./catalog";
+import { gtinCheckDigitOk, normalizeSearchText, parseMoneyText, toAsciiDigits, upcEToUpcA } from "./catalog";
 
 export const INTAKE_MAX_IMAGES = 6;
 export const INTAKE_MAX_LINES = 100;
@@ -26,30 +26,7 @@ export function normalizeDigits(s: string): string {
 /** EAN-13, EAN-8 and UPC-A share one rule: weights 3,1,3,1... from the digit left of the check digit; UPC-E is checked through its UPC-A. */
 const CHECKED_LENGTHS = new Set([8, 12, 13]);
 
-/** The check digit of an EAN/UPC code is right (weights 3,1,3,1... from the digit left of it). */
-function checkDigitOk(v: string): boolean {
-  let sum = 0;
-  for (let i = 0; i < v.length - 1; i++) {
-    const fromRight = v.length - 1 - i; // 1 = digit next to the check digit
-    sum += Number(v[i]) * (fromRight % 2 === 1 ? 3 : 1);
-  }
-  return (10 - (sum % 10)) % 10 === Number(v[v.length - 1]);
-}
-
-/**
- * An 8-digit UPC-E (number system 0 or 1, six data digits, check digit) expanded to its 12-digit
- * UPC-A by the standard rules (the last data digit says where the zeros go); null when not UPC-E.
- */
-function upcEToUpcA(v: string): string | null {
-  if (v.length !== 8 || (v[0] !== "0" && v[0] !== "1")) return null;
-  const [d1, d2, d3, d4, d5, d6] = v.slice(1, 7);
-  let body: string;
-  if (d6 === "0" || d6 === "1" || d6 === "2") body = `${d1}${d2}${d6}0000${d3}${d4}${d5}`;
-  else if (d6 === "3") body = `${d1}${d2}${d3}00000${d4}${d5}`;
-  else if (d6 === "4") body = `${d1}${d2}${d3}${d4}00000${d5}`;
-  else body = `${d1}${d2}${d3}${d4}${d5}0000${d6}`;
-  return `${v[0]}${body}${v[7]}`;
-}
+const checkDigitOk = gtinCheckDigitOk;
 
 export function barcodeCheck(code: string): { ok: boolean; checked: boolean } {
   const v = toAsciiDigits(code).trim();

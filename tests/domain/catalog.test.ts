@@ -3,11 +3,59 @@ import {
   MAX_BARCODE_LENGTH,
   MAX_UNIT_FACTOR,
   assertUnitFactor,
+  barcodeVariants,
+  canonicalBarcode,
   normalizeBarcode,
   normalizeSearchText,
   parseMoneyText,
   suggestUnitPrice,
+  upcEToUpcA,
 } from "@/server/domain/catalog";
+
+describe("GTIN canonical form (GTIN-13)", () => {
+  const UPC_A = "036000291452"; // valid UPC-A
+  const EAN13 = "0036000291452";
+
+  it("a valid 12-digit UPC-A becomes its 13-digit form; a 13-digit code stays as it is", () => {
+    expect(canonicalBarcode(UPC_A)).toBe(EAN13);
+    expect(canonicalBarcode(EAN13)).toBe(EAN13);
+    expect(canonicalBarcode("6291041500213")).toBe("6291041500213");
+    expect(canonicalBarcode("٠٣٦٠٠٠٢٩١٤٥٢")).toBe(EAN13);
+  });
+
+  it("a 12-digit code with a bad check digit is NOT expanded", () => {
+    expect(canonicalBarcode("036000291453")).toBe("036000291453");
+    expect(barcodeVariants("036000291453")).toEqual(["036000291453"]);
+  });
+
+  it("never expands 8-digit codes (EAN-8 and UPC-E cannot be told apart on the server)", () => {
+    expect(canonicalBarcode("73513537")).toBe("73513537");
+    expect(canonicalBarcode("04252614")).toBe("04252614");
+    expect(barcodeVariants("04252614")).toEqual(["04252614"]);
+  });
+
+  it("keeps leading zeros and other codes as they are", () => {
+    expect(canonicalBarcode("00123")).toBe("00123");
+    expect(canonicalBarcode("AB-12/3")).toBe("AB-12/3");
+    expect(() => canonicalBarcode("")).toThrow();
+  });
+
+  it("the variants of a code are every stored form equal to it", () => {
+    expect(new Set(barcodeVariants(UPC_A))).toEqual(new Set([UPC_A, EAN13]));
+    expect(new Set(barcodeVariants(EAN13))).toEqual(new Set([EAN13, UPC_A]));
+    // A 13-digit code not starting with 0 has no 12-digit form.
+    expect(barcodeVariants("6291041500213")).toEqual(["6291041500213"]);
+  });
+
+  it("expands UPC-E to UPC-A by each rule (last data digit 0-2, 3, 4, 5-9)", () => {
+    expect(upcEToUpcA("04252614")).toBe("042100005264");
+    expect(upcEToUpcA("01234531")).toBe("012300000451");
+    expect(upcEToUpcA("01234543")).toBe("012340000053");
+    expect(upcEToUpcA("01234565")).toBe("012345000065");
+    expect(upcEToUpcA("21234565")).toBeNull();
+    expect(upcEToUpcA("1234565")).toBeNull();
+  });
+});
 
 describe("catalog domain", () => {
   it("normalizeSearchText folds hamza, taa marbuta, tashkeel, tatweel, Arabic-Indic digits and case", () => {

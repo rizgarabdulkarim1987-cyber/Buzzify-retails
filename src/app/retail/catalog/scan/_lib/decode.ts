@@ -3,10 +3,14 @@ import { DECODE_FORMATS } from "./rules";
 /*
  * Barcode decoding on the device (spec 3.7): the browser's BarcodeDetector where it exists, else
  * zxing-wasm (loaded only then, its wasm served by this app: reader-wasm/route.ts). Browser only.
- * Nothing leaves the device here; only the code found is looked up.
+ * Nothing leaves the device here; only the code found is looked up. Each decoder answers the text
+ * AND its symbology, so a UPC-E can be expanded here (rules.ts decodedCode), where it is known.
  */
 
-type DetectorLike = { detect(source: ImageBitmapSource): Promise<{ rawValue: string }[]> };
+/** What a decoder found: the text and the symbology's name (BarcodeDetector "upc_e", zxing "UPC-E", ...). */
+export type Decoded = { text: string; format: string };
+
+type DetectorLike = { detect(source: ImageBitmapSource): Promise<{ rawValue: string; format: string }[]> };
 type DetectorClass = {
   new (options: { formats: string[] }): DetectorLike;
   getSupportedFormats(): Promise<string[]>;
@@ -15,9 +19,9 @@ type DetectorClass = {
 export type Decoder = {
   kind: "detector" | "zxing";
   /** A frame of the live camera. */
-  frame(video: HTMLVideoElement): Promise<string | null>;
+  frame(video: HTMLVideoElement): Promise<Decoded | null>;
   /** A still photo. */
-  still(blob: Blob): Promise<string | null>;
+  still(blob: Blob): Promise<Decoded | null>;
 };
 
 /** The wasm's address on this app; the version in the query lets it be cached for good. */
@@ -53,7 +57,10 @@ async function detectorDecoder(): Promise<Decoder | null> {
     const formats = DECODE_FORMATS.detector.filter((f) => supported.includes(f));
     if (!formats.some((f) => f.startsWith("ean_") || f.startsWith("upc_"))) return null;
     const detector = new Detector({ formats });
-    const first = async (source: ImageBitmapSource) => (await detector.detect(source))[0]?.rawValue ?? null;
+    const first = async (source: ImageBitmapSource): Promise<Decoded | null> => {
+      const hit = (await detector.detect(source))[0];
+      return hit && hit.rawValue !== "" ? { text: hit.rawValue, format: hit.format } : null;
+    };
     return {
       kind: "detector",
       frame: (video) => first(video),
@@ -75,7 +82,10 @@ async function zxingDecoder(): Promise<Decoder> {
   const z = await loadZxing();
   const options = { formats: [...DECODE_FORMATS.zxing], tryHarder: true, maxNumberOfSymbols: 1 };
   const canvas = document.createElement("canvas");
-  const first = (results: { text: string; isValid: boolean }[]) => results.find((r) => r.isValid && r.text !== "")?.text ?? null;
+  const first = (results: { text: string; format: string; isValid: boolean }[]): Decoded | null => {
+    const hit = results.find((r) => r.isValid && r.text !== "");
+    return hit ? { text: hit.text, format: hit.format } : null;
+  };
   return {
     kind: "zxing",
     frame: async (video) => {

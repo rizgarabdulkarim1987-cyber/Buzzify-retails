@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Currency } from "@/generated/prisma/enums";
-import { normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
+import { barcodeVariants, normalizeSearchText } from "@/server/domain/catalog";
 import { defineAction } from "@/server/framework/action";
 import { RuleError } from "@/server/framework/errors";
 
@@ -111,15 +111,17 @@ type Special = { variantId: string; unitId?: string; matchedBarcode?: string; ma
 
 async function specialHits(tx: Tx, raw: string, normalized: string, variantWhere: Prisma.RtVariantWhereInput): Promise<Special[]> {
   const out: Special[] = [];
-  let code: string | null = null;
+  let codes: string[] | null = null;
   try {
-    code = normalizeBarcode(raw);
+    codes = barcodeVariants(raw);
   } catch {
-    code = null;
+    codes = null;
   }
-  if (code !== null) {
+  if (codes !== null) {
+    // Every stored form of the code (a 12-digit UPC-A and its 13-digit GTIN are one code).
     const hit = await tx.rtBarcode.findFirst({
-      where: { code, archivedAt: null, unit: { archivedAt: null, variant: variantWhere } },
+      where: { code: { in: codes }, archivedAt: null, unit: { archivedAt: null, variant: variantWhere } },
+      orderBy: { id: "asc" },
       select: { code: true, unit: { select: { id: true, name: true, variantId: true } } },
     });
     if (hit) out.push({ variantId: hit.unit.variantId, unitId: hit.unit.id, matchedBarcode: hit.code, matchedUnitName: hit.unit.name });

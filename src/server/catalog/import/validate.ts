@@ -1,7 +1,7 @@
 // Pure row validation for the catalog import. No database, no clock, no mutation of inputs.
 // Task 9 builds the ExistingIndex from the database and stores the results (serializeRowResult).
 import { MAX_PRICE_MINOR } from "@/server/catalog/price-core";
-import { SKU_PATTERN, assertUnitFactor, normalizeBarcode, normalizeSearchText, parseMoneyText } from "@/server/domain/catalog";
+import { SKU_PATTERN, assertUnitFactor, canonicalBarcode, normalizeSearchText, parseMoneyText } from "@/server/domain/catalog";
 import type { Currency } from "@/server/domain/money";
 import type { Mapping } from "./mapping";
 
@@ -35,7 +35,7 @@ export type ExistingItem = {
   units: readonly ExistingUnit[];
 };
 
-/** Keyed by normalized barcode, or by `skuKey(sku)` for a SKU. */
+/** Keyed by canonical barcode (canonicalBarcode), or by `skuKey(sku)` for a SKU. */
 export type ExistingIndex = ReadonlyMap<string, ExistingItem>;
 export const skuKey = (sku: string): string => `sku:${sku}`;
 
@@ -119,7 +119,7 @@ function parsePrice(text: string, cur: string, biz: BusinessCurrencies) {
 }
 
 /**
- * A non-empty barcode cell to a normalized code, or the reason it is refused: a number cell (xlsx)
+ * A non-empty barcode cell to its stored (canonical) code, or the reason it is refused: a number cell (xlsx)
  * that may have lost its leading zeros (NUMERIC_BARCODE_LOST_ZEROS) or text that is not a code
  * (BAD_BARCODE). Shared with the opening-stock import.
  */
@@ -128,7 +128,7 @@ export function parseBarcodeCell(raw: string, numericCell: boolean): { code: str
   // A number cell: zeros may be gone. A short one, or one with a fraction, is not a barcode we can trust.
   if (numericCell && (!/^\d+$/.test(raw) || !NUMERIC_BARCODE_LENGTHS.has(raw.length))) return { reason: "NUMERIC_BARCODE_LOST_ZEROS" };
   try {
-    return { code: normalizeBarcode(raw) };
+    return { code: canonicalBarcode(raw) };
   } catch {
     return { reason: "BAD_BARCODE" };
   }

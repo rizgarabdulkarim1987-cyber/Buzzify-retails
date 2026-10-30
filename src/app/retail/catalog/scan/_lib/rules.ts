@@ -1,6 +1,6 @@
 import type { RtRole } from "@/generated/prisma/enums";
 import type { Locale, Messages } from "@/messages";
-import { normalizeBarcode } from "@/server/domain/catalog";
+import { canonicalBarcode, toAsciiDigits, upcEToUpcA } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
 import type { BarcodeRead } from "@/server/intake/barcode";
 import type { AiStatus } from "@/server/intake/quota";
@@ -20,13 +20,31 @@ import type { UiFailure } from "../../_lib/types";
 // ---------------------------------------------------------------------------------------------
 // Codes and the keyboard-wedge scanner
 
-/** A typed or scanned code as R1 stores it (Arabic-Indic / Persian digits to ASCII, trimmed), or null when it cannot be one. */
+/**
+ * A typed or scanned code as R1 stores it (Arabic-Indic / Persian digits to ASCII, trimmed, a valid
+ * 12-digit UPC-A as its 13-digit form: canonicalBarcode), or null when it cannot be one.
+ */
 export function normalizeScan(text: string): string | null {
   try {
-    return normalizeBarcode(text);
+    return canonicalBarcode(text);
   } catch {
     return null;
   }
+}
+
+/** The camera decoders' names for UPC-E (BarcodeDetector, zxing). */
+const UPC_E_FORMATS = new Set(["upc_e", "UPC-E"]);
+
+/**
+ * A code the camera decoded, in its stored form. Only here is the symbology known, so only here an
+ * 8-digit UPC-E is expanded (to UPC-A, then GTIN-13); the same 8 digits from an EAN-8 stay as they are.
+ */
+export function decodedCode(d: { text: string; format: string }): string | null {
+  if (UPC_E_FORMATS.has(d.format)) {
+    const upcA = upcEToUpcA(toAsciiDigits(d.text).trim());
+    if (upcA !== null) return normalizeScan(upcA);
+  }
+  return normalizeScan(d.text);
 }
 
 /** A USB scanner types a whole code within a few ms per key; a person is slower. */

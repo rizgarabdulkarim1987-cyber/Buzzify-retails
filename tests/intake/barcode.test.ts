@@ -154,6 +154,22 @@ describe("lookupBarcode", () => {
     expect(await lookupBarcode({ code: "٠٠١٢٣٤٥٦٧٨٩٠٥" }, s.as())).toMatchObject({ ok: true, value: { status: "KNOWN", code: LEADING_ZERO_EAN13 } });
   });
 
+  it("GTIN: a 12-digit UPC-A finds the item stored as 13 digits, and a 13-digit code finds a 12-digit row", async () => {
+    const s = await shop();
+    const a = await s.item("حليب", { barcode: LEADING_ZERO_EAN13 });
+    expect(await lookupBarcode({ code: "012345678905" }, s.as())).toMatchObject({ ok: true, value: { status: "KNOWN", unitId: a.unitId } });
+    const b = await s.item("معجون", { barcode: "036000291452" }); // a row stored before canonicalization
+    expect(await lookupBarcode({ code: "0036000291452" }, s.as())).toMatchObject({ ok: true, value: { status: "KNOWN", unitId: b.unitId } });
+    expect(await lookupBarcode({ code: "036000291452" }, s.as())).toMatchObject({ ok: true, value: { status: "KNOWN", unitId: b.unitId } });
+    // An unknown valid UPC-A answers its canonical (13-digit) form, the one a link stores.
+    expect(await lookupBarcode({ code: "042100005264" }, s.as())).toEqual({ ok: true, value: { status: "UNKNOWN", code: "0042100005264", checked: true } });
+    // A camera UPC-E arrives expanded (0042100005264 from 04252614) and finds the 13-digit item.
+    const c = await s.item("بسكويت", { barcode: "0042100005264" });
+    expect(await lookupBarcode({ code: "0042100005264" }, s.as())).toMatchObject({ ok: true, value: { status: "KNOWN", unitId: c.unitId } });
+    // The same 8 digits typed are not expanded on the server (they may be an EAN-8).
+    expect(await lookupBarcode({ code: "04252614" }, s.as())).toMatchObject({ ok: true, value: { status: "UNKNOWN", code: "04252614" } });
+  });
+
   it("an alphanumeric (internal) code is not checksum-checked", async () => {
     const s = await shop();
     expect(await lookupBarcode({ code: "ABC-123" }, s.as())).toEqual({ ok: true, value: { status: "UNKNOWN", code: "ABC-123", checked: false } });

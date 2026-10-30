@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { Currency, RtTrackingMode } from "@/generated/prisma/enums";
-import { SKU_PATTERN, assertUnitFactor, normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
+import { SKU_PATTERN, assertUnitFactor, barcodeVariants, canonicalBarcode, normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction, validKey, type ActionMeta } from "@/server/framework/action";
@@ -33,6 +33,10 @@ import { applyPrice, assertCurrencyEnabled, derivedUnitPrice, ensureDefaultLists
  * - A barcode is unique in the business across every unit, archived ones included. We look first
  *   (so the refusal can name the product that owns it); the unique index decides races, and its
  *   violation is turned into BARCODE_TAKEN as well.
+ * - Barcodes are stored in their canonical GTIN form (canonicalBarcode: a valid 12-digit UPC-A as
+ *   "0" + code, everything else as normalizeBarcode leaves it); the look-first check searches every
+ *   equal form (barcodeVariants), so a 12-digit row stored before this rule still blocks its
+ *   13-digit twin. No data migration.
  * - SKU: given by the user or generated from the per-business counter (RtCatalogCounter, atomic
  *   increment, so never reused; a generated value that a manual SKU already took is skipped).
  *   It never changes afterwards (no action edits it).
@@ -85,7 +89,7 @@ const patch = <T extends z.ZodType<string>>(s: T) =>
 
 const barcode = z.string().transform((v, ctx) => {
   try {
-    return normalizeBarcode(v);
+    return canonicalBarcode(v);
   } catch {
     ctx.addIssue({ code: "custom", message: "invalid barcode" });
     return z.NEVER;
@@ -251,7 +255,8 @@ async function checkTaxonomy(tx: Tx, categoryId: string | null | undefined, bran
 async function assertBarcodesFree(tx: Tx, codes: string[]): Promise<void> {
   if (codes.length === 0) return;
   const taken = await tx.rtBarcode.findFirst({
-    where: { code: { in: codes } },
+    // Every stored form of each code (a 12-digit row from before canonicalization blocks "0" + code).
+    where: { code: { in: [...new Set(codes.flatMap(barcodeVariants))] } },
     select: {
       code: true,
       unit: { select: { variant: { select: { product: { select: { id: true, nameAr: true, nameCkb: true, nameEn: true } } } } } },
@@ -484,8 +489,13 @@ export async function insertProductsCore(
   /** Codes for EXISTING units (checked free by the caller, under the product lock); inserted in the same sorted INSERT. */
   extraBarcodes: readonly { unitId: string; code: string }[] = [],
 ): Promise<{ productId: string; variantId: string }[]> {
-  const rows = items.map((item) => {
-    for (const code of [...item.baseUnit.barcodes, ...(item.pack?.barcodes ?? [])]) normalizeBarcode(code);
+  const rows = items.map((raw) => {
+    // Stored in the canonical form (canonicalBarcode also refuses what normalizeBarcode refuses).
+    const item: NewCatalogItem = {
+      ...raw,
+      baseUnit: { ...raw.baseUnit, barcodes: raw.baseUnit.barcodes.map(canonicalBarcode) },
+      ...(raw.pack ? { pack: { ...raw.pack, barcodes: raw.pack.barcodes.map(canonicalBarcode) } } : {}),
+    };
     if (item.pack) checkFactor(item.pack.factor);
     const names = [item.nameAr, item.nameCkb, item.nameEn].filter((n): n is string => !!n);
     const codes = [...item.baseUnit.barcodes, ...(item.pack?.barcodes ?? [])];
@@ -528,7 +538,7 @@ export async function insertProductsCore(
       ...r.item.baseUnit.barcodes.map((code) => ({ businessId, unitId: r.baseUnitId, code })),
       ...(r.packUnitId ? (r.item.pack?.barcodes ?? []).map((code) => ({ businessId, unitId: r.packUnitId!, code })) : []),
     ])
-    .concat(extraBarcodes.map((b) => ({ businessId, unitId: b.unitId, code: normalizeBarcode(b.code) })))
+    .concat(extraBarcodes.map((b) => ({ businessId, unitId: b.unitId, code: canonicalBarcode(b.code) })))
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
   if (codes.length > 0) await tx.rtBarcode.createMany({ data: codes });
   const priced = rows.filter((r) => r.item.price !== null);

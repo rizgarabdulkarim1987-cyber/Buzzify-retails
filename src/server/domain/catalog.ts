@@ -39,6 +39,56 @@ export function normalizeBarcode(input: string): string {
   return v;
 }
 
+/** The check digit of an all-digit EAN/UPC/GTIN code is right (weights 3,1,3,1... from the digit left of it). */
+export function gtinCheckDigitOk(v: string): boolean {
+  if (v.length < 2 || !/^\d+$/.test(v)) return false;
+  let sum = 0;
+  for (let i = 0; i < v.length - 1; i++) {
+    const fromRight = v.length - 1 - i; // 1 = digit next to the check digit
+    sum += Number(v[i]) * (fromRight % 2 === 1 ? 3 : 1);
+  }
+  return (10 - (sum % 10)) % 10 === Number(v[v.length - 1]);
+}
+
+/**
+ * An 8-digit UPC-E (number system 0 or 1, six data digits, check digit) expanded to its 12-digit
+ * UPC-A by the standard rules (the last data digit says where the zeros go); null when not UPC-E.
+ * Only where the symbology is known to be UPC-E (the camera decoder): the same 8 digits may be an
+ * EAN-8, so the server never expands an 8-digit code on its own.
+ */
+export function upcEToUpcA(v: string): string | null {
+  if (v.length !== 8 || !/^[01]\d{7}$/.test(v)) return null;
+  const [d1, d2, d3, d4, d5, d6] = v.slice(1, 7);
+  let body: string;
+  if (d6 === "0" || d6 === "1" || d6 === "2") body = `${d1}${d2}${d6}0000${d3}${d4}${d5}`;
+  else if (d6 === "3") body = `${d1}${d2}${d3}00000${d4}${d5}`;
+  else if (d6 === "4") body = `${d1}${d2}${d3}${d4}00000${d5}`;
+  else body = `${d1}${d2}${d3}${d4}${d5}0000${d6}`;
+  return `${v[0]}${body}${v[7]}`;
+}
+
+/**
+ * The stored (canonical) form of a code: normalizeBarcode, then a 12-digit UPC-A with a valid check
+ * digit becomes its 13-digit GTIN-13 ("0" + code). Every other code (13 digits, 8 digits, a bad
+ * check digit, shop labels) stays as normalizeBarcode left it. Throws as normalizeBarcode does.
+ */
+export function canonicalBarcode(input: string): string {
+  const v = normalizeBarcode(input);
+  return v.length === 12 && gtinCheckDigitOk(v) ? `0${v}` : v;
+}
+
+/**
+ * Every stored form equal to a code, for look-ups and uniqueness: the code itself, its canonical
+ * form, and the 12-digit form of a 13-digit code that starts with "0" (a row stored before
+ * canonicalization). Throws as normalizeBarcode does.
+ */
+export function barcodeVariants(input: string): string[] {
+  const v = normalizeBarcode(input);
+  const out = new Set([v, canonicalBarcode(v)]);
+  for (const c of [...out]) if (c.length === 13 && c.startsWith("0") && gtinCheckDigitOk(c.slice(1))) out.add(c.slice(1));
+  return [...out];
+}
+
 const MAX_MONEY_INT_DIGITS = 15;
 
 export function parseMoneyText(text: string, currency: Currency): bigint {

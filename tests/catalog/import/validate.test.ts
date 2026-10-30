@@ -3,6 +3,7 @@ import { parseImportFile } from "@/server/catalog/import/parse";
 import { buildXlsx } from "./xlsx-fixture";
 import { autoMapHeaders } from "@/server/catalog/import/mapping";
 import {
+  parseBarcodeCell,
   IMPORT_LIMITS,
   serializeRowResult,
   validateRows,
@@ -35,6 +36,16 @@ const index = (entries: Record<string, ExistingItem> = {}): ExistingIndex => new
 
 const run = (rows: string[][], existing: ExistingIndex = index(), m: Mapping = mapping, c = biz, o?: Parameters<typeof validateRows>[4]) =>
   validateRows(rows, m, existing, c, o);
+
+describe("parseBarcodeCell (GTIN canonical form)", () => {
+  it("stores a valid 12-digit UPC-A as its 13-digit form; keeps 8 digits, bad check digits and leading zeros", () => {
+    expect(parseBarcodeCell("036000291452", false)).toEqual({ code: "0036000291452" });
+    expect(parseBarcodeCell("036000291452", true)).toEqual({ code: "0036000291452" });
+    expect(parseBarcodeCell("036000291453", false)).toEqual({ code: "036000291453" });
+    expect(parseBarcodeCell("04252614", false)).toEqual({ code: "04252614" });
+    expect(parseBarcodeCell("0012345", false)).toEqual({ code: "0012345" });
+  });
+});
 
 describe("validateRows", () => {
   it("a missing name rejects the row and others stay OK", () => {

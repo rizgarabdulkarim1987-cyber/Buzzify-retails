@@ -386,6 +386,22 @@ describe("doubtful lines", () => {
     // Neither is MATCHED by barcode; the name search proposes the tea at most.
     for (const l of v.result!.lines) expect(l.status).not.toBe("MATCHED");
   });
+
+  it("GTIN: a printed 12-digit UPC-A matches the item stored as 13 digits, and the reverse", async () => {
+    const s = await shop();
+    const a = await s.item("حليب", { units: [{ name: "قطعة", barcode: "0012345678905" }] });
+    const b = await s.item("معجون", { units: [{ name: "قطعة", barcode: "036000291452" }] }); // stored before canonicalization
+    const { intakeId } = await readReceipt(
+      s,
+      receipt([
+        { description: "حليب", barcode: "012345678905", quantity: "1", unitText: "قطعة", unitPrice: "1000", confidence: 0.9 },
+        { description: "معجون", barcode: "0036000291452", quantity: "1", unitText: "قطعة", unitPrice: "1000", confidence: 0.9 },
+      ]),
+    );
+    const v = await view(s, intakeId);
+    expect(v.result!.lines[0]).toMatchObject({ variantId: a.variantId, status: "MATCHED" });
+    expect(v.result!.lines[1]).toMatchObject({ variantId: b.variantId, status: "MATCHED" });
+  });
 });
 
 describe("trial and SERIAL items", () => {

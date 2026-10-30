@@ -279,6 +279,32 @@ describe("barcodes", () => {
     });
   });
 
+  it("GTIN: a valid 12-digit UPC-A is stored as its 13-digit form; either form blocks the other", async () => {
+    const { a } = await world();
+    const UPC_A = "036000291452";
+    const EAN13 = "0036000291452";
+    const p = await product(a, { nameAr: "معجون", baseUnit: piece([UPC_A]) });
+    expect((await db.rtBarcode.findFirstOrThrow({ where: { unitId: p.baseUnitId } })).code).toBe(EAN13);
+    expect(await addBarcode({ unitId: p.baseUnitId, code: EAN13 }, a.as("stock"))).toMatchObject({ ok: false, code: "BARCODE_TAKEN" });
+    expect(await createProduct({ nameAr: "x", baseUnit: piece([UPC_A]) }, a.as("stock"))).toMatchObject({ ok: false, code: "BARCODE_TAKEN" });
+    // The two forms in one request are one code.
+    expect(await createProduct({ nameAr: "y", baseUnit: piece([UPC_A]), extraUnits: [{ name: "ك", factor: 2, barcodes: [EAN13] }] }, a.as("stock"))).toMatchObject({
+      ok: false,
+    });
+    // A row stored as 12 digits before canonicalization still blocks "0" + code, and the reverse.
+    const legacy = await product(a, { nameAr: "قديم" });
+    await db.rtBarcode.create({ data: { businessId: a.business.id, unitId: legacy.baseUnitId, code: "012345678905" } });
+    expect(await addBarcode({ unitId: p.baseUnitId, code: "0012345678905" }, a.as("stock"))).toMatchObject({
+      ok: false,
+      code: "BARCODE_TAKEN",
+      details: { productId: legacy.productId },
+    });
+    expect(await addBarcode({ unitId: p.baseUnitId, code: "012345678905" }, a.as("stock"))).toMatchObject({ ok: false, code: "BARCODE_TAKEN" });
+    // A 12-digit code with a wrong check digit is a different, unexpanded code; 8 digits are never expanded.
+    expect(await addBarcode({ unitId: p.baseUnitId, code: "036000291453" }, a.as("stock"))).toMatchObject({ ok: true, value: { code: "036000291453" } });
+    expect(await addBarcode({ unitId: p.baseUnitId, code: "04252614" }, a.as("stock"))).toMatchObject({ ok: true, value: { code: "04252614" } });
+  });
+
   it("a barcode on an archived product still blocks reuse", async () => {
     const { a } = await world();
     const old = await product(a, { nameAr: "قديم", baseUnit: piece(["999000"]) });

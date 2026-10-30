@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Currency, RtTrackingMode } from "@/generated/prisma/enums";
 import { searchInTx } from "@/server/catalog/search";
-import { normalizeBarcode, normalizeSearchText, parseMoneyText } from "@/server/domain/catalog";
+import { barcodeVariants, canonicalBarcode, normalizeSearchText, parseMoneyText } from "@/server/domain/catalog";
 import {
   MIN_CONFIDENCE,
   barcodeCheck,
@@ -194,7 +194,7 @@ export function priceFromTotal(line: { quantity: string; lineTotal?: string }, c
   return formatMinor(minor, currency);
 }
 
-/** The printed barcode as a usable code, or the note explaining why it is not used. */
+/** The printed barcode as a usable (canonical) code, or the note explaining why it is not used. */
 export function usableBarcode(printed: string | undefined): { code: string } | { note: LineReason } | null {
   if (printed === undefined || printed.trim() === "") return null;
   const raw = printed.trim();
@@ -202,7 +202,7 @@ export function usableBarcode(printed: string | undefined): { code: string } | {
   const code = normalizeDigits(raw);
   const check = barcodeCheck(code);
   if (check.checked && !check.ok) return { note: "BARCODE_CHECKSUM" };
-  return { code: normalizeBarcode(code) };
+  return { code: canonicalBarcode(code) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -342,7 +342,9 @@ type Found = Pick<IntakeLine, "variantId" | "unitId" | "source" | "candidates"> 
 
 async function findByBarcode(tx: Tx, code: string): Promise<Found | null> {
   const hit = await tx.rtBarcode.findFirst({
-    where: { code },
+    // Every stored form (a 12-digit row from before canonicalization matches its 13-digit twin).
+    where: { code: { in: barcodeVariants(code) } },
+    orderBy: { id: "asc" },
     select: {
       archivedAt: true,
       unit: {

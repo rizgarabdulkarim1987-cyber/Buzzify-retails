@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
-import { normalizeBarcode } from "@/server/domain/catalog";
+import { barcodeVariants, canonicalBarcode } from "@/server/domain/catalog";
 import { INTAKE_MAX_IMAGE_BYTES, barcodeCheck, normalizeDigits } from "@/server/domain/intake";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
@@ -23,7 +23,9 @@ type Tx = Prisma.TransactionClient;
  * AI), so this is NOT behind the ai.intake switch and needs no consent; any member holding
  * stock.view or catalog.manage may call it (every role holds stock.view today). The code goes
  * through R1's normalisation (Arabic-Indic / Persian digits to ASCII, trimmed, leading zeros kept;
- * empty, > 64 characters or other characters: INVALID_INPUT). An exact hit (archived codes, archived
+ * empty, > 64 characters or other characters: INVALID_INPUT) to its canonical GTIN form (a valid
+ * 12-digit UPC-A as "0" + code; 8-digit codes never expanded here), and every equal stored form is
+ * searched (a 12-digit row stored before canonicalization is found by its 13-digit twin). An exact hit (archived codes, archived
  * or trial items included, flagged as such) is KNOWN, so the owner is always shown, even for a code
  * the shop stored earlier that fails the retail checksum. Otherwise a digit-only code of retail
  * length (8, 12, 13) with a wrong check digit is INVALID_CHECKSUM, anything else UNKNOWN (checked
@@ -99,7 +101,7 @@ const codeInput = z
       .max(MAX_INPUT_CODE)
       .transform((v, ctx) => {
         try {
-          return normalizeBarcode(v);
+          return canonicalBarcode(v);
         } catch {
           ctx.addIssue({ code: "custom", message: "invalid barcode" });
           return z.NEVER;
@@ -110,7 +112,8 @@ const codeInput = z
 
 async function lookupInTx(tx: Tx, code: string): Promise<BarcodeLookup> {
   const hit = await tx.rtBarcode.findFirst({
-    where: { code },
+    where: { code: { in: barcodeVariants(code) } },
+    orderBy: { id: "asc" },
     select: {
       archivedAt: true,
       unit: {
@@ -264,7 +267,7 @@ function outcomeOfDigits(digits: string | null): Outcome {
   const check = barcodeCheck(code);
   if (!check.checked) return { kind: "NOT_READABLE" };
   if (!check.ok) return { kind: "INVALID_CHECKSUM" };
-  return { kind: "CODE", code: normalizeBarcode(code) };
+  return { kind: "CODE", code: canonicalBarcode(code) };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

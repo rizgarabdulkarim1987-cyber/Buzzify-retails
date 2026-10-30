@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { ImportRowStatus } from "@/generated/prisma/enums";
-import { normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
+import { barcodeVariants, canonicalBarcode, normalizeSearchText } from "@/server/domain/catalog";
 import type { Currency } from "@/server/domain/money";
 import { can } from "@/server/domain/permissions";
 import { defineAction, validKey, type ActionMeta, type Result } from "@/server/framework/action";
@@ -236,9 +236,10 @@ async function effectivePrices(tx: Tx, unitIds: readonly string[]): Promise<Map<
  */
 export async function buildExistingIndex(tx: Tx, barcodes: readonly string[], skus: readonly string[]): Promise<Map<string, ExistingItem>> {
   const codes: { code: string; unitId: string; archived: boolean }[] = [];
-  for (const part of chunks([...new Set(barcodes)])) {
+  // Every stored form of each code; the index is keyed by the canonical form (as the file's codes are).
+  for (const part of chunks([...new Set(barcodes.flatMap(barcodeVariants))])) {
     const found = await tx.rtBarcode.findMany({ where: { code: { in: part } }, select: { code: true, unitId: true, archivedAt: true } });
-    for (const f of found) codes.push({ code: f.code, unitId: f.unitId, archived: f.archivedAt !== null });
+    for (const f of found) codes.push({ code: canonicalBarcode(f.code), unitId: f.unitId, archived: f.archivedAt !== null });
   }
   const skuRows: { id: string; sku: string }[] = [];
   for (const part of chunks([...new Set(skus)])) {
@@ -364,7 +365,7 @@ export const validateImport = defineAction({
       const b = cell(row, "barcode");
       if (b !== "") {
         try {
-          barcodes.push(normalizeBarcode(b));
+          barcodes.push(canonicalBarcode(b));
         } catch {
           // validateRows rejects it (BAD_BARCODE)
         }
@@ -685,7 +686,8 @@ async function runSlice(
   const adds = (r: Pending) => (r.diff ?? []).find((d) => d.field === "barcode")?.after ?? null;
   const codes = [...creates.map((r) => r.normalized.barcode), ...updates.map(adds)].filter((c): c is string => c !== null);
   if (codes.length > 0) {
-    const taken = new Set((await tx.rtBarcode.findMany({ where: { code: { in: codes } }, select: { code: true } })).map((b) => b.code));
+    const variants = [...new Set(codes.flatMap(barcodeVariants))];
+    const taken = new Set((await tx.rtBarcode.findMany({ where: { code: { in: variants } }, select: { code: true } })).map((b) => canonicalBarcode(b.code)));
     for (const r of creates) if (r.normalized.barcode && taken.has(r.normalized.barcode)) reject(r, "BARCODE_TAKEN");
     for (const r of updates) {
       const code = adds(r);

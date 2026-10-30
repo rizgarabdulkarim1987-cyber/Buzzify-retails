@@ -6,7 +6,7 @@ import { setPrice } from "@/server/catalog/prices";
 import { catalogContext } from "@/server/catalog/context";
 import { searchCatalog, type CatalogHit } from "@/server/catalog/search";
 import { createCategory } from "@/server/catalog/taxonomy";
-import { normalizeBarcode, parseMoneyText } from "@/server/domain/catalog";
+import { canonicalBarcode, parseMoneyText } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
 import { getLocale } from "../../_lib/i18n";
 import { messagesFor } from "@/messages";
@@ -77,7 +77,7 @@ export type BarcodeLookup = { exists: false } | { exists: true; productId: strin
 export async function lookupBarcodeAction(code: unknown): Promise<UiResult<BarcodeLookup>> {
   let normalized: string;
   try {
-    normalized = normalizeBarcode(str(code));
+    normalized = canonicalBarcode(str(code));
   } catch {
     return fail("BAD_BARCODE");
   }
@@ -86,7 +86,10 @@ export async function lookupBarcodeAction(code: unknown): Promise<UiResult<Barco
     (m) => searchCatalog({ query: normalized, includeArchived: true, limit: 1 }, m),
     (page): BarcodeLookup => {
       const hit = page.items[0];
-      return hit && hit.matchedBarcode === normalized ? { exists: true, productId: hit.productId } : { exists: false };
+      // The search finds every stored form of the code (a 12-digit row from before canonicalization too).
+      return hit?.matchedBarcode && canonicalBarcode(hit.matchedBarcode) === normalized
+        ? { exists: true, productId: hit.productId }
+        : { exists: false };
     },
   );
 }
@@ -110,7 +113,7 @@ export async function quickCreateAction(key: unknown, input: Wire): Promise<UiRe
   let barcode: string | null = null;
   if (barcodeText !== "") {
     try {
-      barcode = normalizeBarcode(barcodeText);
+      barcode = canonicalBarcode(barcodeText);
     } catch {
       return fail("BAD_BARCODE");
     }
@@ -226,7 +229,7 @@ export async function addUnitAction(key: unknown, input: Wire): Promise<UiResult
   let code: string | null = null;
   if (str(input.barcode).trim() !== "") {
     try {
-      code = normalizeBarcode(str(input.barcode));
+      code = canonicalBarcode(str(input.barcode));
     } catch {
       return fail("BAD_BARCODE");
     }
@@ -253,7 +256,7 @@ export async function addUnitAction(key: unknown, input: Wire): Promise<UiResult
 export async function addBarcodeAction(key: unknown, input: Wire): Promise<UiResult<Done>> {
   let code: string;
   try {
-    code = normalizeBarcode(str(input.code));
+    code = canonicalBarcode(str(input.code));
   } catch {
     return fail("BAD_BARCODE");
   }
@@ -310,7 +313,7 @@ export async function addVariantAction(key: unknown, input: Wire): Promise<UiRes
   let code: string | null = null;
   if (str(input.barcode).trim() !== "") {
     try {
-      code = normalizeBarcode(str(input.barcode));
+      code = canonicalBarcode(str(input.barcode));
     } catch {
       return fail("BAD_BARCODE");
     }
@@ -348,7 +351,7 @@ const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 export async function scanLookupAction(code: unknown): Promise<UiResult<BarcodeRead>> {
   let normalized: string;
   try {
-    normalized = normalizeBarcode(str(code));
+    normalized = canonicalBarcode(str(code));
   } catch {
     return fail("BAD_BARCODE");
   }

@@ -11,9 +11,10 @@ import { blobBase64, preparePage } from "../../stock/receive/photo/_lib/image";
 import { scanLookupAction, scanReadImageAction } from "../actions";
 import { useHydrated } from "../_lib/hydrated";
 import { newKey } from "../_lib/keys";
-import { captureFrame, createDecoder, stopStream, type Decoder } from "./_lib/decode";
+import { captureFrame, createDecoder, stopStream, type Decoded, type Decoder } from "./_lib/decode";
 import {
   SCAN_IMAGE_SIDE,
+  decodedCode,
   emptyWedge,
   itemHref,
   newItemHref,
@@ -184,6 +185,9 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
     [lookUp, s, stopCamera],
   );
 
+  /** A camera / photo decode: its symbology is known, so a UPC-E is expanded before the look-up. */
+  const foundDecoded = useCallback((d: Decoded) => found(decodedCode(d) ?? d.text), [found]);
+
   async function startCamera() {
     if (!hydrated || busyRef.current || camera === "starting" || camera === "on") return;
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -227,7 +231,7 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
         try {
           const value = await d.frame(video);
           if (value && streamRef.current === stream) {
-            found(value);
+            foundDecoded(value);
             return;
           }
         } catch {
@@ -252,7 +256,7 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
     setFailure(null);
     setNoAnswer(false);
     setLinking(false);
-    let value: string | null = null;
+    let value: Decoded | null = null;
     try {
       value = await (await decoder()).still(blob);
     } catch {
@@ -261,7 +265,7 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
     busyRef.current = false;
     setBusy(null);
     if (value) {
-      found(value);
+      foundDecoded(value);
       return;
     }
     setShown({ kind: "DECODE_FAILED" });
