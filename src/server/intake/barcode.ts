@@ -10,6 +10,7 @@ import { ForbiddenError, RuleError, failure, type Result } from "@/server/framew
 import { aiEnabledPrecondition } from "@/server/framework/features";
 import { assertConsent } from "./consent";
 import { AiBadOutputError, AiUnavailableError, getIntakeProvider } from "./provider";
+import { INTAKE_BARCODE_TIMEOUT_MS } from "./provider-claude";
 import { refundUnits, reserveUnits } from "./quota";
 import { DECLARED_ALIASES, sniffPageType } from "./receipts";
 
@@ -60,7 +61,7 @@ type Tx = Prisma.TransactionClient;
  * AI_UNAVAILABLE with the refund; a late claimer then gets that stored outcome.
  */
 
-export const BARCODE_READ_TIMEOUT_MS = 30_000;
+export const BARCODE_READ_TIMEOUT_MS = INTAKE_BARCODE_TIMEOUT_MS;
 /** A claim's lease: provider timeout plus a margin; past it a waiting same-key call fails the claim with its refund. */
 export const BARCODE_LEASE_MS = BARCODE_READ_TIMEOUT_MS + 30_000;
 const POLL_MAX_MS = 2_000;

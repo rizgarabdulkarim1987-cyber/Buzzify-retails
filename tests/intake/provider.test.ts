@@ -6,12 +6,13 @@ import { INTAKE_MAX_LINES } from "@/server/domain/intake";
 import {
   AiBadOutputError,
   AiUnavailableError,
+  barcodeResultSchema,
   extractedReceiptSchema,
   getIntakeProvider,
   type ExtractedReceipt,
 } from "@/server/intake/provider";
 import { FAKE_DEFAULT_BARCODE, FAKE_DEFAULT_RECEIPT, createFakeIntakeProvider } from "@/server/intake/provider-fake";
-import { createClaudeIntakeProvider } from "@/server/intake/provider-claude";
+import { INTAKE_DEFAULT_MODEL, createClaudeIntakeProvider, strictToolSchema } from "@/server/intake/provider-claude";
 
 const JPEG = { contentType: "image/jpeg", bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]) };
 const PDF = { contentType: "application/pdf", bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]) };
@@ -179,7 +180,7 @@ describe("Claude provider", () => {
     return { url, init, headers: new Headers(init.headers), body: JSON.parse(init.body as string) };
   }
 
-  it("sends one forced tool, base64 images, the model, and keeps the key out of the body", async () => {
+  it("sends one strict tool (auto choice), effort low, base64 images, the model, and keeps the key out of the body", async () => {
     fetchMock.mockResolvedValue(okResponse([toolUse("record_receipt", FAKE_DEFAULT_RECEIPT)]));
     await createClaudeIntakeProvider().readReceipt([JPEG, PDF], { signal: signal() });
     const { url, init, headers, body } = lastRequest();
@@ -190,12 +191,23 @@ describe("Claude provider", () => {
     expect(headers.get("content-type")).toBe("application/json");
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(body.model).toBe("claude-sonnet-5-5");
-    expect(body.max_tokens).toBeGreaterThanOrEqual(8000);
+    expect(body.model).toBe(INTAKE_DEFAULT_MODEL);
+    expect(body.max_tokens).toBeGreaterThanOrEqual(24_000);
+    expect(body.output_config).toEqual({ effort: "low" });
     expect(body.tools).toHaveLength(1);
     expect(body.tools[0].name).toBe("record_receipt");
+    expect(body.tools[0].strict).toBe(true);
     expect(body.tools[0].input_schema.type).toBe("object");
     expect(body.tools[0].input_schema.additionalProperties).toBe(false);
-    expect(body.tool_choice).toEqual({ type: "tool", name: "record_receipt" });
+    // Forced tool_choice (any/tool) is a 400 on this model: auto plus an instruction naming the tool.
+    expect(body.tool_choice).toEqual({ type: "auto" });
+    expect(String(body.system)).toContain("record_receipt");
+    // Thinking cannot be disabled on this model; none of these may be sent.
+    expect(body.thinking).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+    expect(body.top_p).toBeUndefined();
+    expect(body.top_k).toBeUndefined();
+    expect(init.body as string).not.toContain("budget_tokens");
     expect(String(body.system)).toMatch(/data/i);
     expect(String(body.system)).toMatch(/never instructions|not instructions/i);
     const content = body.messages[0].content;
@@ -294,13 +306,22 @@ describe("Claude provider", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("reads barcode digits with its own forced tool", async () => {
+  it("reads barcode digits with its own strict tool (no forced tool_choice)", async () => {
     fetchMock.mockResolvedValue(okResponse([toolUse("record_barcode", { digits: "04006381333931" })]));
     expect(await createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).toEqual({ digits: "04006381333931" });
     const { body } = lastRequest();
     expect(body.tools).toHaveLength(1);
     expect(body.tools[0].name).toBe("record_barcode");
-    expect(body.tool_choice).toEqual({ type: "tool", name: "record_barcode" });
+    expect(body.tools[0].strict).toBe(true);
+    expect(body.tool_choice).toEqual({ type: "auto" });
+    expect(String(body.system)).toContain("record_barcode");
+    expect(body.output_config).toEqual({ effort: "low" });
+    expect(body.max_tokens).toBeGreaterThanOrEqual(4096);
+    expect(body.thinking).toBeUndefined();
+    expect(body.messages[0].content[0]).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: Buffer.from(JPEG.bytes).toString("base64") },
+    });
 
     fetchMock.mockResolvedValue(okResponse([toolUse("record_barcode", { digits: null })]));
     expect(await createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).toEqual({ digits: null });
@@ -321,6 +342,96 @@ describe("Claude provider", () => {
       fetchMock.mockResolvedValue(okResponse([toolUse("record_barcode", { digits })]));
       await expect(createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
     }
+  });
+});
+
+describe("Claude provider: strict schema, refusal, timeouts", () => {
+  const KEY = "sk-ant-test-key-123";
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    vi.stubEnv("ANTHROPIC_API_KEY", KEY);
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  const respond = (body: Record<string, unknown>) => new Response(JSON.stringify({ type: "message", role: "assistant", ...body }), { status: 200 });
+
+  const UNSUPPORTED = ["minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "maxItems", "pattern", "$schema"];
+  function walk(node: unknown, visit: (o: Record<string, unknown>) => void) {
+    if (Array.isArray(node)) return node.forEach((n) => walk(n, visit));
+    if (node && typeof node === "object") {
+      visit(node as Record<string, unknown>);
+      Object.values(node).forEach((v) => walk(v, visit));
+    }
+  }
+
+  it.each([
+    ["receipt", extractedReceiptSchema],
+    ["barcode", barcodeResultSchema],
+  ] as const)("the %s tool schema is strict-mode compatible (no unsupported keywords, every object closed)", (_n, schema) => {
+    walk(strictToolSchema(schema), (o) => {
+      for (const k of UNSUPPORTED) expect(Object.keys(o)).not.toContain(k);
+      if (o.type === "object") {
+        expect(o.additionalProperties).toBe(false);
+        expect(Array.isArray(o.required)).toBe(true);
+      }
+    });
+  });
+
+  it("keeps required fields; zod still enforces the stripped bounds server-side", async () => {
+    const json = strictToolSchema(extractedReceiptSchema) as { required: string[]; properties: { lines: { items: { required: string[] } } } };
+    expect(json.required).toEqual(["lines"]);
+    expect([...json.properties.lines.items.required].sort()).toEqual(["confidence", "description", "quantity"]);
+    fetchMock.mockResolvedValue(
+      respond({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "t", name: "record_receipt", input: { lines: [{ ...line(0), confidence: 3 }] } }] }),
+    );
+    await expect(createClaudeIntakeProvider().readReceipt([JPEG], { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
+  });
+
+  it("maps stop_reason refusal to AI_BAD_OUTPUT (reason refusal), even with a tool_use block", async () => {
+    fetchMock.mockResolvedValue(
+      respond({
+        stop_reason: "refusal",
+        stop_details: { type: "refusal", category: "cyber", explanation: "secret explanation" },
+        content: [{ type: "tool_use", id: "t", name: "record_receipt", input: FAKE_DEFAULT_RECEIPT }],
+      }),
+    );
+    const err = await createClaudeIntakeProvider().readReceipt([JPEG], { signal: signal() }).catch((e) => e);
+    expect(err).toBeInstanceOf(AiBadOutputError);
+    expect(err.reason).toBe("refusal");
+    expect(String(err.message)).not.toContain("secret explanation");
+  });
+
+  it("an answer with only text (the model did not call the tool) is AI_BAD_OUTPUT no-tool-use", async () => {
+    fetchMock.mockResolvedValue(respond({ stop_reason: "end_turn", content: [{ type: "thinking", thinking: "" }, { type: "text", text: "I cannot" }] }));
+    const err = await createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() }).catch((e) => e);
+    expect(err).toBeInstanceOf(AiBadOutputError);
+    expect(err.reason).toBe("no-tool-use");
+  });
+
+  it("ignores thinking blocks before the tool call", async () => {
+    fetchMock.mockResolvedValue(
+      respond({
+        stop_reason: "tool_use",
+        content: [{ type: "thinking", thinking: "" }, { type: "tool_use", id: "t", name: "record_barcode", input: { digits: "4006381333931" } }],
+      }),
+    );
+    expect(await createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).toEqual({ digits: "4006381333931" });
+  });
+
+  it("uses a 90 s receipt and a 45 s barcode timeout by default", async () => {
+    const seen: number[] = [];
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      seen.push(ms);
+      return new AbortController().signal;
+    });
+    fetchMock.mockImplementation(async () =>
+      respond({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "t", name: "record_receipt", input: FAKE_DEFAULT_RECEIPT }] }),
+    );
+    await createClaudeIntakeProvider().readReceipt([JPEG], { signal: signal() });
+    fetchMock.mockImplementation(async () => respond({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "t", name: "record_barcode", input: { digits: null } }] }));
+    await createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() });
+    spy.mockRestore();
+    expect(seen).toEqual([90_000, 45_000]);
   });
 });
 

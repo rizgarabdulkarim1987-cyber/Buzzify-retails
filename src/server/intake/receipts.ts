@@ -28,6 +28,7 @@ import {
   type VariantInfo,
 } from "./matching";
 import { AiBadOutputError, AiUnavailableError, extractedReceiptSchema, getIntakeProvider, type ExtractedReceipt } from "./provider";
+import { INTAKE_DEFAULT_MODEL, INTAKE_RECEIPT_TIMEOUT_MS } from "./provider-claude";
 import { refundUnits, reserveUnits } from "./quota";
 
 type Tx = Prisma.TransactionClient;
@@ -99,7 +100,7 @@ const OPEN_RETENTION_DAYS = 90;
 const RETENTION_BATCH = 20;
 const DUPLICATE_DAYS = 90;
 const DAY_MS = 86_400_000;
-const READ_TIMEOUT_MS = 90_000;
+const READ_TIMEOUT_MS = INTAKE_RECEIPT_TIMEOUT_MS;
 /** A read attempt's lease: the provider timeout plus a margin. Past it the attempt is stale (swept, or replaced). */
 export const READ_LEASE_MS = READ_TIMEOUT_MS + 2 * 60_000;
 export const MAX_NEW_ITEMS = 50;
@@ -201,7 +202,7 @@ export function sniffPageType(b: Uint8Array): PageType | null {
 }
 
 /** Declared content types that name a sniffed type by another name (also used by the barcode image upload). */
-export const DECLARED_ALIASES: Readonly<Record<string, PageType>> ={ "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg" };
+export const DECLARED_ALIASES: Readonly<Record<string, PageType>> = { "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg" };
 
 const fileInput = z
   .object({ files: z.array(z.object({ contentType: z.string().max(100), bytes: z.instanceof(Uint8Array) }).strict()).min(1).max(INTAKE_MAX_IMAGES) })
@@ -238,7 +239,7 @@ const createInput = z
 
 function modelName(): string {
   if (process.env.NODE_ENV === "test" || process.env.INTAKE_PROVIDER === "fake") return "fake";
-  return process.env.INTAKE_MODEL || "claude-sonnet-5-5";
+  return process.env.INTAKE_MODEL || INTAKE_DEFAULT_MODEL;
 }
 
 /**

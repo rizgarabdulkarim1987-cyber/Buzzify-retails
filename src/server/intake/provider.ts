@@ -64,7 +64,7 @@ export class AiUnavailableError extends Error {
 /** Provider answered with output outside the schema. Maps to AI_BAD_OUTPUT. Never carries the output itself. */
 export class AiBadOutputError extends Error {
   readonly code = "AI_BAD_OUTPUT" as const;
-  constructor(readonly reason: "no-tool-use" | "schema" | "truncated" | "malformed") {
+  constructor(readonly reason: "no-tool-use" | "schema" | "truncated" | "malformed" | "refusal") {
     super(`AI provider output rejected (${reason})`);
     this.name = "AiBadOutputError";
   }
