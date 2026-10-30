@@ -1,6 +1,12 @@
-// Deterministic intake provider for unit and e2e tests. Its scenario comes from globalThis.__intakeFake;
-// whatever the scenario returns goes through the same strict schema as the real provider's output.
+// Deterministic intake provider for unit and e2e tests. Its scenario comes from globalThis.__intakeFake
+// (same process), else from the JSON file named by INTAKE_FAKE_FILE, read on every call (a separate
+// `next dev` process, as in e2e, cannot see globalThis; a test switches scenarios by rewriting the
+// file). The file is never read in production (getIntakeProvider never selects the fake there
+// either). Whatever the scenario returns goes through the same strict schema as the real
+// provider's output.
+import { readFileSync } from "node:fs";
 import {
+  AiBadOutputError,
   AiUnavailableError,
   parseBarcodeResult,
   parseExtractedReceipt,
@@ -41,12 +47,55 @@ export const FAKE_DEFAULT_RECEIPT: ExtractedReceipt = {
   ],
 };
 
-async function resolve(req: IntakeFakeRequest, signal: AbortSignal): Promise<unknown> {
+/** Waits `ms`; an abort ends the wait at once with AiUnavailableError("aborted"). */
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new AiUnavailableError("aborted"));
+      },
+      { once: true },
+    );
+  });
+}
+
+/**
+ * The scenario file (INTAKE_FAKE_FILE), outside production only. Its JSON is a receipt, a barcode
+ * result ({"digits": ...}), {"error": "unavailable" | "bad-output"}, or any of these wrapped as
+ * {"delayMs": n, "receipt" | "barcode": ...} for a slow read. No file: the defaults.
+ */
+async function fileScenario(signal: AbortSignal): Promise<FakeValue | undefined> {
+  const path = process.env.INTAKE_FAKE_FILE;
+  if (!path || process.env.NODE_ENV === "production") return undefined;
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  let v = JSON.parse(text) as Record<string, unknown>;
+  if (isObject(v) && typeof v.delayMs === "number") {
+    await wait(Math.min(Math.max(0, v.delayMs), 120_000), signal);
+    v = (v.receipt ?? v.barcode) as Record<string, unknown>;
+  }
+  if (isObject(v) && "error" in v) {
+    if (v.error === "unavailable") return new AiUnavailableError("network");
+    if (v.error === "bad-output") return new AiBadOutputError("schema");
+    throw new TypeError(`INTAKE_FAKE_FILE: unknown error scenario ${JSON.stringify(v.error)}`);
+  }
+  return v as unknown as FakeValue;
+}
+
+/** The scenario value for this call and whether it is a fixed one (not a function's answer). */
+async function resolve(req: IntakeFakeRequest, signal: AbortSignal): Promise<{ value: unknown; fixed: boolean }> {
   if (signal.aborted) throw new AiUnavailableError("aborted");
   const s = globalThis.__intakeFake;
-  const value = typeof s === "function" ? await s(req) : s;
+  const value = typeof s === "function" ? await s(req) : s !== undefined ? s : await fileScenario(signal);
   if (value instanceof Error) throw value;
-  return value;
+  return { value, fixed: typeof s !== "function" };
 }
 
 /** A wrong-shaped scenario is a test bug: fail loudly instead of quietly returning the default. */
@@ -60,19 +109,19 @@ const isObject = (v: unknown): v is object => typeof v === "object" && v !== nul
 export function createFakeIntakeProvider(): IntakeProvider {
   return {
     async readReceipt(images, { signal }) {
-      const v = await resolve({ kind: "receipt", images }, signal);
+      const { value: v, fixed } = await resolve({ kind: "receipt", images }, signal);
       if (v === undefined) return parseExtractedReceipt(FAKE_DEFAULT_RECEIPT);
       // A fixed barcode scenario serves barcode calls; receipt calls then use the default receipt.
-      if (globalThis.__intakeFake === v && isObject(v) && "digits" in v) return parseExtractedReceipt(FAKE_DEFAULT_RECEIPT);
+      if (fixed && isObject(v) && "digits" in v) return parseExtractedReceipt(FAKE_DEFAULT_RECEIPT);
       if (!isObject(v) || "digits" in v) wrongShape("receipt", v);
       // Extra fields or too many lines are AiBadOutputError, as from the real provider.
       return parseExtractedReceipt(v);
     },
     async readBarcode(image, { signal }) {
-      const v = await resolve({ kind: "barcode", image }, signal);
+      const { value: v, fixed } = await resolve({ kind: "barcode", image }, signal);
       if (v === undefined) return parseBarcodeResult({ digits: FAKE_DEFAULT_BARCODE });
       // A fixed receipt scenario serves receipt calls; barcode calls then use the default digits.
-      if (globalThis.__intakeFake === v && isObject(v) && "lines" in v) return parseBarcodeResult({ digits: FAKE_DEFAULT_BARCODE });
+      if (fixed && isObject(v) && "lines" in v) return parseBarcodeResult({ digits: FAKE_DEFAULT_BARCODE });
       if (!isObject(v) || !("digits" in v)) wrongShape("barcode", v);
       return parseBarcodeResult(v);
     },

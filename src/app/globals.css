@@ -2223,3 +2223,366 @@ textarea.input {
   inline-size: 100%;
   accent-color: var(--color-accent);
 }
+
+/* Receipt photo intake ----------------------------------------------------------------------------- */
+
+.intake {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+/* A file input lives inside its label (a 44px button); the label shows the keyboard focus. */
+.intake-pick {
+  position: relative;
+  cursor: pointer;
+}
+
+.intake-pick:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.intake-pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.intake-pages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8.5rem), 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.intake-page {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.intake-page-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.intake-page-thumb img {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+.intake-page .btn {
+  inline-size: 100%;
+}
+
+.intake-read {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.intake-read .hint {
+  margin: 0;
+}
+
+.intake .btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+.intake-recent {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.intake-recent-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.intake-recent-row > :first-child {
+  display: grid;
+  min-width: 0;
+}
+
+.intake-reading {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+}
+
+.intake-reading h2:focus {
+  outline: none;
+}
+
+.intake-spinner {
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  border: 3px solid var(--color-accent-soft);
+  border-block-start-color: var(--color-accent);
+  border-radius: 50%;
+  animation: intake-spin 0.9s linear infinite;
+}
+
+@keyframes intake-spin {
+  to {
+    rotate: 1turn;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intake-spinner {
+    animation: none;
+    border-color: var(--color-accent);
+  }
+}
+
+/* Review: the image above the lines on a phone, beside them (and kept in view) on a wide screen. */
+.intake-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (min-width: 64rem) {
+  .intake-review {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+
+  .intake-review .intake-viewer {
+    max-block-size: 75dvh;
+  }
+
+  .intake-viewer-panel {
+    position: sticky;
+    inset-block-start: var(--space-4);
+  }
+}
+
+.intake-viewer-panel {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.intake-viewer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.intake-viewer {
+  max-block-size: 45dvh;
+  overflow: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  overscroll-behavior: contain;
+}
+
+.intake-viewer img {
+  display: block;
+  max-inline-size: none;
+}
+
+.intake-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.intake-details div,
+.intake-printed div {
+  display: grid;
+  min-width: 0;
+}
+
+.intake-details dt,
+.intake-printed dt {
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+}
+
+.intake-details dd,
+.intake-printed dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.intake-filter {
+  min-height: var(--control-h);
+}
+
+.intake-lines {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.intake-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* A line still waiting for a decision takes a quiet full border; a removed one fades. */
+.intake-line[data-open="true"] {
+  border-color: var(--color-line-strong);
+}
+
+.intake-line[data-discarded="true"] {
+  background: var(--color-panel);
+  box-shadow: none;
+  color: var(--color-ink-2);
+}
+
+.intake-line-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.intake-line-head h3 {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.intake-line-head h3:focus {
+  outline: none;
+}
+
+.intake-line-no {
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.intake-printed {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 7rem), 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.intake-reasons {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.intake-item {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+}
+
+.intake-item-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.intake-item-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.intake-item-row .field {
+  flex: 1 1 10rem;
+}
+
+.intake-line-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.intake-candidates {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.intake-total,
+.intake-draft {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.intake-total h3 {
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+.intake-total p,
+.intake-draft .hint {
+  margin: 0;
+}
+
+.intake-total[data-state="mismatch"] {
+  padding: var(--space-3);
+  border: 1px solid var(--color-warn);
+  border-radius: var(--radius);
+  background: var(--color-warn-soft);
+}
+
+.intake-total-warn {
+  color: var(--color-warn);
+  font-weight: 600;
+}
+
+.intake-consent-text {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  white-space: pre-line;
+}
+
+.intake-viewer-note {
+  margin: 0;
+  padding: var(--space-3);
+}

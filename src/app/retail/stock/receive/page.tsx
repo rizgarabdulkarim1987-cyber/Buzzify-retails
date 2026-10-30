@@ -15,6 +15,8 @@ import { DraftList, ReceiptDone, type DraftRowDto } from "../_lib/receipt-views"
 import { businessTimezone } from "../_lib/stock-reads";
 import { ReadOnlyBanner } from "../_lib/views";
 import { postedSummaryAction } from "./actions";
+import { loadAiStatus, photoRole } from "./photo/_lib/load";
+import { photoLink } from "./photo/_lib/rules";
 import { ReceiptForm } from "./receipt-form";
 
 export const dynamic = "force-dynamic";
@@ -139,12 +141,22 @@ export default async function ReceivePage({ searchParams }: { searchParams: Sear
     drafts = drafts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, DRAFTS_SHOWN);
   }
 
+  // "From a receipt photo" (R1b): only on a new receipt, for a role that may use it, while the
+  // ai.intake switch is on; with it off the owner sees one line saying so, everyone else nothing.
+  const role = photoRole(ctx.role);
+  const photo = !initial && kind === "RECEIPT" && role.canUseAi && role.canReceive && role.seesCost ? photoLink(role, await loadAiStatus(access.meta)) : "HIDE";
+
   return (
     <main className="page">
       <div className="page-head">
         <div className="title-row">
           <h1>{kind === "OPENING" ? r.titleOPENING : r.titleRECEIPT}</h1>
           <div className="title-actions">
+            {photo === "SHOW" ? (
+              <Link href="/retail/stock/receive/photo" className="btn btn-primary" data-testid="receipt-photo-link">
+                {t.stock.intake.fromPhoto}
+              </Link>
+            ) : null}
             {kind === "OPENING" && can(ctx.role, "catalog.import") ? (
               <Link href={`/retail/stock/import${fromSetup ? "?from=setup" : ""}`} className="btn btn-secondary" data-testid="receipt-import-link">
                 {r.importFile}
@@ -154,6 +166,11 @@ export default async function ReceivePage({ searchParams }: { searchParams: Sear
           </div>
         </div>
         <p>{kind === "OPENING" ? r.introOPENING : r.introRECEIPT}</p>
+        {photo === "OWNER_HINT" ? (
+          <p className="hint" data-testid="receipt-photo-disabled">
+            {t.stock.intake.disabledHint}
+          </p>
+        ) : null}
       </div>
       {access.readOnly ? <ReadOnlyBanner t={t} /> : null}
       <DraftList locale={locale} t={t} drafts={drafts} query={extra} />

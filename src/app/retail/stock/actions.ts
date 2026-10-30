@@ -4,10 +4,24 @@ import { getProduct } from "@/server/catalog/products";
 import { can } from "@/server/domain/permissions";
 import { adjustStock, writeOffStock } from "@/server/stock/adjust";
 import { getVariantStock, listMovements, listStock } from "@/server/stock/queries";
+import { grantAiConsent } from "@/server/intake/consent";
+import {
+  acknowledgeIntakeTotal,
+  createDraftFromIntake,
+  createIntake,
+  createIntakeItems,
+  resolveIntakeLine,
+  runIntakeRead,
+  setIntakeCurrency,
+} from "@/server/intake/receipts";
 import { loadShell } from "../_shell";
-import { call, fail } from "../catalog/_lib/call";
+import { call, fail, metaFor } from "../catalog/_lib/call";
 import { batchDto, movementDto, stockRowDto } from "./_lib/format";
+import type { ItemInfo } from "./_lib/receipt-rules";
 import type { AdjustDone, AdjustSetup, MovementPage, StockPage, StockResult } from "./_lib/types";
+import { MAX_PAGES, MAX_PAGE_BYTES } from "./receive/photo/_lib/image";
+import { loadIntakeReview, loadItems, type IntakeReview } from "./receive/photo/_lib/load";
+import type { IntakeStatus } from "./receive/photo/_lib/rules";
 
 /*
  * The browser's door to the stock actions, on the catalog screens' pattern: the session and the
@@ -109,4 +123,141 @@ export async function adjustAction(key: unknown, input: Wire): Promise<StockResu
   if (reason !== "LOST" && reason !== "COUNT_FIX" && reason !== "OTHER") return fail("INVALID_INPUT");
   const direction = input.mode;
   return call(key, (m) => adjustStock({ ...fields, direction, reason }, m), done);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Receipt photo intake (src/server/intake). Every action needs the ai.intake switch, ai.use,
+// stock.receive and cost.view (the actions check them); prices reach the browser only through
+// intakeReviewAction, for a caller with cost.view. Writes return ids and versions only. `key` is
+// the idempotency key of one attempt: kept while the same intent is sent again after a lost answer.
+
+const MAX_PAGE_BASE64 = Math.ceil(MAX_PAGE_BYTES / 3) * 4 + 4;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+const optVersion = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : null);
+const optLineNo = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 1000 ? v : null);
+
+async function seesCostNow(): Promise<boolean> {
+  const shell = await loadShell();
+  return shell?.options?.ok === true && can(shell.options.value.role, "cost.view");
+}
+
+/** The owner agrees to send the business's images to the AI provider (the current consent text). */
+export async function grantAiConsentAction(key: unknown): Promise<StockResult<{ consented: true }>> {
+  return call(key, (m) => grantAiConsent({}, m), () => ({ consented: true as const }));
+}
+
+/** Uploads one receipt's pages (base64, made smaller in the browser) and reserves one read. */
+export async function createIntakeAction(key: unknown, input: Wire): Promise<StockResult<{ intakeId: string; duplicateOf?: string }>> {
+  const raw = input.files;
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_PAGES) return fail("INVALID_INPUT");
+  const files: { contentType: string; bytes: Uint8Array }[] = [];
+  for (const f of raw as unknown[]) {
+    if (typeof f !== "object" || f === null) return fail("INVALID_INPUT");
+    const w = f as Wire;
+    const data = w.data;
+    if (typeof data !== "string" || data.length === 0 || data.length > MAX_PAGE_BASE64 || !BASE64.test(data)) return fail("INVALID_INPUT");
+    files.push({ contentType: str(w.contentType).slice(0, 64), bytes: new Uint8Array(Buffer.from(data, "base64")) });
+  }
+  return call(key, (m) => createIntake({ files }, m));
+}
+
+/** Reads an uploaded intake (10-60 s); the answer is its status, or the failure. */
+export async function runIntakeReadAction(key: unknown, intakeId: unknown): Promise<StockResult<{ status: IntakeStatus }>> {
+  const id = optId(intakeId);
+  if (!id) return fail("NOT_FOUND");
+  return call(key, (m) => runIntakeRead({ intakeId: id }, m), (v) => ({ status: v.status }));
+}
+
+/** The intake as its review screen shows it, with the items its lines name (prices only with cost.view). */
+export async function intakeReviewAction(intakeId: unknown): Promise<StockResult<IntakeReview>> {
+  const id = optId(intakeId);
+  if (!id) return fail("NOT_FOUND");
+  const meta = await metaFor("");
+  if (!meta) return fail("FORBIDDEN");
+  return loadIntakeReview(id, meta, await seesCostNow());
+}
+
+/** One item picked for a line (a candidate or a search hit), with its active units. */
+export async function intakeItemAction(variantId: unknown): Promise<StockResult<ItemInfo>> {
+  const id = optId(variantId);
+  if (!id) return fail("NOT_FOUND");
+  const meta = await metaFor("");
+  if (!meta) return fail("FORBIDDEN");
+  const item = (await loadItems([id], meta))[id];
+  return item ? { ok: true, value: item } : fail("NOT_FOUND");
+}
+
+type LineAction = { kind: "PICK_ITEM"; variantId: string; unitId: string } | { kind: "PICK_UNIT"; unitId: string } | { kind: "USE_TOTAL_DIV_QTY" } | { kind: "DISCARD" };
+
+function lineAction(v: unknown): LineAction | null {
+  if (typeof v !== "object" || v === null) return null;
+  const a = v as Wire;
+  switch (a.kind) {
+    case "PICK_ITEM": {
+      const variantId = optId(a.variantId);
+      const unitId = optId(a.unitId);
+      return variantId && unitId ? { kind: "PICK_ITEM", variantId, unitId } : null;
+    }
+    case "PICK_UNIT": {
+      const unitId = optId(a.unitId);
+      return unitId ? { kind: "PICK_UNIT", unitId } : null;
+    }
+    case "USE_TOTAL_DIV_QTY":
+    case "DISCARD":
+      return { kind: a.kind };
+    default:
+      return null;
+  }
+}
+
+type Versioned = StockResult<{ intakeId: string; version: number }>;
+
+/** Settles one line: pick the item and unit, confirm the unit (and so the item), price from the total, or remove it for good. */
+export async function resolveIntakeLineAction(key: unknown, input: Wire): Promise<Versioned> {
+  const intakeId = optId(input.intakeId);
+  const lineNo = optLineNo(input.lineNo);
+  const expectedVersion = optVersion(input.expectedVersion);
+  const action = lineAction(input.action);
+  if (!intakeId || !lineNo || !expectedVersion || !action) return fail("INVALID_INPUT");
+  return call(key, (m) => resolveIntakeLine({ intakeId, lineNo, action, expectedVersion }, m));
+}
+
+/** The receipt's currency (one the business has enabled). */
+export async function setIntakeCurrencyAction(key: unknown, input: Wire): Promise<Versioned> {
+  const intakeId = optId(input.intakeId);
+  const expectedVersion = optVersion(input.expectedVersion);
+  const currency = input.currency === "IQD" || input.currency === "USD" ? input.currency : null;
+  if (!intakeId || !expectedVersion || !currency) return fail("INVALID_INPUT");
+  return call(key, (m) => setIntakeCurrency({ intakeId, currency, expectedVersion }, m));
+}
+
+/** Accepts a receipt total that does not match the lines (until what the check reads changes). */
+export async function acknowledgeIntakeTotalAction(key: unknown, input: Wire): Promise<Versioned> {
+  const intakeId = optId(input.intakeId);
+  const expectedVersion = optVersion(input.expectedVersion);
+  if (!intakeId || !expectedVersion) return fail("INVALID_INPUT");
+  return call(key, (m) => acknowledgeIntakeTotal({ intakeId, expectedVersion }, m));
+}
+
+/** Creates a minimal item for each of these lines, all or none (catalog.manage). */
+export async function createIntakeItemsAction(key: unknown, input: Wire): Promise<StockResult<{ intakeId: string; version: number; created: number }>> {
+  const intakeId = optId(input.intakeId);
+  const expectedVersion = optVersion(input.expectedVersion);
+  const raw = input.lineNos;
+  if (!intakeId || !expectedVersion || !Array.isArray(raw) || raw.length < 1 || raw.length > 50) return fail("INVALID_INPUT");
+  const lineNos = (raw as unknown[]).map(optLineNo);
+  if (lineNos.some((n) => n === null)) return fail("INVALID_INPUT");
+  return call(key, (m) => createIntakeItems({ intakeId, lineNos: lineNos as number[], expectedVersion }, m), (v) => ({
+    intakeId: v.intakeId,
+    version: v.version,
+    created: v.created,
+  }));
+}
+
+/** Makes the receiving draft from a settled receipt; the receiving screen opens it next. */
+export async function createDraftFromIntakeAction(key: unknown, input: Wire): Promise<StockResult<{ documentId: string }>> {
+  const intakeId = optId(input.intakeId);
+  const expectedVersion = optVersion(input.expectedVersion);
+  if (!intakeId || !expectedVersion) return fail("INVALID_INPUT");
+  return call(key, (m) => createDraftFromIntake({ intakeId, expectedVersion }, m));
 }

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INTAKE_MAX_LINES } from "@/server/domain/intake";
 import {
@@ -318,5 +321,67 @@ describe("Claude provider", () => {
       fetchMock.mockResolvedValue(okResponse([toolUse("record_barcode", { digits })]));
       await expect(createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
     }
+  });
+});
+
+describe("fake provider: scenario file (INTAKE_FAKE_FILE, for a separate next dev process)", () => {
+  let dir = "";
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "intake-fake-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const file = (body: unknown) => {
+    const p = join(dir, "scenario.json");
+    writeFileSync(p, JSON.stringify(body));
+    return p;
+  };
+
+  it("reads the receipt from the file on every call (a test can switch scenarios between reads)", async () => {
+    const p = createFakeIntakeProvider();
+    vi.stubEnv("INTAKE_FAKE_FILE", file(receipt(3)));
+    expect((await p.readReceipt([JPEG], { signal: signal() })).lines).toHaveLength(3);
+    file(receipt(1));
+    expect((await p.readReceipt([JPEG], { signal: signal() })).lines).toHaveLength(1);
+    // A receipt file serves receipt calls; barcode calls keep the default digits.
+    expect(await p.readBarcode(JPEG, { signal: signal() })).toEqual({ digits: FAKE_DEFAULT_BARCODE });
+  });
+
+  it("names failures by word, and its output still goes through the strict schema", async () => {
+    const p = createFakeIntakeProvider();
+    vi.stubEnv("INTAKE_FAKE_FILE", file({ error: "unavailable" }));
+    await expect(p.readReceipt([JPEG], { signal: signal() })).rejects.toBeInstanceOf(AiUnavailableError);
+    file({ error: "bad-output" });
+    await expect(p.readReceipt([JPEG], { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
+    file({ ...receipt(1), extra: true });
+    await expect(p.readReceipt([JPEG], { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
+    file({ error: "nonsense" });
+    await expect(p.readReceipt([JPEG], { signal: signal() })).rejects.toThrow(/INTAKE_FAKE_FILE/);
+  });
+
+  it("waits delayMs (a slow read), and stops at once when the call is aborted", async () => {
+    const p = createFakeIntakeProvider();
+    vi.stubEnv("INTAKE_FAKE_FILE", file({ delayMs: 50, receipt: receipt(2) }));
+    const started = Date.now();
+    expect((await p.readReceipt([JPEG], { signal: signal() })).lines).toHaveLength(2);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(40);
+    file({ delayMs: 10_000, receipt: receipt(2) });
+    const ctrl = new AbortController();
+    const pending = p.readReceipt([JPEG], { signal: ctrl.signal });
+    ctrl.abort();
+    await expect(pending).rejects.toBeInstanceOf(AiUnavailableError);
+  });
+
+  it("a missing file means the defaults; globalThis.__intakeFake wins over the file; production never reads it", async () => {
+    const p = createFakeIntakeProvider();
+    vi.stubEnv("INTAKE_FAKE_FILE", join(dir, "absent.json"));
+    expect(await p.readReceipt([JPEG], { signal: signal() })).toEqual(FAKE_DEFAULT_RECEIPT);
+    vi.stubEnv("INTAKE_FAKE_FILE", file({ error: "unavailable" }));
+    globalThis.__intakeFake = receipt(1);
+    expect((await p.readReceipt([JPEG], { signal: signal() })).lines).toHaveLength(1);
+    globalThis.__intakeFake = undefined;
+    vi.stubEnv("NODE_ENV", "production");
+    expect(await p.readReceipt([JPEG], { signal: signal() })).toEqual(FAKE_DEFAULT_RECEIPT);
+    vi.stubEnv("INTAKE_PROVIDER", "fake");
+    await expect(getIntakeProvider().readReceipt([JPEG], { signal: signal() })).rejects.toBeInstanceOf(AiUnavailableError);
   });
 });
