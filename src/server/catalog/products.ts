@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { Currency, RtTrackingMode } from "@/generated/prisma/enums";
-import { SKU_PATTERN, assertUnitFactor, barcodeVariants, canonicalBarcode, normalizeBarcode, normalizeSearchText } from "@/server/domain/catalog";
+import { SKU_PATTERN, assertUnitFactor, barcodeVariants, canonicalBarcode, normalizeSearchText } from "@/server/domain/catalog";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction, validKey, type ActionMeta } from "@/server/framework/action";
