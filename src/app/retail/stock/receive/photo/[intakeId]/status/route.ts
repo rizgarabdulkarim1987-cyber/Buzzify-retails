@@ -19,10 +19,10 @@ const json = (body: unknown, status = 200) =>
 export async function GET(_req: Request, ctx: { params: Promise<{ intakeId: string }> }) {
   const { intakeId } = await ctx.params;
   if (!isId(intakeId)) return json({ ok: false, code: "NOT_FOUND" }, 404);
-  const meta = await metaFor("");
-  if (!meta) return json({ ok: false, code: "FORBIDDEN" }, 403);
   let read: Awaited<ReturnType<typeof getIntake>>;
   try {
+    const meta = await metaFor("");
+    if (!meta) return json({ ok: false, code: "FORBIDDEN" }, 403);
     read = await getIntake({ intakeId }, meta);
   } catch (err) {
     console.error(`[intake.status] unexpected failure: ${err instanceof Error ? err.name : typeof err}`);

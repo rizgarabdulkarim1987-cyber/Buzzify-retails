@@ -78,6 +78,8 @@ describe("scanned codes in the canonical GTIN-13 form", () => {
   it("a camera UPC-E (symbology known) is expanded to its 13-digit form; the same digits as EAN-8 are not", () => {
     expect(decodedCode({ text: "01234565", format: "upc_e" })).toBe("0012345000065");
     expect(decodedCode({ text: "04252614", format: "UPC-E" })).toBe("0042100005264");
+    // zxing-wasm reports its C++ enum name.
+    expect(decodedCode({ text: "04252614", format: "UPCE" })).toBe("0042100005264");
     expect(decodedCode({ text: "73513537", format: "ean_8" })).toBe("73513537");
     expect(decodedCode({ text: "036000291452", format: "upc_a" })).toBe("0036000291452");
     expect(decodedCode({ text: "6291041500213", format: "EAN-13" })).toBe("6291041500213");

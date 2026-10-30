@@ -361,7 +361,7 @@ export async function scanLookupAction(code: unknown): Promise<UiResult<BarcodeR
 /**
  * Reads a barcode's digits from one photo with AI (the browser could not decode it). `key` is this
  * attempt's idempotency key: the screen sends the same photo again with the same key after a lost
- * answer, and the server then answers from the first attempt (it may wait up to a minute for it).
+ * answer, and the server then answers from the first attempt (it may wait up to 75 s for it: the 45 s read plus its 30 s lease margin).
  */
 export async function scanReadImageAction(key: unknown, input: Wire): Promise<UiResult<BarcodeRead>> {
   if (input === null || typeof input !== "object") return fail("INVALID_INPUT");

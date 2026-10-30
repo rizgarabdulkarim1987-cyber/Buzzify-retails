@@ -50,6 +50,15 @@ export interface IntakeProvider {
 }
 
 /** Provider could not be reached or refused (network, timeout, abort, HTTP error, no key). Maps to AI_UNAVAILABLE. */
+/**
+ * Why a call's signal ended it: a timeout (AbortSignal.timeout, whoever created it) or an abort.
+ * The caller's own timeout signal reports TimeoutError, so it is logged as the timeout it is.
+ */
+export function abortReason(signal: AbortSignal): "timeout" | "aborted" {
+  const r: unknown = signal.reason;
+  return r instanceof Error && r.name === "TimeoutError" ? "timeout" : "aborted";
+}
+
 export class AiUnavailableError extends Error {
   readonly code = "AI_UNAVAILABLE" as const;
   constructor(

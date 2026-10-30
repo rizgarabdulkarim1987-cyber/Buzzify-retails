@@ -14,6 +14,7 @@
 //   stop_details are never logged or kept.
 import { z } from "zod";
 import {
+  abortReason,
   AiBadOutputError,
   AiUnavailableError,
   barcodeResultSchema,
@@ -188,7 +189,7 @@ async function callTool(call: Call, opts: ClaudeIntakeOptions): Promise<unknown>
     });
   } catch {
     if (timeout.aborted && !call.signal.aborted) throw new AiUnavailableError("timeout");
-    if (call.signal.aborted) throw new AiUnavailableError("aborted");
+    if (call.signal.aborted) throw new AiUnavailableError(abortReason(call.signal));
     throw new AiUnavailableError("network");
   }
 
@@ -202,7 +203,7 @@ async function callTool(call: Call, opts: ClaudeIntakeOptions): Promise<unknown>
   try {
     body = await res.json();
   } catch {
-    if (signal.aborted) throw new AiUnavailableError(timeout.aborted && !call.signal.aborted ? "timeout" : "aborted");
+    if (signal.aborted) throw new AiUnavailableError(call.signal.aborted ? abortReason(call.signal) : "timeout");
     throw new AiBadOutputError("malformed");
   }
   if (!body || typeof body !== "object" || !Array.isArray((body as { content?: unknown }).content)) {

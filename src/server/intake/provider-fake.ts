@@ -6,6 +6,7 @@
 // provider's output.
 import { readFileSync } from "node:fs";
 import {
+  abortReason,
   AiBadOutputError,
   AiUnavailableError,
   parseBarcodeResult,
@@ -47,7 +48,7 @@ export const FAKE_DEFAULT_RECEIPT: ExtractedReceipt = {
   ],
 };
 
-/** Waits `ms`; an abort ends the wait at once with AiUnavailableError("aborted"). */
+/** Waits `ms`; an abort ends the wait at once with AiUnavailableError (timeout or aborted, by its reason). */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
@@ -55,7 +56,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
       "abort",
       () => {
         clearTimeout(timer);
-        reject(new AiUnavailableError("aborted"));
+        reject(new AiUnavailableError(abortReason(signal)));
       },
       { once: true },
     );
@@ -91,7 +92,7 @@ async function fileScenario(signal: AbortSignal): Promise<FakeValue | undefined>
 
 /** The scenario value for this call and whether it is a fixed one (not a function's answer). */
 async function resolve(req: IntakeFakeRequest, signal: AbortSignal): Promise<{ value: unknown; fixed: boolean }> {
-  if (signal.aborted) throw new AiUnavailableError("aborted");
+  if (signal.aborted) throw new AiUnavailableError(abortReason(signal));
   const s = globalThis.__intakeFake;
   const value = typeof s === "function" ? await s(req) : s !== undefined ? s : await fileScenario(signal);
   if (value instanceof Error) throw value;

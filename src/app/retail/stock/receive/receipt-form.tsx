@@ -7,6 +7,7 @@ import { fill, pickName } from "../../../_lib/format";
 import { Notice } from "../../../_ui/state";
 import { useHydrated } from "../../catalog/_lib/hydrated";
 import { newKey } from "../../catalog/_lib/keys";
+import { normalizeScan } from "../../catalog/scan/_lib/rules";
 import {
   addScanned,
   blockedReason,
@@ -258,7 +259,9 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
       }
       const list = res.value;
       // A scanned barcode (or a single match) adds at once; several matches are offered to pick from.
-      const exact = list.find((h) => h.matchedBarcode !== undefined && h.matchedBarcode === text.trim());
+      // Compared in canonical GTIN-13 form, so a typed 12-digit UPC-A matches its stored 13-digit code.
+      const typed = normalizeScan(text);
+      const exact = typed === null ? undefined : list.find((h) => h.matchedBarcode !== undefined && normalizeScan(h.matchedBarcode) === typed);
       const pick = exact ?? (list.length === 1 ? list[0] : undefined);
       if (pick) {
         setHits(null);

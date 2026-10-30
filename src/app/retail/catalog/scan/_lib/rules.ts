@@ -32,15 +32,21 @@ export function normalizeScan(text: string): string | null {
   }
 }
 
-/** The camera decoders' names for UPC-E (BarcodeDetector, zxing). */
-const UPC_E_FORMATS = new Set(["upc_e", "UPC-E"]);
+/**
+ * Whether a decoder's format name is UPC-E. The decoders spell it differently (BarcodeDetector
+ * "upc_e", zxing's option name "UPC-E", zxing-wasm's result "UPCE"), so the name is compared
+ * lowercased with everything but letters removed.
+ */
+function isUpcE(format: string): boolean {
+  return format.toLowerCase().replace(/[^a-z]/g, "") === "upce";
+}
 
 /**
  * A code the camera decoded, in its stored form. Only here is the symbology known, so only here an
  * 8-digit UPC-E is expanded (to UPC-A, then GTIN-13); the same 8 digits from an EAN-8 stay as they are.
  */
 export function decodedCode(d: { text: string; format: string }): string | null {
-  if (UPC_E_FORMATS.has(d.format)) {
+  if (isUpcE(d.format)) {
     const upcA = upcEToUpcA(toAsciiDigits(d.text).trim());
     if (upcA !== null) return normalizeScan(upcA);
   }

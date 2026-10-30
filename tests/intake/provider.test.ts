@@ -418,6 +418,21 @@ describe("Claude provider: strict schema, refusal, timeouts", () => {
     expect(await createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).toEqual({ digits: "4006381333931" });
   });
 
+  it("the caller's own timeout signal is a timeout, a plain abort is aborted", async () => {
+    const hang = (_url: unknown, init: { signal: AbortSignal }) =>
+      new Promise((_r, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
+    fetchMock.mockImplementation(hang);
+    const timedOut = await createClaudeIntakeProvider()
+      .readBarcode(JPEG, { signal: AbortSignal.timeout(5) })
+      .catch((e) => e);
+    expect(timedOut).toBeInstanceOf(AiUnavailableError);
+    expect(timedOut.reason).toBe("timeout");
+    const ctrl = new AbortController();
+    const pending = createClaudeIntakeProvider().readBarcode(JPEG, { signal: ctrl.signal }).catch((e) => e);
+    ctrl.abort();
+    expect((await pending).reason).toBe("aborted");
+  });
+
   it("uses a 90 s receipt and a 45 s barcode timeout by default", async () => {
     const seen: number[] = [];
     const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
@@ -480,6 +495,9 @@ describe("fake provider: scenario file (INTAKE_FAKE_FILE, for a separate next de
     const pending = p.readReceipt([JPEG], { signal: ctrl.signal });
     ctrl.abort();
     await expect(pending).rejects.toBeInstanceOf(AiUnavailableError);
+    // The caller's timeout signal ending the wait is a timeout.
+    const timedOut = await p.readReceipt([JPEG], { signal: AbortSignal.timeout(5) }).catch((e) => e);
+    expect(timedOut.reason).toBe("timeout");
   });
 
   it("a missing file means the defaults; globalThis.__intakeFake wins over the file; production never reads it", async () => {
