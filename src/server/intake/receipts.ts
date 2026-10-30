@@ -594,6 +594,20 @@ export type IntakeView = {
 const isStale = (r: { status: RtIntakeStatus; readingStartedAt: Date | null }, now: Date) => r.status === "READING" && leaseExpired(r.readingStartedAt, now);
 const sweepMeta = (meta: ActionMeta): ActionMeta => ({ ...meta, idempotencyKey: `intake-sweep:${randomUUID()}` });
 
+/**
+ * Sweeps the stale read attempts; true when it ran. An unexpected failure inside it (it is on the
+ * polling hot path) is logged by its class only and leaves the caller with its first read; the next
+ * read sweeps again.
+ */
+async function trySweep(intakeIds: string[], meta: ActionMeta): Promise<boolean> {
+  try {
+    return (await sweepStaleReads({ intakeIds }, sweepMeta(meta))).ok;
+  } catch (err) {
+    logUnexpected("intake.sweep", err);
+    return false;
+  }
+}
+
 const readIntake = defineAction({
   name: "intake.get",
   permission: "cost.view",
@@ -637,8 +651,7 @@ const readIntake = defineAction({
 export async function getIntake(raw: unknown, meta: ActionMeta): Promise<Result<IntakeView>> {
   const first = await readIntake(raw, meta);
   if (!first.ok || !isStale(first.value, new Date())) return first;
-  const swept = await sweepStaleReads({ intakeIds: [first.value.id] }, sweepMeta(meta));
-  return swept.ok ? readIntake(raw, meta) : first;
+  return (await trySweep([first.value.id], meta)) ? readIntake(raw, meta) : first;
 }
 
 export type IntakeListRow = {
@@ -696,8 +709,7 @@ export async function listIntakes(raw: unknown, meta: ActionMeta): Promise<Resul
   const now = new Date();
   const staleIds = first.value.rows.filter((r) => isStale(r, now)).map((r) => r.id);
   if (staleIds.length === 0) return first;
-  const swept = await sweepStaleReads({ intakeIds: staleIds }, sweepMeta(meta));
-  return swept.ok ? readIntakeList(raw, meta) : first;
+  return (await trySweep(staleIds, meta)) ? readIntakeList(raw, meta) : first;
 }
 
 /** The bytes of one stored page (1-based position); NOT_FOUND once retention removed it. */

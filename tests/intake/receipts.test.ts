@@ -26,6 +26,19 @@ import { createBusinessWithStaff, createPlan, createPlatformAdmin } from "../hel
 
 const { db } = useTestDb();
 
+/** Makes refundUnits throw (an unexpected failure inside a sweep) while on; passes through otherwise. */
+const refundFault = vi.hoisted(() => ({ on: false }));
+vi.mock("@/server/intake/quota", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/server/intake/quota")>();
+  return {
+    ...real,
+    refundUnits: async (...args: Parameters<typeof real.refundUnits>) => {
+      if (refundFault.on) throw new Error("refund broke");
+      return real.refundUnits(...args);
+    },
+  };
+});
+
 const DAY = 86_400_000;
 const key = () => randomUUID();
 let skuSeq = 0;
@@ -884,6 +897,24 @@ describe("read attempts", () => {
     // Running it again answers the failure and refunds nothing more.
     expect(await runIntakeRead({ intakeId: two }, s.as())).toMatchObject({ ok: false, code: "AI_UNAVAILABLE" });
     expect(await s.usage()).toBe(2);
+  });
+
+  it("a sweep that throws does not break getIntake / listIntakes: they answer their first read and log the class only", async () => {
+    const s = await shop();
+    const one = ok(await createIntake({ files: [page()] }, s.as())).intakeId;
+    await db.rtIntake.update({ where: { id: one }, data: { status: "READING", readingStartedAt: new Date(Date.now() - 10 * 60_000), readingAttemptId: "lost" } });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    refundFault.on = true;
+    try {
+      expect(await getIntake({ intakeId: one }, s.as())).toMatchObject({ ok: true, value: { status: "READING" } });
+      expect(await listIntakes({}, s.as())).toMatchObject({ ok: true });
+      expect(spy).toHaveBeenCalledWith("[intake.sweep] unexpected failure: InternalActionError");
+    } finally {
+      refundFault.on = false;
+      spy.mockRestore();
+    }
+    // Once the fault is gone the next read sweeps it as usual.
+    expect(await getIntake({ intakeId: one }, s.as())).toMatchObject({ ok: true, value: { status: "FAILED", failureCode: "AI_UNAVAILABLE" } });
   });
 
   it("an expired attempt may be replaced by a new one on the same reservation", async () => {

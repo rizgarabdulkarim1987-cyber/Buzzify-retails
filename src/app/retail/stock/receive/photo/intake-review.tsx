@@ -129,6 +129,8 @@ export function IntakeScreen(props: Props) {
           const res = await fetch(`${photoHref(id)}/status`, { signal: ctrl.signal, cache: "no-store" });
           const body = (await res.json()) as { ok: boolean; status?: IntakeStatus; code?: StockFailure["code"] };
           if (ctrl.signal.aborted) return;
+          // A failure on our side (503 INTERNAL) is a dropped check: tried again on the next tick.
+          if (!body.ok && body.code === "INTERNAL") continue;
           if (!body.ok) {
             setRunFailure({ code: body.code ?? "INTERNAL" });
             return;
