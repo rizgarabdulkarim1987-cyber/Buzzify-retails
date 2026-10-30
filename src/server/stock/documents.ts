@@ -247,6 +247,43 @@ async function writeLines(tx: Tx, actor: Actor, doc: { id: string; branchId: str
   });
 }
 
+type DraftHeader = { kind: "OPENING" | "RECEIPT"; supplierRef: string | null; note: string | null };
+
+/** Checks the lines and creates a new draft in the actor's default place (no lock: nobody can reach it yet). */
+async function createDraft(tx: Tx, actor: Actor, header: DraftHeader, rawLines: z.infer<typeof draftLine>[]) {
+  const biz = await businessOf(tx);
+  const lines = rawLines.map((l, i) => parseDraftLine(l, i + 1, biz));
+  const catalog = await loadCatalog(tx, lines);
+  const quantities = lines.map((l) => checkLine(l, catalog, biz).quantity);
+  const place = await defaultPlace(tx);
+  const doc = await tx.rtStockDocument.create({
+    data: { businessId: actor.businessId, ...place, ...header },
+    select: { id: true, version: true, branchId: true },
+  });
+  await writeLines(tx, actor, doc, lines, quantities);
+  return { documentId: doc.id, version: doc.version };
+}
+
+const receiptDraftInput = z
+  .object({ supplierRef: optionalText(MAX_SUPPLIER_REF_LENGTH), note: optionalText(MAX_NOTE_LENGTH), lines: z.array(draftLine).max(MAX_DOCUMENT_LINES) })
+  .strict();
+
+/**
+ * The create path of saveStockDraft for a RECEIPT, run inside another action's transaction (the AI
+ * receipt intake, R1b). Same checks and refusals as saveStockDraft (INVALID_INPUT, NOT_FOUND,
+ * TEST_ITEM, SERIAL_NOT_SUPPORTED, STOCK_RULE); the caller has checked stock.receive. Takes no lock.
+ */
+export async function createReceiptDraftInTx(
+  tx: Tx,
+  actor: Actor,
+  input: { supplierRef: string | null; note: string | null; lines: DraftLineInput[] },
+): Promise<{ documentId: string; version: number }> {
+  const parsed = receiptDraftInput.safeParse(input);
+  if (!parsed.success) throw new RuleError("INVALID_INPUT");
+  const { supplierRef, note, lines } = parsed.data;
+  return createDraft(tx, actor, { kind: "RECEIPT", supplierRef, note }, lines);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Actions
 
@@ -258,22 +295,13 @@ export const saveStockDraft = defineAction({
   writes: true,
   timeoutMs: 20_000,
   async run({ actor, tx, input, lockBusiness }): Promise<{ documentId: string; version: number }> {
+    const header = { kind: input.kind, supplierRef: input.supplierRef, note: input.note };
+    if (input.documentId === undefined || input.expectedVersion === undefined) return createDraft(tx, actor, header, input.lines);
+
     const biz = await businessOf(tx);
     const lines = input.lines.map((l, i) => parseDraftLine(l, i + 1, biz));
     const catalog = await loadCatalog(tx, lines);
     const quantities = lines.map((l) => checkLine(l, catalog, biz).quantity);
-    const header = { kind: input.kind, supplierRef: input.supplierRef, note: input.note };
-
-    if (input.documentId === undefined || input.expectedVersion === undefined) {
-      const place = await defaultPlace(tx);
-      const doc = await tx.rtStockDocument.create({
-        data: { businessId: actor.businessId, ...place, ...header },
-        select: { id: true, version: true, branchId: true },
-      });
-      await writeLines(tx, actor, doc, lines, quantities);
-      return { documentId: doc.id, version: doc.version };
-    }
-
     const doc = await lockReceiptDraft(tx, input.documentId, lockBusiness);
     await updateVersioned(tx.rtStockDocument, { id: doc.id, status: "DRAFT" }, input.expectedVersion, header);
     await tx.rtStockLine.deleteMany({ where: { documentId: doc.id } });

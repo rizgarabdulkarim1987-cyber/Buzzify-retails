@@ -619,6 +619,30 @@ export const createProduct = defineAction({
   audit: (input, value) => audit("RtProduct", value.productId, { input, created: value }),
 });
 
+const minimalItem = z.object({ nameAr, baseUnitName: unitName, quantityScale }).strict();
+
+/**
+ * The smallest createProduct (R1b receipt intake, "create the new items"): an Arabic name, one
+ * variant with a generated SKU and one base unit; no category, brand, price, barcode or tracking,
+ * never a trial item. Runs inside the caller's action transaction; the caller has checked
+ * catalog.manage. Takes no lock, like createProduct without taxonomy (nobody can reach the new
+ * product before it commits; the SKU counter row is the only shared row and comes last).
+ * INVALID_INPUT for a name or unit name createProduct would refuse.
+ */
+export async function createMinimalProductInTx(
+  tx: Tx,
+  businessId: string,
+  item: { nameAr: string; baseUnitName: string; quantityScale: number },
+): Promise<CreatedProduct> {
+  const parsed = minimalItem.safeParse(item);
+  if (!parsed.success) throw new RuleError("INVALID_INPUT");
+  const { baseUnitName, quantityScale: scale } = parsed.data;
+  const product = await tx.rtProduct.create({ data: { businessId, nameAr: parsed.data.nameAr }, select: { id: true } });
+  const v = await insertVariant(tx, businessId, product.id, { options: null, baseUnit: { name: baseUnitName, quantityScale: scale, barcodes: [] }, extraUnits: [] });
+  await refreshSearchText(tx, product.id);
+  return { productId: product.id, ...v };
+}
+
 /** Changes the given fields (missing = unchanged, null = cleared). The SKU is not editable. */
 export const updateProduct = defineAction({
   name: "catalog.product.update",
