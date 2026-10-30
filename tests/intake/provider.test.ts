@@ -83,11 +83,34 @@ describe("fake provider", () => {
 });
 
 describe("getIntakeProvider", () => {
-  it("is the fake under NODE_ENV=test or INTAKE_PROVIDER=fake, else Claude", async () => {
+  it("is the fake under NODE_ENV=test", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("INTAKE_PROVIDER", "");
     expect(await getIntakeProvider().readReceipt([JPEG], { signal: signal() })).toEqual(FAKE_DEFAULT_RECEIPT);
-    vi.stubEnv("NODE_ENV", "production");
+  });
+
+  it("is the fake under NODE_ENV=development with INTAKE_PROVIDER=fake (e2e on next dev)", async () => {
+    vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("INTAKE_PROVIDER", "fake");
     expect(await getIntakeProvider().readReceipt([JPEG], { signal: signal() })).toEqual(FAKE_DEFAULT_RECEIPT);
+  });
+
+  it("never selects the fake in production: INTAKE_PROVIDER=fake fails closed per call", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("INTAKE_PROVIDER", "fake");
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-key-123");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const p = getIntakeProvider(); // must not throw
+    const r = await p.readReceipt([JPEG], { signal: signal() }).catch((e) => e);
+    expect(r).toBeInstanceOf(AiUnavailableError);
+    expect(r.reason).toBe("config");
+    await expect(p.readBarcode(JPEG, { signal: signal() })).rejects.toBeInstanceOf(AiUnavailableError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("is Claude in production without the flag (no key: AiUnavailableError, no fetch)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("INTAKE_PROVIDER", "");
     vi.stubEnv("ANTHROPIC_API_KEY", "");
     const fetchMock = vi.fn();
@@ -95,6 +118,38 @@ describe("getIntakeProvider", () => {
     // Constructing the real provider without a key must not crash; calling it is AI_UNAVAILABLE.
     await expect(getIntakeProvider().readReceipt([JPEG], { signal: signal() })).rejects.toBeInstanceOf(AiUnavailableError);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("is Claude in production without the flag (calls the API)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("INTAKE_PROVIDER", "");
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-key-123");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "t", name: "record_barcode", input: { digits: "1" } }] })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await getIntakeProvider().readBarcode(JPEG, { signal: signal() })).toEqual({ digits: "1" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("fake provider: wrong-shaped scenarios", () => {
+  it("throws a clear error instead of returning the default", async () => {
+    const p = createFakeIntakeProvider();
+    globalThis.__intakeFake = () => ({ digits: "1" });
+    await expect(p.readReceipt([JPEG], { signal: signal() })).rejects.toThrow(/wrong-shaped scenario/);
+    globalThis.__intakeFake = () => receipt(1);
+    await expect(p.readBarcode(JPEG, { signal: signal() })).rejects.toThrow(/wrong-shaped scenario/);
+    globalThis.__intakeFake = "nonsense" as unknown as ExtractedReceipt;
+    await expect(p.readReceipt([JPEG], { signal: signal() })).rejects.toThrow(/wrong-shaped scenario/);
+    await expect(p.readBarcode(JPEG, { signal: signal() })).rejects.toThrow(/wrong-shaped scenario/);
+  });
+
+  it("an undefined scenario still returns the defaults", async () => {
+    const p = createFakeIntakeProvider();
+    globalThis.__intakeFake = () => undefined as unknown as ExtractedReceipt;
+    expect(await p.readReceipt([JPEG], { signal: signal() })).toEqual(FAKE_DEFAULT_RECEIPT);
+    expect(await p.readBarcode(JPEG, { signal: signal() })).toEqual({ digits: FAKE_DEFAULT_BARCODE });
   });
 });
 
@@ -251,5 +306,17 @@ describe("Claude provider", () => {
     await expect(createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
     fetchMock.mockResolvedValue(okResponse([toolUse("record_barcode", { digits: "1", extra: true })]));
     await expect(createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
+  });
+
+  it("accepts ASCII, Arabic-Indic and Persian digits but rejects digits toAsciiDigits cannot normalise", async () => {
+    for (const digits of ["4006381333931", "٤٠٠٦٣٨١٣٣٣٩٣١", "۴۰۰۶۳۸۱۳۳۳۹۳۱"]) {
+      fetchMock.mockResolvedValue(okResponse([toolUse("record_barcode", { digits })]));
+      expect(await createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).toEqual({ digits });
+    }
+    for (const digits of ["४००६३८१३३३९३१", "๔๐๐๖๓๘๑๓๓๓๙๓๑"]) {
+      // Devanagari, Thai
+      fetchMock.mockResolvedValue(okResponse([toolUse("record_barcode", { digits })]));
+      await expect(createClaudeIntakeProvider().readBarcode(JPEG, { signal: signal() })).rejects.toBeInstanceOf(AiBadOutputError);
+    }
   });
 });

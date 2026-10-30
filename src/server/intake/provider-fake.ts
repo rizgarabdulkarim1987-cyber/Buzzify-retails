@@ -49,15 +49,32 @@ async function resolve(req: IntakeFakeRequest, signal: AbortSignal): Promise<unk
   return value;
 }
 
+/** A wrong-shaped scenario is a test bug: fail loudly instead of quietly returning the default. */
+function wrongShape(kind: "receipt" | "barcode", v: unknown): never {
+  const shape = v === null ? "null" : Array.isArray(v) ? "array" : typeof v === "object" ? `{${Object.keys(v as object).join(",")}}` : typeof v;
+  throw new TypeError(`__intakeFake: ${kind} call got a wrong-shaped scenario (${shape})`);
+}
+
+const isObject = (v: unknown): v is object => typeof v === "object" && v !== null && !Array.isArray(v);
+
 export function createFakeIntakeProvider(): IntakeProvider {
   return {
     async readReceipt(images, { signal }) {
       const v = await resolve({ kind: "receipt", images }, signal);
-      return parseExtractedReceipt(v && typeof v === "object" && !("digits" in v) ? v : FAKE_DEFAULT_RECEIPT);
+      if (v === undefined) return parseExtractedReceipt(FAKE_DEFAULT_RECEIPT);
+      // A fixed barcode scenario serves barcode calls; receipt calls then use the default receipt.
+      if (globalThis.__intakeFake === v && isObject(v) && "digits" in v) return parseExtractedReceipt(FAKE_DEFAULT_RECEIPT);
+      if (!isObject(v) || "digits" in v) wrongShape("receipt", v);
+      // Extra fields or too many lines are AiBadOutputError, as from the real provider.
+      return parseExtractedReceipt(v);
     },
     async readBarcode(image, { signal }) {
       const v = await resolve({ kind: "barcode", image }, signal);
-      return parseBarcodeResult(v && typeof v === "object" && "digits" in v ? v : { digits: FAKE_DEFAULT_BARCODE });
+      if (v === undefined) return parseBarcodeResult({ digits: FAKE_DEFAULT_BARCODE });
+      // A fixed receipt scenario serves receipt calls; barcode calls then use the default digits.
+      if (globalThis.__intakeFake === v && isObject(v) && "lines" in v) return parseBarcodeResult({ digits: FAKE_DEFAULT_BARCODE });
+      if (!isObject(v) || !("digits" in v)) wrongShape("barcode", v);
+      return parseBarcodeResult(v);
     },
   };
 }

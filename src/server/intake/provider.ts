@@ -28,11 +28,11 @@ export const extractedReceiptSchema = z.strictObject({
   lines: z.array(extractedLineSchema).max(INTAKE_MAX_LINES).describe("Every item line, in printed order"),
 });
 
-/** Barcode digits in any script (ASCII, Arabic-Indic, Persian), as printed; null when unreadable. */
+/** Barcode digits as printed in ASCII, Arabic-Indic or Persian digits (what toAsciiDigits normalises); null when unreadable. */
 export const barcodeResultSchema = z.strictObject({
   digits: z
     .string()
-    .regex(/^\p{Nd}{1,32}$/u)
+    .regex(/^[0-9٠-٩۰-۹]{1,32}$/)
     .nullable()
     .describe("Only the barcode digits as printed, or null if they cannot be read with certainty"),
 });
@@ -82,8 +82,28 @@ export function parseBarcodeResult(raw: unknown): BarcodeResult {
   return r.data;
 }
 
-/** Fake under tests or INTAKE_PROVIDER=fake (e2e), else Claude. Never throws: a missing key fails per call. */
+/** Every call fails with AI_UNAVAILABLE (config): used when production is misconfigured to the fake. */
+function misconfiguredProvider(): IntakeProvider {
+  return {
+    async readReceipt() {
+      throw new AiUnavailableError("config");
+    },
+    async readBarcode() {
+      throw new AiUnavailableError("config");
+    },
+  };
+}
+
+/**
+ * Fake under tests, or INTAKE_PROVIDER=fake outside production (e2e on `next dev`), else Claude.
+ * Production never selects the fake: there INTAKE_PROVIDER=fake fails closed per call.
+ * Never throws: a missing key or bad configuration fails per call.
+ */
 export function getIntakeProvider(): IntakeProvider {
-  if (process.env.NODE_ENV === "test" || process.env.INTAKE_PROVIDER === "fake") return createFakeIntakeProvider();
+  const env = process.env.NODE_ENV;
+  if (env === "test") return createFakeIntakeProvider();
+  if (process.env.INTAKE_PROVIDER === "fake") {
+    return env === "production" ? misconfiguredProvider() : createFakeIntakeProvider();
+  }
   return createClaudeIntakeProvider();
 }
