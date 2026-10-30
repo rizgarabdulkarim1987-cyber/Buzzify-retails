@@ -32,9 +32,11 @@ import {
   newItemLines,
   pollDelay,
   readingPlan,
+  refusalFocus,
   shownLines,
   type IntakeLineDto,
   type IntakeStatus,
+  type ReviewFocus,
 } from "./_lib/rules";
 import { DraftBar, LineBadge, ReasonList, TotalBar } from "./_lib/views";
 
@@ -83,7 +85,7 @@ export function IntakeScreen(props: Props) {
   const runStarted = useRef(false);
   const cancelledRef = useRef(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const plan = readingPlan(review.intake.status);
+  const plan = readingPlan(review.intake.status, props.readOnly);
   const waiting = plan === "RUN" || plan === "POLL";
 
   const refresh = useCallback(async (): Promise<boolean> => {
@@ -202,6 +204,24 @@ export function IntakeScreen(props: Props) {
     );
   }
 
+  if (plan === "READ_ONLY") {
+    // A read-only business: the read is not started (it would only be refused) and nothing is counted.
+    const r = m.reading;
+    return (
+      <section className="section intake" data-testid="intake-read-only">
+        <h2 ref={titleRef} tabIndex={-1}>
+          {r.title}
+        </h2>
+        <Notice tone="danger">{r.readOnly}</Notice>
+        <div className="intake-line-actions">
+          <Link href="/retail/stock/receive" className="btn btn-secondary">
+            {m.manual}
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
   if (plan === "FAILED") {
     const r = m.reading;
     const code = (review.intake.failureCode ?? "AI_UNAVAILABLE") as StockFailure["code"];
@@ -229,7 +249,7 @@ export function IntakeScreen(props: Props) {
 // ---------------------------------------------------------------------------------------------
 // Review
 
-type Focus = { kind: "line"; n: number } | { kind: "draft" } | { kind: "currency" } | { kind: "total" } | { kind: "lines" };
+type Focus = ReviewFocus;
 
 function Review({
   t,
@@ -250,6 +270,8 @@ function Review({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<StockFailure | null>(null);
   const [noAnswer, setNoAnswer] = useState(false);
+  // A write was saved but the intake could not be read again: nothing more is sent from the old version.
+  const [stale, setStale] = useState(false);
   const [announce, setAnnounce] = useState("");
   const [onlyOpen, setOnlyOpen] = useState(false);
   const [focus, setFocus] = useState<{ to: Focus; run: number } | null>(null);
@@ -260,9 +282,10 @@ function Review({
   const draftRef = useRef<HTMLButtonElement>(null);
   const currencyRef = useRef<HTMLSelectElement>(null);
   const totalRef = useRef<HTMLDivElement>(null);
+  const failureRef = useRef<HTMLDivElement>(null);
 
-  const canAct = hydrated && !readOnly && intake.status === "READ";
-  const gate = draftGate({ hydrated, readOnly, busy }, intake);
+  const canAct = hydrated && !readOnly && !stale && intake.status === "READ";
+  const gate = draftGate({ hydrated, readOnly, busy: busy || stale }, intake);
   const open = intake.lines.filter(isOpen);
   const lines = shownLines(intake.lines, onlyOpen);
   const toCreate = canCreateItems ? newItemLines(intake.lines) : [];
@@ -281,6 +304,7 @@ function Review({
     if (to.kind === "draft") return draftRef.current?.focus();
     if (to.kind === "currency") return currencyRef.current?.focus();
     if (to.kind === "total") return totalRef.current?.querySelector<HTMLElement>("button, h3")?.focus();
+    if (to.kind === "failure" && failureRef.current) return failureRef.current.focus();
     linesHead.current?.focus();
   }, [focus]);
 
@@ -301,34 +325,70 @@ function Review({
     setNoAnswer(false);
     const version = intake.version;
     attempt.current = nextAttempt(attempt.current, `${intent}@${version}`, newKey);
+    let res: StockResult<T>;
     try {
-      const res = await send(attempt.current.key, version);
-      attempt.current = null;
-      if (!res.ok) {
-        const fresh = res.code === "VERSION_CONFLICT" || res.code === "INVALID_TRANSITION" ? await intakeReviewAction(intake.id) : null;
-        if (fresh?.ok) setReview(fresh.value);
-        setFailure(res.code === "VERSION_CONFLICT" ? { code: "VERSION_CONFLICT" } : res);
-        const n = Number(res.details?.lineNo);
-        if (Number.isInteger(n) && n >= 1) {
-          setOnlyOpen(false);
-          focusTo({ kind: "line", n });
-        } else if (res.details?.reason === "CURRENCY") focusTo({ kind: "currency" });
-        else if (res.details?.reason === "TOTAL") focusTo({ kind: "total" });
-        return;
-      }
-      const after = done(res.value);
-      const fresh = await intakeReviewAction(intake.id);
-      if (fresh.ok) setReview(fresh.value);
-      if (after?.text) setAnnounce(after.text);
-      if (after?.focus) {
-        if (after.focus.kind === "line" && fresh.ok) {
-          const next = focusAfter(fresh.value.intake.lines, after.focus.n);
-          focusTo(next === null ? { kind: "draft" } : { kind: "line", n: next });
-        } else focusTo(after.focus);
-      }
+      res = await send(attempt.current.key, version);
     } catch {
       // No answer: the key is kept, so the same action again replays instead of applying twice.
       setNoAnswer(true);
+      focusTo({ kind: "failure" });
+      busyRef.current = false;
+      setBusy(false);
+      return;
+    }
+    attempt.current = null;
+    try {
+      if (!res.ok) {
+        if (res.code === "VERSION_CONFLICT" || res.code === "INVALID_TRANSITION") await reload();
+        setFailure(res.code === "VERSION_CONFLICT" ? { code: "VERSION_CONFLICT" } : res);
+        const to = refusalFocus(res);
+        if (to.kind === "line") setOnlyOpen(false);
+        focusTo(to);
+        return;
+      }
+      // Saved. The screen must show the new version before anything else is sent from it.
+      const after = done(res.value);
+      const fresh = await reload();
+      if (after?.text) setAnnounce(after.text);
+      if (!fresh) return focusTo({ kind: "failure" });
+      if (after?.focus) {
+        if (after.focus.kind === "line") {
+          const next = focusAfter(fresh.intake.lines, after.focus.n);
+          focusTo(next === null ? { kind: "draft" } : { kind: "line", n: next });
+        } else focusTo(after.focus);
+      }
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  /** Reads the intake again; when that fails the screen is marked stale (no write from the old version). */
+  async function reload(): Promise<IntakeReview | null> {
+    try {
+      const fresh = await intakeReviewAction(intake.id);
+      if (fresh.ok) {
+        setReview(fresh.value);
+        setStale(false);
+        return fresh.value;
+      }
+    } catch {
+      // Treated as a failed reload below.
+    }
+    setStale(true);
+    return null;
+  }
+
+  async function reloadNow() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      if (await reload()) {
+        setFailure(null);
+        setNoAnswer(false);
+        focusTo({ kind: "lines" });
+      } else focusTo({ kind: "failure" });
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -371,14 +431,14 @@ function Review({
         router.push(receiveHref({ draft: res.value.documentId }));
         return;
       }
-      setFailure(res);
-      const fresh = await intakeReviewAction(intake.id);
-      if (fresh.ok) setReview(fresh.value);
-      const n = Number(res.details?.lineNo);
-      if (Number.isInteger(n) && n >= 1) focusTo({ kind: "line", n });
-      else draftRef.current?.focus();
+      setFailure(res.code === "VERSION_CONFLICT" ? { code: "VERSION_CONFLICT" } : res);
+      await reload();
+      const to = refusalFocus(res);
+      if (to.kind === "line") setOnlyOpen(false);
+      focusTo(to);
     } catch {
       setNoAnswer(true);
+      focusTo({ kind: "failure" });
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -543,16 +603,28 @@ function Review({
             />
           </div>
 
-          {failure ? (
-            <div className="section" data-testid="intake-failure">
-              <Notice tone="danger">{failure.code === "VERSION_CONFLICT" ? r.conflict : intakeFailureMessage(t, failure, locale)}</Notice>
-            </div>
-          ) : null}
-          {noAnswer ? (
-            <div className="section" data-testid="intake-no-answer">
-              <Notice tone="danger">{r.noAnswer}</Notice>
-            </div>
-          ) : null}
+          <div ref={failureRef} tabIndex={-1} className="intake" data-testid="intake-notices">
+            {failure ? (
+              <div className="section" data-testid="intake-failure">
+                <Notice tone="danger">{failure.code === "VERSION_CONFLICT" ? r.conflict : intakeFailureMessage(t, failure, locale)}</Notice>
+              </div>
+            ) : null}
+            {noAnswer ? (
+              <div className="section" data-testid="intake-no-answer">
+                <Notice tone="danger">{r.noAnswer}</Notice>
+              </div>
+            ) : null}
+            {stale ? (
+              <div className="section" data-testid="intake-stale">
+                <Notice tone="danger">{r.reloadFailed}</Notice>
+                <div className="intake-line-actions">
+                  <button type="button" className="btn btn-primary" aria-busy={busy || undefined} onClick={() => void reloadNow()} data-testid="intake-reload">
+                    {r.reload}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <section className="section panel">
             <DraftBar t={t} locale={locale} gate={gate} busy={busy} onDraft={() => void createDraft()} buttonRef={draftRef} />
@@ -579,12 +651,23 @@ function Detail({ label, value, none }: { label: string; value: string | undefin
 
 const ZOOMS = [100, 150, 200, 300] as const;
 
+/** Why a page image did not show: the page is a PDF (asked with HEAD, no bytes), or it is gone. */
+async function pageKindOf(src: string): Promise<"pdf" | "gone"> {
+  try {
+    const res = await fetch(src, { method: "HEAD", cache: "no-store" });
+    return res.ok && res.headers.get("Content-Type") === "application/pdf" ? "pdf" : "gone";
+  } catch {
+    return "gone";
+  }
+}
+
 /** The receipt's pages, one at a time, with zoom (the image scrolls inside its box, never the page). */
 function PageViewer({ t, locale, intakeId, pageCount }: { t: Messages; locale: Locale; intakeId: string; pageCount: number }) {
   const r = t.stock.intake.review;
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(0);
-  const [broken, setBroken] = useState<Record<number, boolean>>({});
+  // A page the <img> could not show: a PDF (said so, with the full page to open) or gone/broken.
+  const [broken, setBroken] = useState<Record<number, "pdf" | "gone">>({});
   if (pageCount < 1) return null;
   const src = `${photoHref(intakeId)}/image/${page}`;
   const label = fill(r.pageN, { n: formatNumber(locale, page) });
@@ -629,8 +712,8 @@ function PageViewer({ t, locale, intakeId, pageCount }: { t: Messages; locale: L
       </div>
       <div className="intake-viewer" tabIndex={0} aria-label={label}>
         {broken[page] ? (
-          <p className="muted intake-viewer-note">
-            {r.imageGone}
+          <p className="muted intake-viewer-note" data-testid={broken[page] === "pdf" ? "intake-viewer-pdf" : "intake-viewer-gone"}>
+            {broken[page] === "pdf" ? r.pdfPage : r.imageGone}
           </p>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element -- a private, access-checked page image, not an optimisable asset
@@ -639,7 +722,10 @@ function PageViewer({ t, locale, intakeId, pageCount }: { t: Messages; locale: L
             src={src}
             alt={label}
             style={{ inlineSize: `${ZOOMS[zoom]}%` }}
-            onError={() => setBroken((b) => ({ ...b, [page]: true }))}
+            onError={() => {
+              const shown = page;
+              void pageKindOf(src).then((kind) => setBroken((b) => ({ ...b, [shown]: kind })));
+            }}
             data-testid="intake-viewer-image"
           />
         )}

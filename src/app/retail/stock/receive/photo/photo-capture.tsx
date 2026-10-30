@@ -34,6 +34,8 @@ export function PhotoCapture({ t, locale, readOnly }: { t: Messages; locale: Loc
   const [failure, setFailure] = useState<StockFailure | null>(null);
   const [noAnswer, setNoAnswer] = useState(false);
   const attempt = useRef<{ payload: string; key: string } | null>(null);
+  // Set at once on the first press (state lags a render): a double press never sends twice.
+  const sendingRef = useRef(false);
   const urls = useRef(new Set<string>());
   const pagesHead = useRef<HTMLHeadingElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -59,7 +61,7 @@ export function PhotoCapture({ t, locale, readOnly }: { t: Messages; locale: Loc
     const input = event.currentTarget;
     const files = Array.from(input.files ?? []);
     input.value = "";
-    if (files.length === 0 || sending) return;
+    if (files.length === 0 || sendingRef.current) return;
     const { take, dropped } = roomFor(pages.length + processing, files.length);
     const next: string[] = dropped > 0 ? [fill(c.tooMany, { count: formatNumber(locale, dropped) })] : [];
     let added = 0;
@@ -75,7 +77,7 @@ export function PhotoCapture({ t, locale, readOnly }: { t: Messages; locale: Loc
         added += 1;
       } catch (err) {
         const reason = err instanceof PageError ? err.reason : "UNREADABLE";
-        next.push(fill(reason === "TOO_LARGE" ? c.fileTooLarge : c.unreadable, { name: file.name }));
+        next.push(fill(reason === "PDF_TOO_LARGE" ? c.pdfTooLarge : reason === "TOO_LARGE" ? c.fileTooLarge : c.unreadable, { name: file.name }));
       } finally {
         setProcessing((n) => n - 1);
       }
@@ -85,7 +87,7 @@ export function PhotoCapture({ t, locale, readOnly }: { t: Messages; locale: Loc
   }
 
   function remove(id: string) {
-    if (sending) return;
+    if (sendingRef.current) return;
     const page = pages.find((p) => p.id === id);
     if (page?.url) {
       URL.revokeObjectURL(page.url);
@@ -98,10 +100,12 @@ export function PhotoCapture({ t, locale, readOnly }: { t: Messages; locale: Loc
   }
 
   async function read() {
+    if (sendingRef.current) return;
     if (readOnly || !gate.ok) {
       if (!readOnly && !gate.ok && gate.reason === "NO_PAGES") uploadRef.current?.focus();
       return;
     }
+    sendingRef.current = true;
     setSending(true);
     setFailure(null);
     setNoAnswer(false);
@@ -113,15 +117,16 @@ export function PhotoCapture({ t, locale, readOnly }: { t: Messages; locale: Loc
       const res = await createIntakeAction(key, { files });
       attempt.current = null;
       if (res.ok) {
+        // Stays "sending" while the intake screen opens.
         router.push(`/retail/stock/receive/photo/${encodeURIComponent(res.value.intakeId)}`);
         return;
       }
       setFailure(res);
-      setSending(false);
     } catch {
       setNoAnswer(true);
-      setSending(false);
     }
+    sendingRef.current = false;
+    setSending(false);
   }
 
   return (

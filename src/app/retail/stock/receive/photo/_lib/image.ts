@@ -19,6 +19,11 @@ export const MAX_SIDE = 1800;
  * next.config.ts): 5.5 MB of bytes become ~7.3 MB of text, with room for the rest of the request.
  */
 export const UPLOAD_BUDGET_BYTES = 5_500_000;
+/**
+ * A PDF is sent as it is, so it must fit the whole upload on its own: one limit, checked when the
+ * file is added (a bigger PDF is refused there with its own message, never later at "read").
+ */
+export const MAX_PDF_BYTES = UPLOAD_BUDGET_BYTES;
 /** What one photo aims at, so six of them fit the budget together. */
 export const PAGE_TARGET_BYTES = Math.floor(UPLOAD_BUDGET_BYTES / MAX_PAGES);
 /** JPEG qualities tried in turn until the page fits its share. */
@@ -55,6 +60,11 @@ export function pageKind(type: string, name: string): "image" | "pdf" | null {
   return null;
 }
 
+/** Whether a PDF of `size` bytes can be sent. */
+export function pdfFits(size: number): boolean {
+  return size > 0 && size <= MAX_PDF_BYTES;
+}
+
 /** How many of `incoming` new files fit beside `current` pages. */
 export function roomFor(current: number, incoming: number): { take: number; dropped: number } {
   const take = Math.max(0, Math.min(incoming, MAX_PAGES - current));
@@ -83,7 +93,7 @@ export function pagesFingerprint(pages: readonly { id: string }[]): string {
 export type PreparedPage = { contentType: "image/jpeg" | "application/pdf"; blob: Blob; width: number | null; height: number | null };
 
 export class PageError extends Error {
-  constructor(readonly reason: "UNREADABLE" | "TOO_LARGE") {
+  constructor(readonly reason: "UNREADABLE" | "TOO_LARGE" | "PDF_TOO_LARGE") {
     super(reason);
   }
 }
@@ -119,7 +129,7 @@ export async function preparePage(file: File): Promise<PreparedPage> {
   const kind = pageKind(file.type, file.name);
   if (kind === null) throw new PageError("UNREADABLE");
   if (kind === "pdf") {
-    if (file.size <= 0 || file.size > MAX_PAGE_BYTES) throw new PageError("TOO_LARGE");
+    if (!pdfFits(file.size)) throw new PageError(file.size <= 0 ? "UNREADABLE" : "PDF_TOO_LARGE");
     return { contentType: "application/pdf", blob: file, width: null, height: null };
   }
   const img = await decode(file);

@@ -13,6 +13,7 @@ import {
   JPEG_QUALITIES,
   MAX_PAGES,
   MAX_PAGE_BYTES,
+  MAX_PDF_BYTES,
   MAX_SIDE,
   PAGE_TARGET_BYTES,
   UPLOAD_BUDGET_BYTES,
@@ -20,6 +21,7 @@ import {
   nextQuality,
   pageKind,
   pagesFingerprint,
+  pdfFits,
   roomFor,
   uploadProblem,
 } from "../../src/app/retail/stock/receive/photo/_lib/image";
@@ -39,6 +41,7 @@ import {
   pollDelay,
   readGate,
   readingPlan,
+  refusalFocus,
   shownLines,
   type IntakeDto,
   type IntakeLineDto,
@@ -105,6 +108,15 @@ describe("photo downscale rules", () => {
     expect(pagesFingerprint([{ id: "p1" }, { id: "p2" }])).toBe(a);
     expect(pagesFingerprint([{ id: "p2" }, { id: "p1" }])).not.toBe(a);
     expect(pagesFingerprint([{ id: "p1" }])).not.toBe(a);
+  });
+
+  it("takes a PDF only up to the size the whole upload can carry (one limit, checked when it is added)", () => {
+    expect(MAX_PDF_BYTES).toBeLessThanOrEqual(UPLOAD_BUDGET_BYTES);
+    expect(MAX_PDF_BYTES).toBeLessThanOrEqual(MAX_PAGE_BYTES);
+    expect(pdfFits(MAX_PDF_BYTES)).toBe(true);
+    expect(uploadProblem([{ size: MAX_PDF_BYTES }])).toBeNull();
+    expect(pdfFits(MAX_PDF_BYTES + 1)).toBe(false);
+    expect(pdfFits(0)).toBe(false);
   });
 });
 
@@ -248,6 +260,15 @@ describe("intake review rules", () => {
     expect(focusAfter([], 1)).toBeNull();
   });
 
+  it("after a refusal, focus goes to what it names, else to the failure notice (never the body)", () => {
+    expect(refusalFocus({ code: "INTAKE_UNRESOLVED", details: { lineNo: "3" } })).toEqual({ kind: "line", n: 3 });
+    expect(refusalFocus({ code: "INTAKE_UNRESOLVED", details: { reason: "CURRENCY" } })).toEqual({ kind: "currency" });
+    expect(refusalFocus({ code: "INTAKE_UNRESOLVED", details: { reason: "TOTAL" } })).toEqual({ kind: "total" });
+    expect(refusalFocus({ code: "VERSION_CONFLICT" })).toEqual({ kind: "failure" });
+    expect(refusalFocus({ code: "INVALID_TRANSITION" })).toEqual({ kind: "failure" });
+    expect(refusalFocus({ code: "INVALID_INPUT", details: { lineNo: "x" } })).toEqual({ kind: "failure" });
+  });
+
   it("offers only the decisions that fit the line", () => {
     const opts = { canCreateItems: true, hasCurrency: true };
     // An item and unit found: accept them (the unit picker beside the suggested item); never a new item.
@@ -286,6 +307,10 @@ describe("intake review rules", () => {
     expect(readingPlan("DRAFTED")).toBe("REVIEW");
     expect(readingPlan("DISCARDED")).toBe("REVIEW");
     expect(readingPlan("FAILED")).toBe("FAILED");
+    // A read-only business never starts a read (nothing is reserved); one already reading is still followed.
+    expect(readingPlan("UPLOADED", true)).toBe("READ_ONLY");
+    expect(readingPlan("READING", true)).toBe("POLL");
+    expect(readingPlan("READ", true)).toBe("REVIEW");
     expect(pollDelay(0)).toBe(2000);
     expect(pollDelay(3)).toBeGreaterThan(pollDelay(0));
     expect(pollDelay(50)).toBe(5000);
@@ -316,7 +341,9 @@ describe("who sees the photo intake", () => {
     expect(photoAccess({ ...all, seesCost: false }, status)).toBe("NO_PERMISSION");
     expect(photoAccess({ ...all, canReceive: false }, status)).toBe("NO_PERMISSION");
     expect(photoAccess({ ...all, canUseAi: false }, status)).toBe("NO_PERMISSION");
-    expect(photoAccess(all, null)).toBe("DISABLED");
+    // A status that could not be read is a failure to retry, never "not enabled".
+    expect(photoAccess(all, "UNAVAILABLE")).toBe("STATUS_FAILED");
+    expect(photoAccess({ ...all, seesCost: false }, "UNAVAILABLE")).toBe("NO_PERMISSION");
     expect(photoAccess(all, { ...status, enabled: false, consentCurrent: false })).toBe("DISABLED");
     expect(photoAccess(all, { ...status, consentCurrent: false })).toBe("CONSENT_OWNER");
     expect(photoAccess({ ...all, isOwner: false }, { ...status, consentCurrent: false })).toBe("CONSENT_ASK_OWNER");
@@ -329,7 +356,7 @@ describe("who sees the photo intake", () => {
     expect(photoLink(all, status)).toBe("SHOW");
     expect(photoLink(all, { ...status, consentCurrent: false })).toBe("SHOW");
     expect(photoLink(all, { ...status, enabled: false })).toBe("OWNER_HINT");
-    expect(photoLink(all, null)).toBe("OWNER_HINT");
+    expect(photoLink(all, "UNAVAILABLE")).toBe("HIDE");
     expect(photoLink({ ...all, isOwner: false }, { ...status, enabled: false })).toBe("HIDE");
     expect(photoLink({ ...all, seesCost: false }, status)).toBe("HIDE");
   });

@@ -20,6 +20,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ intakeId: stri
   const meta = await metaFor("");
   if (!meta) return json({ ok: false, code: "FORBIDDEN" }, 403);
   const read = await getIntake({ intakeId }, meta);
-  if (!read.ok) return json({ ok: false, code: read.code });
+  if (!read.ok) return json({ ok: false, code: read.code }, read.code === "NOT_FOUND" ? 404 : 403);
   return json({ ok: true, status: read.value.status, failureCode: read.value.failureCode });
 }

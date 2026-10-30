@@ -32,10 +32,17 @@ export function photoRole(role: RtRole): PhotoRole & { canCreateItems: boolean }
   };
 }
 
-/** The AI status, or null when this role may not read it (the screens then show the feature as unavailable). */
-export async function loadAiStatus(meta: ActionMeta): Promise<AiStatus | null> {
-  const s = await getAiStatus({}, meta);
-  return s.ok ? s.value : null;
+/**
+ * The AI status, or UNAVAILABLE when it could not be read (a refusal or an error). Callers load it
+ * only for a role that may use the photo intake, so this is a failure to retry, never "switched off".
+ */
+export async function loadAiStatus(meta: ActionMeta): Promise<AiStatus | "UNAVAILABLE"> {
+  try {
+    const s = await getAiStatus({}, meta);
+    return s.ok ? s.value : "UNAVAILABLE";
+  } catch {
+    return "UNAVAILABLE";
+  }
 }
 
 /** Item details for variant ids (each product read once); a variant that cannot be read is left out. */

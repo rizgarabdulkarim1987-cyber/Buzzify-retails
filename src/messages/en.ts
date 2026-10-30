@@ -1003,6 +1003,7 @@ export const en: Messages = {
       noPermissionTitle: "You cannot read receipts",
       noPermissionBody: "Reading a purchase receipt from a photo needs receiving, cost viewing and AI use together. Entering it by hand is still available.",
       disabledTitle: "AI reading is not enabled",
+      statusFailed: "The AI reading status could not be checked just now. Try again, or enter the receipt by hand.",
       consent: {
         title: "Consent to send images",
         version: "Consent text, version {v}",
@@ -1035,6 +1036,7 @@ export const en: Messages = {
         tooMany: "A receipt has at most 6 pages; {count} were not added.",
         unreadable: "The file “{name}” could not be opened. Use a JPEG, PNG or WebP image, or a PDF.",
         fileTooLarge: "The file “{name}” is larger than allowed (8 MB).",
+        pdfTooLarge: "The PDF “{name}” is larger than 5.5 MB. Upload its pages as photos, or a smaller PDF.",
         noAnswer: "No answer came from the server. Press “Read the receipt” again; it will not be counted twice.",
         blocked: {
           LOADING: "Getting the page ready…",
@@ -1065,6 +1067,7 @@ export const en: Messages = {
         retry: "Try again",
         noAnswer: "The connection dropped during the read. Try again; it will not be counted twice.",
         failedTitle: "The receipt could not be read",
+        readOnly: "The business is read-only now, so this receipt is not being read and nothing is counted. Enter it by hand later, or read it when the business is active again.",
         again: "Photograph the receipt again",
       },
       review: {
@@ -1076,6 +1079,7 @@ export const en: Messages = {
         zoomOut: "Zoom out",
         openPage: "Open the full page",
         imageGone: "This page cannot be shown (it may have been removed after the keeping period). Open it, or continue the review.",
+        pdfPage: "This page is a PDF and cannot be shown here. Open the full page to see it.",
         details: "Receipt details",
         supplier: "Supplier",
         date: "Date",
@@ -1130,6 +1134,8 @@ export const en: Messages = {
         resolved: "Line {n} is settled.",
         conflict: "This receipt changed elsewhere; its latest version is shown. Check it, then try again.",
         noAnswer: "No answer came from the server. Try again; the change will not be saved twice.",
+        reloadFailed: "The change was saved, but the screen could not be updated. Reload it before the next change.",
+        reload: "Reload",
         totalTitle: "Total check",
         total: "Printed receipt total: {total}",
         totalOk: "The lines add up to the receipt total.",

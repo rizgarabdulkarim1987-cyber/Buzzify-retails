@@ -199,6 +199,22 @@ export function focusAfter(lines: readonly Pick<IntakeLineDto, "lineNo" | "disca
   return open.find((n) => n > lineNo) ?? open[0]!;
 }
 
+/** Where focus goes on the review screen (never <body>). */
+export type ReviewFocus = { kind: "line"; n: number } | { kind: "draft" } | { kind: "currency" } | { kind: "total" } | { kind: "lines" } | { kind: "failure" };
+
+/**
+ * After a refusal: the line, the currency or the total it names; otherwise (a conflict, a changed
+ * state, anything without a place) the failure notice, which says what happened.
+ */
+export function refusalFocus(f: StockFailure): ReviewFocus {
+  const raw = f.details?.lineNo;
+  const n = typeof raw === "string" && /^[0-9]+$/.test(raw) ? Number(raw) : 0;
+  if (n >= 1) return { kind: "line", n };
+  if (f.details?.reason === "CURRENCY") return { kind: "currency" };
+  if (f.details?.reason === "TOTAL") return { kind: "total" };
+  return { kind: "failure" };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Gates
 
@@ -239,11 +255,15 @@ export { MAX_PAGES };
 // ---------------------------------------------------------------------------------------------
 // Reading
 
-/** What the screen of an intake does: start the read, wait for another attempt, show the review, or the failure. */
-export function readingPlan(status: IntakeStatus): "RUN" | "POLL" | "REVIEW" | "FAILED" {
+/**
+ * What the screen of an intake does: start the read, wait for another attempt, show the review, or
+ * the failure. A read-only business never starts a read (it would only be refused); one already
+ * being read is still followed.
+ */
+export function readingPlan(status: IntakeStatus, readOnly = false): "RUN" | "READ_ONLY" | "POLL" | "REVIEW" | "FAILED" {
   switch (status) {
     case "UPLOADED":
-      return "RUN";
+      return readOnly ? "READ_ONLY" : "RUN";
     case "READING":
       return "POLL";
     case "FAILED":
@@ -264,12 +284,16 @@ export function pollDelay(n: number): number {
 export type PhotoRole = { canUseAi: boolean; canReceive: boolean; seesCost: boolean; isOwner: boolean };
 type Status = Pick<AiStatus, "enabled" | "consentCurrent" | "monthlyLimit" | "limitHalfUnits" | "usedHalfUnits">;
 
-export type PhotoState = "NO_PERMISSION" | "DISABLED" | "CONSENT_OWNER" | "CONSENT_ASK_OWNER" | "QUOTA_CLOSED" | "QUOTA_OUT" | "OK";
+/** The AI status as the page loaded it; UNAVAILABLE when it could not be read (an error to retry, not "off"). */
+export type LoadedStatus = Status | "UNAVAILABLE";
+
+export type PhotoState = "NO_PERMISSION" | "STATUS_FAILED" | "DISABLED" | "CONSENT_OWNER" | "CONSENT_ASK_OWNER" | "QUOTA_CLOSED" | "QUOTA_OUT" | "OK";
 
 /** The photo page's state: permission (ai.use + stock.receive + cost.view), the master switch, consent, then quota. */
-export function photoAccess(role: PhotoRole, status: Status | null): PhotoState {
+export function photoAccess(role: PhotoRole, status: LoadedStatus): PhotoState {
   if (!role.canUseAi || !role.canReceive || !role.seesCost) return "NO_PERMISSION";
-  if (!status || !status.enabled) return "DISABLED";
+  if (status === "UNAVAILABLE") return "STATUS_FAILED";
+  if (!status.enabled) return "DISABLED";
   if (!status.consentCurrent) return role.isOwner ? "CONSENT_OWNER" : "CONSENT_ASK_OWNER";
   if (status.monthlyLimit <= 0) return "QUOTA_CLOSED";
   if (status.usedHalfUnits + 2 > status.limitHalfUnits) return "QUOTA_OUT";
@@ -281,9 +305,11 @@ export function photoAccess(role: PhotoRole, status: Status | null): PhotoState 
  * the switch is on (the photo page then explains consent or quota); with the switch off, the owner
  * sees one line saying it is not enabled for the shop, everyone else nothing.
  */
-export function photoLink(role: PhotoRole, status: Status | null): "SHOW" | "OWNER_HINT" | "HIDE" {
+export function photoLink(role: PhotoRole, status: LoadedStatus): "SHOW" | "OWNER_HINT" | "HIDE" {
   if (!role.canUseAi || !role.canReceive || !role.seesCost) return "HIDE";
-  if (status?.enabled) return "SHOW";
+  // Not knowing is not "off": the button is left out without telling the owner it is disabled.
+  if (status === "UNAVAILABLE") return "HIDE";
+  if (status.enabled) return "SHOW";
   return role.isOwner ? "OWNER_HINT" : "HIDE";
 }
 

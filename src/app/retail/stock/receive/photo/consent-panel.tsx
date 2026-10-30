@@ -25,6 +25,8 @@ export function ConsentPanel({ t, locale, version, readOnly }: { t: Messages; lo
   const [failure, setFailure] = useState<StockFailure | null>(null);
   const [noAnswer, setNoAnswer] = useState(false);
   const attempt = useRef<{ payload: string; key: string } | null>(null);
+  // Set at once on the first press (state lags a render): a double press never sends twice.
+  const busyRef = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const text = (c as Readonly<Record<string, string>>)[`v${version}`] ?? "";
 
@@ -34,7 +36,8 @@ export function ConsentPanel({ t, locale, version, readOnly }: { t: Messages; lo
 
   const blocked = !hydrated || readOnly || busy || text === "";
   async function grant() {
-    if (blocked) return;
+    if (blocked || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setFailure(null);
     setNoAnswer(false);
@@ -44,15 +47,16 @@ export function ConsentPanel({ t, locale, version, readOnly }: { t: Messages; lo
       const res = await grantAiConsentAction(attempt.current.key);
       attempt.current = null;
       if (res.ok) {
+        // Stays busy while the page reloads into the capture screen.
         router.refresh();
         return;
       }
       setFailure(res);
     } catch {
       setNoAnswer(true);
-    } finally {
-      setBusy(false);
     }
+    busyRef.current = false;
+    setBusy(false);
   }
 
   return (

@@ -30,7 +30,7 @@ export default async function ReceiptPhotoPage() {
   const m = t.stock.intake;
   const role = photoRole(access.context.role);
   const permitted = role.canUseAi && role.canReceive && role.seesCost;
-  const status = permitted ? await loadAiStatus(access.meta) : null;
+  const status = permitted ? await loadAiStatus(access.meta) : "UNAVAILABLE";
   const state = photoAccess(role, status);
 
   const manual = (
@@ -56,6 +56,24 @@ export default async function ReceiptPhotoPage() {
   switch (state) {
     case "NO_PERMISSION":
       body = <StateBlock kind="locked" title={m.noPermissionTitle} body={m.noPermissionBody} testId="state-forbidden" action={manual} />;
+      break;
+    case "STATUS_FAILED":
+      body = (
+        <StateBlock
+          kind="alert"
+          title={t.common.errorTitle}
+          body={m.statusFailed}
+          testId="state-status-failed"
+          action={
+            <>
+              <Link href="/retail/stock/receive/photo" className="btn btn-primary" data-testid="intake-status-retry">
+                {t.common.retry}
+              </Link>
+              {manual}
+            </>
+          }
+        />
+      );
       break;
     case "DISABLED":
       body = <StateBlock kind="locked" title={m.disabledTitle} body={t.errors.AI_DISABLED} testId="state-ai-disabled" action={manual} />;
@@ -96,7 +114,7 @@ export default async function ReceiptPhotoPage() {
     <main className="page page-narrow">
       {head}
       {access.readOnly ? <ReadOnlyBanner t={t} /> : null}
-      {status?.warn ? (
+      {status !== "UNAVAILABLE" && status.warn ? (
         <p className="hint" data-testid="intake-quota-warn">
           {fill(m.quota.warn, { used: formatNumber(locale, status.usedHalfUnits / 2), limit: formatNumber(locale, status.monthlyLimit) })}
         </p>
