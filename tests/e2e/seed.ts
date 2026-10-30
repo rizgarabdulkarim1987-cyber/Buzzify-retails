@@ -23,6 +23,7 @@ import {
   MANAGER,
   OWNER,
   PASSWORD,
+  STOCK_ITEM,
   SUGAR,
   TERMINAL_A,
   E2E_SECRET,
@@ -113,7 +114,7 @@ async function main() {
   const location = await db.rtLocation.findFirstOrThrow({ where: { businessId, branchId: branchA.id } });
   await db.rtTerminal.create({ data: { businessId, branchId: branchA.id, locationId: location.id, name: TERMINAL_A } });
 
-  // Two catalog products for the catalog screens (created through the real action, as the owner).
+  // Catalog products for the catalog and stock screens (created through the real action, as the owner).
   const { createProduct } = await import("@/server/catalog/products");
   const seedProduct = async (input: Record<string, unknown>, k: string) => {
     const made = await createProduct(input, { userId: ownerId, businessId, idempotencyKey: k });
@@ -137,6 +138,18 @@ async function main() {
       price: { currency: "IQD", amountMinor: "3500" },
     },
     "e2e-seed-long",
+  );
+  await seedProduct(
+    {
+      nameAr: STOCK_ITEM.nameAr,
+      trackingMode: "BATCH",
+      tracksExpiry: true,
+      expiryAlertDays: 30,
+      baseUnit: { name: STOCK_ITEM.piece, barcodes: [STOCK_ITEM.barcode] },
+      extraUnits: [{ name: STOCK_ITEM.carton, factor: STOCK_ITEM.cartonFactor, barcodes: [] }],
+      price: { currency: "IQD", amountMinor: "1500" },
+    },
+    "e2e-seed-stock-item",
   );
 
   await db.$disconnect();

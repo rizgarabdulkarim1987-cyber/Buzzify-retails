@@ -29,3 +29,6 @@ export const LONG_PRODUCT_NAME = (
   "علبة حليب مجفف كامل الدسم مدعمة بالفيتامينات والمعادن مناسبة للأطفال والكبار تحفظ في مكان بارد وجاف بعيدا عن أشعة الشمس المباشرة والرطوبة العالية جدا "
 ).repeat(2).slice(0, 119) + "ا";
 export const LONG_PRODUCT_BARCODE = "6281000000024";
+
+/** A stock item seeded for tests/e2e/stock.spec.ts: batches with expiry dates, a piece and a carton of 12. */
+export const STOCK_ITEM = { nameAr: "حليب طويل الأجل ١ لتر", barcode: "6281000000031", piece: "علبة", carton: "كرتون", cartonFactor: 12 };
