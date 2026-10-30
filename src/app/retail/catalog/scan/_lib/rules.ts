@@ -158,6 +158,15 @@ export function settingsView(role: ScanRole, status: LoadedScanStatus, readOnly:
   return { access: "OK", grant, revoke };
 }
 
+/**
+ * The month's 80% warning on the scan screen (spec 3ب.4): for the owner and the manager, with the
+ * switch on and the status read, when the server says the month's use reached 80%.
+ */
+export function quotaWarning(role: ScanRole, status: LoadedScanStatus): boolean {
+  if (!role.isOwner && !role.isManager) return false;
+  return status !== "UNAVAILABLE" && status.enabled && status.warn;
+}
+
 export type UsageView = { used: number; limit: number; remaining: number; percent: number; warn: boolean; closed: boolean };
 
 /** This month's use in reads (a receipt is one, an AI barcode read half), what is left, and the 80% warning. */

@@ -254,10 +254,20 @@ async function pruneExpiredPages(tx: Tx, now: Date): Promise<void> {
   const ago = (days: number) => new Date(now.getTime() - days * DAY_MS);
   const select = { id: true, status: true, stockDocumentId: true } as const;
   const orderBy = [{ updatedAt: "asc" as const }, { id: "asc" as const }];
+  // The live drafts (few per business) are excluded in the query itself, so any number of old
+  // intakes whose draft is still a draft never fills the batch and starves the ones that may go.
+  const liveDrafts = (await tx.rtStockDocument.findMany({ where: { status: "DRAFT" }, select: { id: true } })).map((d) => d.id);
   const finished = await tx.rtIntake.findMany({
-    where: { status: { in: ["FAILED", "DISCARDED", "DRAFTED"] }, updatedAt: { lt: ago(RETENTION_DAYS) }, files: { some: {} } },
+    where: {
+      OR: [
+        { status: { in: ["FAILED", "DISCARDED"] } },
+        { status: "DRAFTED", OR: [{ stockDocumentId: null }, { stockDocumentId: { notIn: liveDrafts } }] },
+      ],
+      updatedAt: { lt: ago(RETENTION_DAYS) },
+      files: { some: {} },
+    },
     orderBy,
-    take: RETENTION_BATCH * 2,
+    take: RETENTION_BATCH,
     select,
   });
   const open = await tx.rtIntake.findMany({
@@ -266,11 +276,7 @@ async function pruneExpiredPages(tx: Tx, now: Date): Promise<void> {
     take: RETENTION_BATCH,
     select,
   });
-  const docIds = finished.flatMap((c) => (c.status === "DRAFTED" && c.stockDocumentId ? [c.stockDocumentId] : []));
-  const pending = new Set(
-    docIds.length ? (await tx.rtStockDocument.findMany({ where: { id: { in: docIds }, status: "DRAFT" }, select: { id: true } })).map((d) => d.id) : [],
-  );
-  const expired = [...finished.filter((c) => !(c.stockDocumentId && pending.has(c.stockDocumentId))), ...open].slice(0, RETENTION_BATCH);
+  const expired = [...finished, ...open].slice(0, RETENTION_BATCH);
   if (expired.length) await tx.rtIntakeFile.deleteMany({ where: { intakeId: { in: expired.map((c) => c.id) } } });
 }
 
@@ -562,7 +568,10 @@ export async function runIntakeRead(raw: unknown, meta: ActionMeta): Promise<Res
 
   try {
     const stored = await storeRead({ intakeId, attemptId, extracted }, stepMeta(meta, "store"));
-    return stored.ok ? doneOrFailed(intakeId, stored.value) : stored;
+    if (stored.ok) return doneOrFailed(intakeId, stored.value);
+    // A refusal of the store step (a timeout, VERSION_CONFLICT, ...): fail the attempt with its
+    // refund rather than leave it READING until the sweep.
+    return fail("AI_UNAVAILABLE");
   } catch (err) {
     // Storing broke (our side): fail the attempt with its refund rather than leave it READING.
     logUnexpected("intake.read.store", err);

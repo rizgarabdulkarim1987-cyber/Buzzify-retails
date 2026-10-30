@@ -1,11 +1,13 @@
 import Link from "next/link";
+import { formatNumber } from "@/messages";
 import { currentGate } from "@/server/framework/business-info";
+import { fill } from "../../../_lib/format";
 import { getI18n } from "../../../_lib/i18n";
 import { StateBlock } from "../../../_ui/state";
 import { loadAiStatus } from "../../stock/receive/photo/_lib/load";
 import { loadCatalogAccess } from "../_lib/access";
 import { RefusedPage } from "../_lib/state-pages";
-import { aiFallback, scanRole } from "./_lib/rules";
+import { aiFallback, quotaWarning, scanRole } from "./_lib/rules";
 import { Scanner } from "./scanner";
 
 export const dynamic = "force-dynamic";
@@ -50,6 +52,11 @@ export default async function ScanPage() {
       {readOnly && role.canManage ? (
         <p className="hint" data-testid="scan-read-only">
           {s.blocked.READ_ONLY}
+        </p>
+      ) : null}
+      {status !== "UNAVAILABLE" && quotaWarning(role, status) ? (
+        <p className="hint" data-testid="scan-quota-warn">
+          {fill(t.stock.intake.quota.warn, { used: formatNumber(locale, status.usedHalfUnits / 2), limit: formatNumber(locale, status.monthlyLimit) })}
         </p>
       ) : null}
       <Scanner t={t} locale={locale} role={role} ai={aiFallback(role, status, readOnly)} readOnly={readOnly} />

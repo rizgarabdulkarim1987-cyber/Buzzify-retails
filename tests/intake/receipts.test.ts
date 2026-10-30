@@ -26,6 +26,20 @@ import { createBusinessWithStaff, createPlan, createPlatformAdmin } from "../hel
 
 const { db } = useTestDb();
 
+/** Makes matchReceipt refuse with a known code (VERSION_CONFLICT) while on; passes through otherwise. */
+const matchFault = vi.hoisted(() => ({ on: false }));
+vi.mock("@/server/intake/matching", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/server/intake/matching")>();
+  const { VersionConflictError } = await import("@/server/framework/errors");
+  return {
+    ...real,
+    matchReceipt: async (...args: Parameters<typeof real.matchReceipt>) => {
+      if (matchFault.on) throw new VersionConflictError();
+      return real.matchReceipt(...args);
+    },
+  };
+});
+
 /** Makes refundUnits throw (an unexpected failure inside a sweep) while on; passes through otherwise. */
 const refundFault = vi.hoisted(() => ({ on: false }));
 vi.mock("@/server/intake/quota", async (importOriginal) => {
@@ -789,6 +803,36 @@ describe("retention", () => {
     ok(await createIntake({ files: [page()] }, s.as()));
     expect(await pages(drafted)).toBe(0);
   });
+
+  it("many old intakes whose drafts are still drafts never starve the ones that may go", async () => {
+    const s = await shop();
+    await catalog(s);
+    const drafted = (await readReceipt(s, receipt([tea]))).intakeId;
+    ok(await createDraftFromIntake({ intakeId: drafted, expectedVersion: (await view(s, drafted)).version }, s.as()));
+    const pending = await db.rtIntake.findUniqueOrThrow({ where: { id: drafted } });
+    // 45 more old intakes pointing at that live draft (oldest of all), then one whose draft is gone.
+    const blockers: string[] = [];
+    for (let i = 0; i < 45; i++) {
+      const row = await db.rtIntake.create({
+        data: { businessId: s.businessId, createdById: pending.createdById, filesHash: pending.filesHash, model: "fake", status: "DRAFTED", stockDocumentId: pending.stockDocumentId },
+      });
+      await db.rtIntakeFile.create({
+        data: { businessId: s.businessId, intakeId: row.id, position: 1, contentType: "image/jpeg", bytes: jpeg(), size: 64, sha256: "0".repeat(64) },
+      });
+      blockers.push(row.id);
+    }
+    const gone = await db.rtIntake.create({
+      data: { businessId: s.businessId, createdById: pending.createdById, filesHash: pending.filesHash, model: "fake", status: "DRAFTED", stockDocumentId: randomUUID() },
+    });
+    await db.rtIntakeFile.create({ data: { businessId: s.businessId, intakeId: gone.id, position: 1, contentType: "image/jpeg", bytes: jpeg(), size: 64, sha256: "0".repeat(64) } });
+    const ago = (days: number) => new Date(Date.now() - days * DAY);
+    await db.$executeRaw`UPDATE "RtIntake" SET "updatedAt" = ${ago(60)} WHERE id = ANY(${blockers})`;
+    await db.$executeRaw`UPDATE "RtIntake" SET "updatedAt" = ${ago(40)} WHERE id = ${gone.id}`;
+
+    ok(await createIntake({ files: [page()] }, s.as()));
+    expect(await db.rtIntakeFile.count({ where: { intakeId: gone.id } })).toBe(0);
+    expect(await db.rtIntakeFile.count({ where: { intakeId: { in: blockers } } })).toBe(45);
+  });
 });
 
 describe("storage", () => {
@@ -915,6 +959,53 @@ describe("read attempts", () => {
     }
     // Once the fault is gone the next read sweeps it as usual.
     expect(await getIntake({ intakeId: one }, s.as())).toMatchObject({ ok: true, value: { status: "FAILED", failureCode: "AI_UNAVAILABLE" } });
+  });
+
+  it("a stale attempt that answers after its replacement changes nothing (store or fail)", async () => {
+    const s = await shop();
+    await catalog(s);
+    for (const late of ["store", "fail"] as const) {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let calls = 0;
+      globalThis.__intakeFake = async () => {
+        calls += 1;
+        if (calls === 1) {
+          await gate;
+          return late === "store" ? receipt([tea, tea, tea]) : new AiUnavailableError("timeout");
+        }
+        return receipt([tea]);
+      };
+      const before = await s.usage();
+      const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+      const first = runIntakeRead({ intakeId }, s.as());
+      for (let i = 0; i < 100 && calls === 0; i++) await new Promise((r) => setTimeout(r, 20));
+      expect(calls).toBe(1);
+      // The first attempt's lease runs out; a second attempt replaces it and finishes.
+      await db.rtIntake.update({ where: { id: intakeId }, data: { readingStartedAt: new Date(Date.now() - 10 * 60_000) } });
+      expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: true, value: { status: "READ" } });
+      release();
+      expect(await first).toMatchObject({ ok: true, value: { status: "READ" } });
+      const v = await view(s, intakeId);
+      expect(v.status).toBe("READ");
+      expect(v.result!.lines).toHaveLength(1); // the replacement's answer, not the late one's
+      expect(await s.usage()).toBe(before + 2); // charged once, never refunded by the late failure
+    }
+  });
+
+  it("a storing step refused with a known code fails the attempt with its refund (never left READING)", async () => {
+    const s = await shop();
+    await catalog(s);
+    globalThis.__intakeFake = FAKE_DEFAULT_RECEIPT;
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    matchFault.on = true;
+    try {
+      expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: false, code: "AI_UNAVAILABLE" });
+    } finally {
+      matchFault.on = false;
+    }
+    expect(await db.rtIntake.findUniqueOrThrow({ where: { id: intakeId } })).toMatchObject({ status: "FAILED", failureCode: "AI_UNAVAILABLE" });
+    expect(await s.usage()).toBe(0);
   });
 
   it("an expired attempt may be replaced by a new one on the same reservation", async () => {

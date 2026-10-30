@@ -364,6 +364,7 @@ export async function scanLookupAction(code: unknown): Promise<UiResult<BarcodeR
  * answer, and the server then answers from the first attempt (it may wait up to a minute for it).
  */
 export async function scanReadImageAction(key: unknown, input: Wire): Promise<UiResult<BarcodeRead>> {
+  if (input === null || typeof input !== "object") return fail("INVALID_INPUT");
   const data = input.data;
   if (typeof data !== "string" || data.length === 0 || data.length > MAX_SCAN_BASE64 || !BASE64.test(data)) return fail("INVALID_INPUT");
   const image = { contentType: str(input.contentType).slice(0, 64), bytes: new Uint8Array(Buffer.from(data, "base64")) };

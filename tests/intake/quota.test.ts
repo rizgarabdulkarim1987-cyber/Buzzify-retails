@@ -196,6 +196,7 @@ describe("getAiStatus", () => {
       value: {
         enabled: false,
         consent: false,
+        consentAt: null,
         consentCurrent: false,
         monthlyLimit: 10,
         limitHalfUnits: 20,
@@ -214,8 +215,9 @@ describe("getAiStatus", () => {
     await db.rtAiUsage.updateMany({ where: { businessId: s.businessId, month }, data: { halfUnits: 16 } });
     expect(await statusAs(s)).toMatchObject({ ok: true, value: { usedHalfUnits: 16, warn: true } });
 
-    await db.rtBusiness.update({ where: { id: s.businessId }, data: { aiConsentAt: new Date(), aiConsentVersion: CONSENT_VERSION } });
-    expect(await statusAs(s)).toMatchObject({ ok: true, value: { consent: true, consentCurrent: true } });
+    const given = new Date("2026-10-01T09:30:00Z");
+    await db.rtBusiness.update({ where: { id: s.businessId }, data: { aiConsentAt: given, aiConsentVersion: CONSENT_VERSION } });
+    expect(await statusAs(s)).toMatchObject({ ok: true, value: { consent: true, consentAt: given, consentCurrent: true } });
     await db.rtBusiness.update({ where: { id: s.businessId }, data: { aiConsentVersion: CONSENT_VERSION - 1 } });
     expect(await statusAs(s)).toMatchObject({ ok: true, value: { consent: true, consentCurrent: false } });
   });

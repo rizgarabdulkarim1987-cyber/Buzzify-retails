@@ -89,6 +89,8 @@ export type AiStatus = {
   enabled: boolean;
   /** The owner consented at some point. */
   consent: boolean;
+  /** When the owner last gave consent (null without one). */
+  consentAt: Date | null;
   /** ...and to the current consent text (CONSENT_VERSION); only this lets a read run. */
   consentCurrent: boolean;
   /** Receipt reads per month in the plan (full units). */
@@ -127,6 +129,7 @@ export const getAiStatus = defineAction({
     return {
       enabled: await featureEnabled(businessId, AI_INTAKE_FEATURE),
       consent,
+      consentAt: b.aiConsentAt,
       consentCurrent: consent && b.aiConsentVersion === CONSENT_VERSION,
       monthlyLimit,
       limitHalfUnits,

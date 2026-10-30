@@ -73,6 +73,8 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
   const streamRef = useRef<MediaStream | null>(null);
   const decoderRef = useRef<Promise<Decoder> | null>(null);
   const loopRef = useRef<number | null>(null);
+  // Bumped by every start and stop: a start that resumes after an await sees whether it is still current.
+  const cameraGen = useRef(0);
   // Set at once (state lags a render): a double press or a second scan never sends twice.
   const busyRef = useRef(false);
   const stillRef = useRef<Still | null>(null);
@@ -87,6 +89,7 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
   // Camera
 
   const stopCamera = useCallback((next: Camera = "off") => {
+    cameraGen.current += 1;
     if (loopRef.current !== null) window.clearTimeout(loopRef.current);
     loopRef.current = null;
     stopStream(streamRef.current);
@@ -194,6 +197,9 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
       setCamera("unavailable");
       return;
     }
+    const gen = ++cameraGen.current;
+    // The page was hidden, the camera stopped or a code was found while we waited: this start is void.
+    const stale = () => gen !== cameraGen.current;
     setCamera("starting");
     setShown(null);
     setFailure(null);
@@ -202,14 +208,19 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
     } catch (err) {
+      if (stale()) return;
       const name = err instanceof DOMException ? err.name : "";
       setCamera(name === "NotAllowedError" || name === "SecurityError" ? "denied" : "unavailable");
+      return;
+    }
+    if (stale()) {
+      stopStream(stream);
       return;
     }
     streamRef.current = stream;
     const video = videoRef.current;
     if (!video) {
-      stopStream(stream);
+      stopCamera();
       return;
     }
     video.srcObject = stream;
@@ -218,6 +229,7 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
     } catch {
       // Autoplay of a muted inline video is allowed; a failure leaves the frame black, the loop just finds nothing.
     }
+    if (stale()) return; // whoever stopped it already released the stream
     setCamera("on");
     let d: Decoder;
     try {
@@ -225,6 +237,7 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
     } catch {
       return; // the reader failed: the camera still serves "take a photo" for the AI, and typing works
     }
+    if (stale()) return;
     const tick = async () => {
       if (streamRef.current !== stream) return;
       if (!busyRef.current) {
@@ -306,7 +319,9 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
     attempt.current = readAttempt(attempt.current, still.id, newKey);
     try {
       const res = await scanReadImageAction(attempt.current.key, { contentType: still.blob.type || "image/jpeg", data: await blobBase64(still.blob) });
-      attempt.current = null;
+      // INTERNAL is our side failing mid-way (the read may have happened): a retry of the same photo
+      // keeps the key, so the server answers it from the first attempt without a second charge.
+      if (res.ok || res.code !== "INTERNAL") attempt.current = null;
       if (!res.ok) {
         setFailure(scanFailure(t, res, locale));
       } else {
@@ -345,7 +360,8 @@ export function Scanner({ t, locale, role, ai, readOnly }: Props) {
   // A scanner typing while no field has the focus: fast keys ending in Enter are a code.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey || typingTarget(event.target)) {
+      // A field's own keys, shortcuts, and any scan while a look-up or read is under way are not a code.
+      if (event.ctrlKey || event.metaKey || event.altKey || typingTarget(event.target) || busyRef.current) {
         wedge.current = emptyWedge();
         return;
       }
@@ -669,7 +685,7 @@ function Result({ t, locale, shown, headingId, headingRef, ai, busy, manageBlock
                 ) : null}
                 {shown.canCreate ? (
                   manageBlock ? (
-                    <span className="btn btn-secondary" role="link" aria-disabled="true" aria-describedby={`${headingId}-block`} data-testid="scan-create">
+                    <span className="btn btn-secondary" role="link" tabIndex={0} aria-disabled="true" aria-describedby={`${headingId}-block`} data-testid="scan-create">
                       {r.create}
                     </span>
                   ) : (

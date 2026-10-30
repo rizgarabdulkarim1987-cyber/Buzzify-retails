@@ -18,6 +18,7 @@ import {
   newItemHref,
   normalizeScan,
   decodedCode,
+  quotaWarning,
   readAttempt,
   scanEntry,
   scanFailure,
@@ -50,6 +51,20 @@ describe("normalizeScan", () => {
     expect(normalizeScan("abc;drop")).toBeNull();
     expect(normalizeScan("1".repeat(65))).toBeNull();
     expect(normalizeScan("AB-12/3_4.5")).toBe("AB-12/3_4.5");
+  });
+});
+
+describe("quotaWarning (spec 3ب.4: the 80% warning for the owner and the manager)", () => {
+  const warn = { ...status, usedHalfUnits: 16, warn: true };
+  it("shows to the owner and the manager when the month's use is at 80%", () => {
+    expect(quotaWarning(scanRole("OWNER"), warn)).toBe(true);
+    expect(quotaWarning(scanRole("MANAGER"), warn)).toBe(true);
+  });
+  it("not to other roles, not below 80%, not with the switch off or the status unread", () => {
+    for (const r of ["STOCK", "PURCHASING", "CASHIER", "ACCOUNTANT", "AUDITOR"] as const) expect(quotaWarning(scanRole(r), warn), r).toBe(false);
+    expect(quotaWarning(scanRole("OWNER"), status)).toBe(false);
+    expect(quotaWarning(scanRole("OWNER"), { ...warn, enabled: false })).toBe(false);
+    expect(quotaWarning(scanRole("OWNER"), "UNAVAILABLE")).toBe(false);
   });
 });
 

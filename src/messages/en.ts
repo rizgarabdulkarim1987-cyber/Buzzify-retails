@@ -78,6 +78,7 @@ export const en: Messages = {
         NONE: "Not given. No image is sent until the owner gives it.",
       },
       version: "Current consent text: version {v}",
+      givenAt: "Last given: {date}",
       ownerOnly: "Only the owner can give or withdraw consent.",
       revoke: "Withdraw consent",
       revoking: "Withdrawing…",

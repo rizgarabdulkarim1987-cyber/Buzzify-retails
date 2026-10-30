@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatNumber } from "@/messages";
+import { formatDateTime, formatNumber } from "@/messages";
 import { CONSENT_VERSION } from "@/server/intake/consent";
 import { fill } from "../../../_lib/format";
 import { getI18n } from "../../../_lib/i18n";
@@ -90,6 +90,11 @@ export default async function AiSettingsPage() {
         <p className="ai-consent-state" aria-live="polite" data-state={consent} data-testid="ai-consent-state">
           {a.consent.state[consent]}
         </p>
+        {status.consentAt ? (
+          <p className="muted" data-testid="ai-consent-date">
+            {fill(a.consent.givenAt, { date: formatDateTime(locale, status.consentAt) })}
+          </p>
+        ) : null}
         <p className="muted" data-testid="ai-consent-version">
           {fill(a.consent.version, { v: n(CONSENT_VERSION) })}
         </p>
