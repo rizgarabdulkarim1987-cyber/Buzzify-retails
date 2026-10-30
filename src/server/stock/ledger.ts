@@ -16,7 +16,7 @@ import { RuleError } from "@/server/framework/errors";
  *   rounding; the total is the source of truth). The last outflow that empties the variant takes
  *   the whole remaining value, so no drift accumulates. Inflows add the caller's valueDeltaMinor;
  *   outflow values are computed here and never passed in, except with `exactValues`.
- * - exactValues (a REVERSAL only, spec 6b.3): every outflow carries its own valueDeltaMinor (<= 0)
+ * - exactValues (a REVERSAL only, spec 6b.3; the document must be a REVERSAL, STOCK_RULE otherwise): every outflow carries its own valueDeltaMinor (<= 0)
  *   and an inflow may too (>= 0), so a reversal restores the original values exactly instead of
  *   taking the current average. It still refuses, with STOCK_NEGATIVE, a line that would take its
  *   (location, variant, batch) quantity below zero OR the variant's TOTAL value at the location
@@ -119,7 +119,8 @@ function assertLines(lines: LedgerLine[], exactValues: boolean): void {
  * returns the value written for each line. STOCK_NEGATIVE when an outflow exceeds its (location,
  * variant, batch) balance at that point of the call, or (exactValues) would take the variant's
  * total value below zero; INVALID_INPUT for a zero quantity, a quantity above MAX_BASE_QTY, a
- * negative inflow value, or a value on an outflow (missing or positive with exactValues). Callers
+ * negative inflow value, or a value on an outflow (missing or positive with exactValues);
+ * STOCK_RULE {reason: EXACT_VALUES_NOT_REVERSAL} for exactValues on a document that is not a REVERSAL. Callers
  * validate their lines (variant, batch of that variant, line of that document and variant) before
  * calling: a reference the foreign keys refuse is an internal error.
  */
@@ -131,6 +132,11 @@ export async function postMovements(
   const exactValues = p.exactValues === true;
   assertLines(p.lines, exactValues);
   if (p.lines.length === 0) return [];
+  if (exactValues) {
+    // Only a reversal may set its own outflow values (checked before any lock or write).
+    const doc = await tx.rtStockDocument.findFirst({ where: { id: p.documentId }, select: { kind: true } });
+    if (doc?.kind !== "REVERSAL") throw new RuleError("STOCK_RULE", { reason: "EXACT_VALUES_NOT_REVERSAL" });
+  }
   const variantIds = [...new Set(p.lines.map((l) => l.variantId))].sort();
   for (const v of variantIds) await lockBusiness(`stock:${v}`);
 

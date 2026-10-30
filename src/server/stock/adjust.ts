@@ -33,9 +33,11 @@ import {
  *   a quantity the unit cannot hold) is INVALID_INPUT.
  * - The variant and unit exist (NOT_FOUND), the unit is the variant's, trial and SERIAL items are
  *   refused (TEST_ITEM, SERIAL_NOT_SUPPORTED), an archived item cannot come IN (it can still go out).
- * - batchId: required for a BATCH product (BATCH_REQUIRED), refused otherwise (BATCH_NOT_TRACKED);
- *   the batch exists (NOT_FOUND) and is of that variant (BATCH_NOT_OF_VARIANT). The line copies the
- *   batch's code and expiry date.
+ * - batchId: only for a BATCH product (BATCH_NOT_TRACKED otherwise). Required when the product
+ *   tracksExpiry (BATCH_REQUIRED; its receipts always carry a date, so its stock is on batches).
+ *   For a BATCH product without tracksExpiry it is optional: null or omitted means the no-batch
+ *   row (receipts without a code or date land there). A named batch exists (NOT_FOUND) and is of
+ *   that variant (BATCH_NOT_OF_VARIANT); the line copies its code and expiry date.
  * - IN is valued at the current average (0 with a COST_UNKNOWN warning without stock), OUT at the
  *   ledger's average; an outflow beyond the (location, variant, batch) balance is STOCK_NEGATIVE.
  * - The document is in the default location of the actor's branch (as a receipt), with the
@@ -117,11 +119,13 @@ async function postMovementDocument(tx: Tx, actor: Actor, m: Movement, lockBusin
   const { variant, quantity } = checkLine(lineData, catalog, biz, { allowArchived: m.direction === "OUT" });
   let batch: { code: string | null; expiryDate: Date | null } = { code: null, expiryDate: null };
   if (variant.product.trackingMode === "BATCH") {
-    if (m.batchId === null) refuse(1, "BATCH_REQUIRED");
-    const found = await tx.rtBatch.findFirst({ where: { id: m.batchId! }, select: { variantId: true, code: true, expiryDate: true } });
-    if (!found) throw new NotFoundError();
-    if (found.variantId !== m.variantId) refuse(1, "BATCH_NOT_OF_VARIANT");
-    batch = found;
+    if (m.batchId === null && variant.product.tracksExpiry) refuse(1, "BATCH_REQUIRED");
+    if (m.batchId !== null) {
+      const found = await tx.rtBatch.findFirst({ where: { id: m.batchId }, select: { variantId: true, code: true, expiryDate: true } });
+      if (!found) throw new NotFoundError();
+      if (found.variantId !== m.variantId) refuse(1, "BATCH_NOT_OF_VARIANT");
+      batch = found;
+    }
   } else if (m.batchId !== null) {
     refuse(1, "BATCH_NOT_TRACKED");
   }

@@ -313,6 +313,44 @@ describe("stock adjustments, write-offs and reversals", () => {
     });
   });
 
+  it("a batch product without expiry tracking is adjusted on its no-batch row", async () => {
+    const s = await shop();
+    const lot = await s.item({ trackingMode: "BATCH" });
+    // Received without a code or a date: the stock sits on the no-batch row.
+    const rec = await receive(s, [line(lot, "10", { cost: iqd("100") }), line(lot, "4", { cost: iqd("100"), batchCode: "L7" })]);
+    expect(rec.lines.map((l) => l.batchId === null)).toEqual([true, false]);
+    const coded = rec.lines[1]!.batchId!;
+
+    const off = await writeOffStock({ variantId: lot.variantId, unitId: lot.piece, quantity: "3", reason: "DAMAGED" }, s.as("owner"));
+    expect(off).toMatchObject({ ok: true, value: { lines: [{ batchId: null, valueMinor: 300n }] } });
+    const out = await adjustStock({ variantId: lot.variantId, unitId: lot.piece, batchId: null, direction: "OUT", quantity: "2", reason: "LOST" }, s.as("owner"));
+    expect(out).toMatchObject({ ok: true, value: { lines: [{ batchId: null, valueMinor: 200n }] } });
+    const inn = await adjustStock({ variantId: lot.variantId, unitId: lot.piece, direction: "IN", quantity: "1", reason: "COUNT_FIX" }, s.as("owner"));
+    expect(inn).toMatchObject({ ok: true, value: { lines: [{ batchId: null, valueMinor: 100n }] } });
+    expect(await s.balance(lot.variantId, null)).toEqual({ qty: 6n * U, valueMinor: 600n });
+    // The coded batch is still named when wanted, and the no-batch row cannot go below zero.
+    expect(await writeOffStock({ variantId: lot.variantId, unitId: lot.piece, batchId: coded, quantity: "4", reason: "DAMAGED" }, s.as("owner"))).toMatchObject({
+      ok: true,
+    });
+    expect(await writeOffStock({ variantId: lot.variantId, unitId: lot.piece, quantity: "7", reason: "DAMAGED" }, s.as("owner"))).toMatchObject({
+      ok: false,
+      code: "STOCK_NEGATIVE",
+    });
+    expect(await s.balance(lot.variantId)).toEqual({ qty: 6n * U, valueMinor: 600n });
+
+    // A tracksExpiry product still needs its batch.
+    const milk = await s.item({ tracksExpiry: true });
+    await receive(s, [line(milk, "5", { cost: iqd("100"), expiryDate: isoDay(5) })]);
+    expect(await writeOffStock({ variantId: milk.variantId, unitId: milk.piece, quantity: "1", reason: "EXPIRED" }, s.as("owner"))).toMatchObject({
+      ok: false,
+      code: "STOCK_RULE",
+      details: { reason: "BATCH_REQUIRED" },
+    });
+    expect(
+      await adjustStock({ variantId: milk.variantId, unitId: milk.piece, direction: "IN", quantity: "1", reason: "COUNT_FIX" }, s.as("owner")),
+    ).toMatchObject({ ok: false, code: "STOCK_RULE", details: { reason: "BATCH_REQUIRED" } });
+  });
+
   it("reversing a receipt posts the exact negation and links to it", async () => {
     const s = await shop();
     const it1 = await s.item();

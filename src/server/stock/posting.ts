@@ -26,7 +26,8 @@ import { postMovements, variantAverage, type LedgerLine } from "./ledger";
  * - OPENING / RECEIPT (the lines as typed): every line checked, equal lines merged, batches resolved
  *   from code and expiry, values from the typed costs (see documents.ts for the rules).
  * - ADJUSTMENT / WRITE_OFF (document `direction`; a WRITE_OFF is OUT): the lines name their batch
- *   (batchId) and carry no cost. IN is valued at the variant's current weighted average at the
+ *   (batchId: required for a tracksExpiry product, optional for another BATCH product where null is
+ *   the no-batch row, refused for a non-BATCH product) and carry no cost. IN is valued at the variant's current weighted average at the
  *   location (variantAverage, read under the variant locks), or 0 with a COST_UNKNOWN warning when
  *   the variant has no stock there; OUT is valued by the ledger (average). Each line stores the
  *   value and the average cost of one entered unit in the business's currency. An archived item may
@@ -457,7 +458,8 @@ function shareOf(value: bigint, qty: bigint, total: bigint): bigint {
 
 /**
  * ADJUSTMENT / WRITE_OFF: the lines name their batch (checked by the action that created them:
- * required for a BATCH product, of the line's variant) and carry no cost; see the header for values.
+ * required for a tracksExpiry product, optional for another BATCH product, of the line's variant)
+ * and carry no cost; see the header for values.
  */
 async function postAdjustmentLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBusiness: LockBusiness): Promise<Posting> {
   const direction = doc.direction;
@@ -469,7 +471,7 @@ async function postAdjustmentLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBus
     // batchCode/expiryDate are copied from the named batch; the batch itself is checked here.
     const c = checkLine(l, catalog, biz, { allowArchived: direction === "OUT" });
     const batch = c.variant.product.trackingMode === "BATCH";
-    if (batch && l.batchId === null) refuse(l.lineNo, "BATCH_REQUIRED");
+    if (batch && c.variant.product.tracksExpiry && l.batchId === null) refuse(l.lineNo, "BATCH_REQUIRED");
     if (!batch && l.batchId !== null) refuse(l.lineNo, "BATCH_NOT_TRACKED");
     return c;
   });
@@ -601,16 +603,16 @@ async function postReversalLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBusin
 
 /**
  * OPENING adds while the (location, variant) has only OPENING movements; anything else refuses.
- * Bounded: the OPENING documents of the location, then at most one movement per variant (distinct)
- * from any other document.
+ * Bounded: the OPENING documents of the location, then one SQL GROUP BY variantId over the
+ * movements of any other document, so at most one row per variant comes back (Prisma's `distinct`
+ * would be applied in memory after reading every movement).
  */
 async function refuseOpeningAfterMovement(tx: Tx, locationId: string, groups: Group[]): Promise<void> {
   const variantIds = [...new Set(groups.map((g) => g.first.variantId))];
   const openings = await tx.rtStockDocument.findMany({ where: { locationId, kind: "OPENING", status: "POSTED" }, select: { id: true } });
-  const moved = await tx.rtStockMovement.findMany({
+  const moved = await tx.rtStockMovement.groupBy({
+    by: ["variantId"],
     where: { locationId, variantId: { in: variantIds }, documentId: { notIn: openings.map((o) => o.id) } },
-    distinct: ["variantId"],
-    select: { variantId: true },
   });
   if (moved.length === 0) return;
   const blocked = new Set(moved.map((m) => m.variantId));

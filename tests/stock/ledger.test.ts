@@ -106,7 +106,27 @@ async function world(variants = 1) {
       });
       lineOf[vs[i]!.id] = l.id;
     }
-    places.push({ branchId, locationId: location.id, documentId: doc.id, lineOf });
+    // A REVERSAL of that document with the same lines: the only kind postMovements takes exactValues for.
+    const reversal = await db.rtStockDocument.create({
+      data: { businessId, branchId, locationId: location.id, kind: "REVERSAL", reversesDocumentId: doc.id },
+    });
+    const reversalLineOf: Record<string, string> = {};
+    for (let i = 0; i < vs.length; i++) {
+      const l = await db.rtStockLine.create({
+        data: {
+          businessId,
+          branchId,
+          documentId: reversal.id,
+          lineNo: i + 1,
+          variantId: vs[i]!.id,
+          unitId: units[i]!.id,
+          quantity: 1000n,
+          enteredQuantity: "1",
+        },
+      });
+      reversalLineOf[vs[i]!.id] = l.id;
+    }
+    places.push({ branchId, locationId: location.id, documentId: doc.id, lineOf, reversalId: reversal.id, reversalLineOf });
   }
   const userId = w.staff.o!.user.id;
   const meta = () => ({ userId, businessId, idempotencyKey: `k-${++keySeq}` });
@@ -118,17 +138,21 @@ async function world(variants = 1) {
 type World = Awaited<ReturnType<typeof world>>;
 type Move = { variantId: string; batchId?: string | null; qtyDelta: bigint; valueDeltaMinor?: bigint };
 
-/** Posts `moves` at place `p` of `w` in one transaction; resolves to the action result. */
-function postAt(w: World, moves: Move[], p = 0, exactValues?: boolean) {
+/**
+ * Posts `moves` at place `p` of `w` in one transaction; resolves to the action result. With
+ * exactValues the moves go on the place's REVERSAL document unless `onReceipt` is set.
+ */
+function postAt(w: World, moves: Move[], p = 0, exactValues?: boolean, onReceipt = false) {
   const place = w.places[p]!;
+  const reversal = exactValues === true && !onReceipt;
   return post(
     {
       ...(exactValues === undefined ? {} : { exactValues }),
-      documentId: place.documentId,
+      documentId: reversal ? place.reversalId : place.documentId,
       branchId: place.branchId,
       locationId: place.locationId,
       lines: moves.map((m) => ({
-        lineId: place.lineOf[m.variantId]!,
+        lineId: (reversal ? place.reversalLineOf : place.lineOf)[m.variantId]!,
         variantId: m.variantId,
         batchId: m.batchId ?? null,
         qtyDelta: m.qtyDelta,
@@ -461,6 +485,24 @@ describe("stock ledger", () => {
       ok: false,
       code: "STOCK_NEGATIVE",
     });
+    // The second line fails ONLY on the variant's total value (B keeps 9 of 10, then 8): the first
+    // takes it to 500, the second to -100. Nothing of the call is written.
+    const balancesBefore = await db.rtStockBalance.findMany({ orderBy: { id: "asc" } });
+    expect(
+      await exact([
+        { variantId: v, batchId: b.id, qtyDelta: -1n * U, valueDeltaMinor: -1500n },
+        { variantId: v, batchId: b.id, qtyDelta: -1n * U, valueDeltaMinor: -600n },
+      ]),
+    ).toMatchObject({ ok: false, code: "STOCK_NEGATIVE" });
+    expect(await db.rtStockMovement.count()).toBe(before);
+    expect(await db.rtStockBalance.findMany({ orderBy: { id: "asc" } })).toEqual(balancesBefore);
+    // exactValues on a document that is not a REVERSAL (here the RECEIPT) is refused, nothing written.
+    expect(await postAt(w, [{ variantId: v, batchId: b.id, qtyDelta: -1n * U, valueDeltaMinor: -100n }], 0, true, true)).toMatchObject({
+      ok: false,
+      code: "STOCK_RULE",
+      details: { reason: "EXACT_VALUES_NOT_REVERSAL" },
+    });
+    expect(await db.rtStockMovement.count()).toBe(before);
     // A line that is fine followed by one that goes below zero: nothing of the call is kept.
     expect(
       await exact([
