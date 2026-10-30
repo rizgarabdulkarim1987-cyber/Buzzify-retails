@@ -10,8 +10,9 @@ type Tx = Prisma.TransactionClient;
  * The owner's consent to send the business's images to the AI provider (spec 3.11, 3ب.5).
  * Stored on RtBusiness as aiConsentAt + aiConsentVersion. A consent counts only for the current
  * consent text: raising CONSENT_VERSION voids every earlier consent until the owner grants again.
- * Only the OWNER holds `ai.consent`. Both actions sit behind the ai.intake master switch (spec 9).
- * Revoking stops new reads only: it deletes nothing (images go by the retention policy, quota
+ * Only the OWNER holds `ai.consent`. Granting sits behind the ai.intake master switch (spec 9) and
+ * needs a FULL gate. Revoking reduces exposure, so it is allowed with the switch off and while the
+ * business is READ_ONLY (never when CLOSED). Revoking stops new reads only: it deletes nothing (images go by the retention policy, quota
  * rows stay) and does not stop a read already under way.
  */
 
@@ -59,7 +60,8 @@ export const revokeAiConsent = defineAction({
   permission: "ai.consent",
   input: z.object({}).strict(),
   writes: true,
-  precondition: aiEnabledPrecondition,
+  // No master-switch precondition: an owner can always withdraw consent.
+  allowWhenReadOnly: true,
   run: ({ actor, tx }) => setConsent(tx, actor.businessId, null),
   audit: (_input, value) => ({ entity: "RtBusiness", entityId: value.businessId, changes: { aiConsentAt: null, aiConsentVersion: null } }),
 });

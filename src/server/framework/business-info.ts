@@ -16,14 +16,16 @@ export function currentGate(businessId: string): Promise<GateMode> {
 
 /**
  * How many branches the business's plan allows (the live subscription's plan, else the most recent
- * one); 0 when there is no subscription at all.
+ * one); 0 when there is no subscription at all. Inside an action it reads on the action's own
+ * transaction (see platform-tx.ts).
  */
 export async function planBranchLimit(businessId: string): Promise<number> {
+  const client = currentPlatformTx(businessId) ?? db;
   const orderBy = [{ createdAt: "desc" as const }, { id: "desc" as const }];
   const select = { plan: { select: { maxBranches: true } } };
   const sub =
-    (await db.rtSubscription.findFirst({ where: { businessId, status: { in: ["TRIAL", "ACTIVE", "GRACE"] } }, orderBy, select })) ??
-    (await db.rtSubscription.findFirst({ where: { businessId }, orderBy, select }));
+    (await client.rtSubscription.findFirst({ where: { businessId, status: { in: ["TRIAL", "ACTIVE", "GRACE"] } }, orderBy, select })) ??
+    (await client.rtSubscription.findFirst({ where: { businessId }, orderBy, select }));
   return sub?.plan.maxBranches ?? 0;
 }
 
@@ -34,7 +36,7 @@ export async function planBranchLimit(businessId: string): Promise<number> {
  * the action's own transaction (see platform-tx.ts), so concurrent reservations cannot starve the pool.
  */
 export async function planAiMonthly(businessId: string): Promise<number> {
-  const client = currentPlatformTx() ?? db;
+  const client = currentPlatformTx(businessId) ?? db;
   const sub = await client.rtSubscription.findFirst({
     where: { businessId, status: { in: ["TRIAL", "ACTIVE", "GRACE"] } },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],

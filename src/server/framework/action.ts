@@ -162,7 +162,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
 
       if (!spec.writes) {
         const value = await runRead(
-          (tx) => withPlatformTx(tx, () => spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) })),
+          (tx) => withPlatformTx(tx, actor.businessId, () => spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) })),
           db,
           spec.timeoutMs,
         );
@@ -179,7 +179,7 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
         timeoutMs: spec.timeoutMs,
         storedValue: spec.storedValue,
         async run(tx) {
-          const result = await withPlatformTx(tx, () =>
+          const result = await withPlatformTx(tx, actor.businessId, () =>
             spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) }),
           );
           const audit = spec.audit?.(input, result) ?? {

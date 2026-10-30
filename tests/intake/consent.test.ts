@@ -108,22 +108,36 @@ describe("AI consent", () => {
     expect((await business(s.businessId)).aiConsentVersion).toBe(CONSENT_VERSION);
   });
 
-  it("both are refused while the master switch is closed", async () => {
+  it("grant is refused while the master switch is closed; revoke still works", async () => {
     const s = await shop({ ai: false });
     expect(await grant(s)).toMatchObject({ ok: false, code: "AI_DISABLED" });
     expect((await business(s.businessId)).aiConsentAt).toBeNull();
     await s.setSwitch(true);
     expect((await grant(s)).ok).toBe(true);
     await s.setSwitch(false);
-    expect(await revoke(s)).toMatchObject({ ok: false, code: "AI_DISABLED" });
-    expect((await business(s.businessId)).aiConsentVersion).toBe(CONSENT_VERSION);
+    expect(await grant(s)).toMatchObject({ ok: false, code: "AI_DISABLED" });
+    expect(await revoke(s)).toMatchObject({ ok: true, value: { consentVersion: null } });
+    expect(await business(s.businessId)).toMatchObject({ aiConsentAt: null, aiConsentVersion: null });
   });
 
-  it("a READ_ONLY business cannot grant", async () => {
+  it("a READ_ONLY business cannot grant but can revoke", async () => {
     const s = await shop();
+    expect((await grant(s)).ok).toBe(true);
     await db.rtBusiness.update({ where: { id: s.businessId }, data: { status: "SUSPENDED" } });
     expect(await grant(s)).toMatchObject({ ok: false, code: "READ_ONLY" });
+    expect(await revoke(s, "MANAGER")).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect((await business(s.businessId)).aiConsentVersion).toBe(CONSENT_VERSION);
+    expect(await revoke(s)).toMatchObject({ ok: true, value: { consentVersion: null } });
     expect((await business(s.businessId)).aiConsentAt).toBeNull();
+  });
+
+  it("a CLOSED business can neither grant nor revoke", async () => {
+    const s = await shop();
+    expect((await grant(s)).ok).toBe(true);
+    await db.rtBusiness.update({ where: { id: s.businessId }, data: { status: "ARCHIVED" } });
+    expect(await revoke(s)).toMatchObject({ ok: false, code: "READ_ONLY" });
+    expect(await grant(s)).toMatchObject({ ok: false, code: "READ_ONLY" });
+    expect((await business(s.businessId)).aiConsentVersion).toBe(CONSENT_VERSION);
   });
 
   it("revoking clears both columns, is audited, and deletes nothing", async () => {

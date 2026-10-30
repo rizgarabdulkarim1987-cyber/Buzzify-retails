@@ -15,6 +15,13 @@ const ALLOWED_FILES = ["src/server/db.ts"];
 const ALLOWED_DIRS = ["src/server/framework/", "src/server/auth/", "src/server/admin/"];
 
 const BASE_DB = "src/server/db";
+/**
+ * Framework internals that hand out the base transaction client (platform-tx) or run base
+ * transactions (transaction). Importable only from src/server/framework/, not even from the
+ * folders exempt from the base-db rule.
+ */
+const FRAMEWORK_ONLY = ["src/server/framework/platform-tx", "src/server/framework/transaction"];
+const FRAMEWORK_DIR = "src/server/framework/";
 const PRISMA_INTERNALS = /\._(appliedParent|originalClient|createItxClient|engine|request|executeRequest)\b/g;
 const GENERATED_CLIENT = ["src/generated/prisma/client", "src/generated/prisma"];
 
@@ -62,6 +69,12 @@ export function findDirectDbAccess(file: string, content: string): string[] {
   const violations: string[] = [];
   // Prisma internals that unwrap a scoped client to the base client; refused everywhere, exempt folders included.
   for (const m of content.matchAll(PRISMA_INTERNALS)) violations.push(`${file}: reaches Prisma internal ${m[0]}`);
+  if (!file.startsWith(FRAMEWORK_DIR)) {
+    for (const site of importSites(content)) {
+      const target = resolveSpecifier(file, site.spec);
+      if (target !== null && FRAMEWORK_ONLY.includes(target)) violations.push(`${file}: imports framework internal "${site.spec}"`);
+    }
+  }
   if (isExempt(file)) return violations;
   for (const site of importSites(content)) {
     const target = resolveSpecifier(file, site.spec);
@@ -131,6 +144,21 @@ describe("enforcement", () => {
       `const x = obj._requestId;`,
     ];
     for (const sample of good) expect(findDirectDbAccess(file, sample), sample).toEqual([]);
+  });
+
+  it("platform-tx and transaction are importable from the framework folder only", () => {
+    const bad = [
+      `import { currentPlatformTx } from "@/server/framework/platform-tx";`,
+      `import { currentPlatformTx } from "@/server/framework/platform-tx.ts";`,
+      `import type { AuditDraft } from "@/server/framework/transaction";`,
+      `const m = await import("@/server/framework/transaction");`,
+    ];
+    for (const f of ["src/server/intake/quota.ts", "src/server/admin/x.ts", "src/server/auth/y.ts", "src/app/page.tsx"]) {
+      for (const sample of bad) expect(findDirectDbAccess(f, sample), `${f}: ${sample}`).not.toEqual([]);
+    }
+    expect(findDirectDbAccess("src/server/intake/quota.ts", `import { currentPlatformTx } from "../framework/platform-tx";`)).not.toEqual([]);
+    for (const sample of bad) expect(findDirectDbAccess("src/server/framework/action.ts", sample), sample).toEqual([]);
+    expect(findDirectDbAccess("src/server/intake/quota.ts", `import { planAiMonthly } from "@/server/framework/business-info";`)).toEqual([]);
   });
 
   it("the allowed folders are exempt and nothing else is", () => {

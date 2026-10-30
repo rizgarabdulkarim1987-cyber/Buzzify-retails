@@ -10,17 +10,34 @@ import type { Prisma } from "@/generated/prisma/client";
  * transaction waiting for another connection, and they all stall until the transaction timeout.
  * Reading on the running transaction's own connection avoids that.
  *
- * Only framework files read this (tenant code gets the scoped client and never the base one).
+ * Guards:
+ * - Only src/server/framework/ may import this module (tests/enforcement/no-direct-db.test.ts).
+ *   Tenant code gets the scoped client and never the base one.
+ * - The context is bound to the action's business: a read for another business gets undefined
+ *   (the caller falls back to `db`) instead of the wrong transaction.
+ * - The context closes when the wrapped run settles: a continuation that fires after commit or
+ *   rollback gets undefined and falls back to `db` instead of a finished transaction.
  */
 
-const store = new AsyncLocalStorage<Prisma.TransactionClient>();
+type Holder = { tx: Prisma.TransactionClient; businessId: string; open: boolean };
 
-/** Runs `fn` with `tx` as the current action's base transaction client. Used by defineAction only. */
-export function withPlatformTx<T>(tx: Prisma.TransactionClient, fn: () => T): T {
-  return store.run(tx, fn);
+const store = new AsyncLocalStorage<Holder>();
+
+/** Runs `fn` with `tx` as the current action's base transaction client for `businessId`. Used by defineAction only. */
+export async function withPlatformTx<T>(tx: Prisma.TransactionClient, businessId: string, fn: () => Promise<T>): Promise<T> {
+  const holder: Holder = { tx, businessId, open: true };
+  try {
+    return await store.run(holder, fn);
+  } finally {
+    holder.open = false;
+  }
 }
 
-/** The running action's base transaction client, or undefined outside an action's `run`. */
-export function currentPlatformTx(): Prisma.TransactionClient | undefined {
-  return store.getStore();
+/**
+ * The running action's base transaction client when it belongs to `businessId` and is still open;
+ * undefined otherwise (outside a run, another business, or after the run settled).
+ */
+export function currentPlatformTx(businessId: string): Prisma.TransactionClient | undefined {
+  const holder = store.getStore();
+  return holder && holder.open && holder.businessId === businessId ? holder.tx : undefined;
 }

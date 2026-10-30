@@ -22,7 +22,7 @@ export const OVERRIDE_LATEST_FIRST = [{ createdAt: "desc" }, { id: "desc" }] as 
  * Whether `feature` is on for the business right now (no override row: off). Without a client it
  * reads on the running action's transaction when there is one (see platform-tx.ts), else on `db`.
  */
-export async function featureEnabled(businessId: string, feature: string, client: Client = currentPlatformTx() ?? db): Promise<boolean> {
+export async function featureEnabled(businessId: string, feature: string, client: Client = currentPlatformTx(businessId) ?? db): Promise<boolean> {
   const row = await client.rtFeatureOverride.findFirst({
     where: { businessId, feature },
     orderBy: [...OVERRIDE_LATEST_FIRST],
@@ -31,8 +31,11 @@ export async function featureEnabled(businessId: string, feature: string, client
   return row?.enabled === true;
 }
 
-/** Refuses with AI_DISABLED unless the platform admin turned ai.intake on for this business. */
-export async function assertAiEnabled(businessId: string, client: Client = db): Promise<void> {
+/**
+ * Refuses with AI_DISABLED unless the platform admin turned ai.intake on for this business. Like
+ * featureEnabled, inside an action's run it reads on that action's transaction by default.
+ */
+export async function assertAiEnabled(businessId: string, client: Client = currentPlatformTx(businessId) ?? db): Promise<void> {
   if (!(await featureEnabled(businessId, AI_INTAKE_FEATURE, client))) throw new RuleError("AI_DISABLED");
 }
 
