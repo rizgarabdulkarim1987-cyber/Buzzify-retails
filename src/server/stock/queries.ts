@@ -31,7 +31,7 @@ type Tx = Prisma.TransactionClient;
 const DAY_MS = 86_400_000;
 const DEFAULT_ALERT_DAYS = 30;
 const DEFAULT_LIMIT = 25;
-const MAX_FILL_PAGES = 20;
+const MAX_FILL_PAGES = 8;
 
 const id = z.string().min(1).max(64);
 const cursorField = z.string().min(1).max(MAX_CURSOR_LENGTH);
@@ -148,32 +148,34 @@ export type StockRow = {
 
 /**
  * The stock list. The variants, their order and the paging are searchCatalog's (a barcode or SKU
- * first, then by name; keyset cursor); this joins the balances for the page. With expiringOnly a page
- * keeps only the variants holding SOON or EXPIRED stock: it may come back shorter than `limit`
- * (even empty) while nextCursor still says there is more, so a caller keeps paging until it is null.
+ * first, then by name; keyset cursor); this joins the balances for the page. With expiringOnly it
+ * keeps only the variants holding SOON or EXPIRED stock and reads search pages until `limit` rows are
+ * collected; nextCursor sits right after the last hit used. A page is shorter than `limit` only when
+ * the search is exhausted (nextCursor null) or MAX_FILL_PAGES search pages were read (nextCursor
+ * not null: keep paging).
  */
 export const listStock = defineAction({
   name: "stock.list",
   permission: "stock.view",
   input: listStockInput,
   writes: false,
+  timeoutMs: 20_000,
   async run({ actor, tx, input }): Promise<{ rows: StockRow[]; nextCursor: string | null }> {
     const today = await todayOf(tx);
     const withCost = showsCost(actor.role);
     const rows: StockRow[] = [];
+    // Without expiringOnly one search page is the page. With it, search pages (50 hits each) are
+    // read until `limit` rows are collected, the search ends or MAX_FILL_PAGES is hit.
+    const pageSize = input.expiringOnly ? MAX_SEARCH_LIMIT : input.limit;
     let cursor = input.cursor;
     let nextCursor: string | null = null;
 
     for (let page = 0; page < (input.expiringOnly ? MAX_FILL_PAGES : 1); page++) {
-      const found = await searchInTx(tx, {
-        query: input.query,
-        categoryId: input.categoryId,
-        includeArchived: false,
-        cursor,
-        limit: input.limit,
-      });
+      const found = await searchInTx(tx, { query: input.query, categoryId: input.categoryId, includeArchived: false, cursor, limit: pageSize });
       const facts = await loadFacts(tx, found.items.map((i) => i.variantId));
-      for (const hit of found.items) {
+      let consumed = found.items.length; // hits of this page that are behind us once the page is full
+      for (let i = 0; i < found.items.length; i++) {
+        const hit = found.items[i]!;
         const info = facts.variants.get(hit.variantId);
         if (!info) continue;
         const s = summarize(facts.balances.get(hit.variantId) ?? [], facts.batches, info.alertDays, today);
@@ -190,10 +192,21 @@ export const listStock = defineAction({
           status: s.status,
           ...(withCost ? valueKeys(s, info.baseFactor) : {}),
         });
+        if (rows.length === input.limit) {
+          consumed = i + 1;
+          break;
+        }
+      }
+      if (consumed < found.items.length) {
+        // The page filled in the middle of a search page: the cursor goes right after the last
+        // hit used, which the search itself gives for a page of exactly that many hits.
+        const upTo = await searchInTx(tx, { query: input.query, categoryId: input.categoryId, includeArchived: false, cursor, limit: consumed });
+        nextCursor = upTo.nextCursor;
+        break;
       }
       nextCursor = found.nextCursor;
       cursor = found.nextCursor ?? undefined;
-      if (rows.length > 0 || nextCursor === null) break;
+      if (rows.length >= input.limit || nextCursor === null) break;
     }
     return { rows, nextCursor };
   },
@@ -306,8 +319,11 @@ export type MovementRow = {
 /**
  * A variant's movements, newest first (createdAt, then id, descending), with the running balance
  * after each: the variant's total at the movement's location, summed over its batches. Keyset
- * paged (opaque cursor). The first row's balance is the location total minus everything newer; the
- * rest follow by subtracting each row's delta, so no row is scanned twice.
+ * paged (opaque cursor). The first row's balance is the location's current balance minus everything
+ * newer; the rest follow by subtracting each row's delta.
+ * Caveat: createdAt is the start time of the posting transaction, so two documents posted by
+ * concurrent transactions are ordered by when they began, not when they committed; the balances stay
+ * exact for the order shown (ties on createdAt are broken by id).
  */
 export const listMovements = defineAction({
   name: "stock.movements",
@@ -334,25 +350,25 @@ export const listMovements = defineAction({
     const nextCursor = found.length > input.limit && last ? encodeMovementCursor(last.createdAt, last.id) : null;
     if (page.length === 0) return { rows: [], nextCursor };
 
-    // The balance after the first row of the page: the total minus everything newer than it.
+    // The balance after the first row of the page: the location's balance now (the sum of its
+    // balance rows, at most locations x batches rows) minus everything newer than that row. Page 1
+    // has nothing newer; a deep page pays one scan of the newer movements (O(depth), by index).
     const first = page[0]!;
     const run = new Map<string, { qty: bigint; value: bigint }>();
-    const totals = await tx.rtStockMovement.groupBy({
-      by: ["locationId"],
-      where: { variantId: input.variantId },
-      _sum: { qtyDelta: true, valueDeltaMinor: true },
-    });
-    for (const t of totals) run.set(t.locationId, { qty: t._sum.qtyDelta ?? 0n, value: t._sum.valueDeltaMinor ?? 0n });
-    const newer = await tx.rtStockMovement.groupBy({
-      by: ["locationId"],
-      where: { variantId: input.variantId, OR: [{ createdAt: { gt: first.createdAt } }, { createdAt: first.createdAt, id: { gt: first.id } }] },
-      _sum: { qtyDelta: true, valueDeltaMinor: true },
-    });
-    for (const n of newer) {
-      const r = run.get(n.locationId);
-      if (r) {
-        r.qty -= n._sum.qtyDelta ?? 0n;
-        r.value -= n._sum.valueDeltaMinor ?? 0n;
+    const now = await tx.rtStockBalance.groupBy({ by: ["locationId"], where: { variantId: input.variantId }, _sum: { qty: true, valueMinor: true } });
+    for (const t of now) run.set(t.locationId, { qty: t._sum.qty ?? 0n, value: t._sum.valueMinor ?? 0n });
+    if (after !== null) {
+      const newer = await tx.rtStockMovement.groupBy({
+        by: ["locationId"],
+        where: { variantId: input.variantId, OR: [{ createdAt: { gt: first.createdAt } }, { createdAt: first.createdAt, id: { gt: first.id } }] },
+        _sum: { qtyDelta: true, valueDeltaMinor: true },
+      });
+      for (const n of newer) {
+        const r = run.get(n.locationId);
+        if (r) {
+          r.qty -= n._sum.qtyDelta ?? 0n;
+          r.value -= n._sum.valueDeltaMinor ?? 0n;
+        }
       }
     }
 
@@ -368,13 +384,14 @@ export const listMovements = defineAction({
     const rows: MovementRow[] = [];
     for (const m of page) {
       const doc = docOf.get(m.documentId);
+      if (!doc) throw new Error(`listMovements: movement ${m.id} has no document in scope`);
       const r = run.get(m.locationId) ?? { qty: 0n, value: 0n };
       rows.push({
         id: m.id,
         createdAt: m.createdAt,
         documentId: m.documentId,
-        documentKind: doc?.kind ?? "RECEIPT",
-        documentNumber: doc?.number ?? null,
+        documentKind: doc.kind,
+        documentNumber: doc.number,
         locationId: m.locationId,
         batchId: m.batchId,
         batchCode: m.batchId === null ? null : (codeOf.get(m.batchId) ?? null),
@@ -460,8 +477,9 @@ export const listExpiring = defineAction({
       if (!held || !v || b.expiryDate === null) continue;
       const window = input.withinDays ?? v.product.expiryAlertDays ?? DEFAULT_ALERT_DAYS;
       const daysLeft = Math.round((b.expiryDate.getTime() - today.getTime()) / DAY_MS);
-      const status = expiryStatus(b.expiryDate, today, window);
-      if (status !== "EXPIRED" && daysLeft > window) continue;
+      // The status is the product's own (its alert days); `withinDays` only widens or narrows the filter.
+      const status = expiryStatus(b.expiryDate, today, v.product.expiryAlertDays ?? DEFAULT_ALERT_DAYS);
+      if (daysLeft > window && expiryStatus(b.expiryDate, today, 0) !== "EXPIRED") continue;
       rows.push({
         productId: v.productId,
         variantId: v.id,

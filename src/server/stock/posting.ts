@@ -344,6 +344,9 @@ type Group = {
 /** OPENING / RECEIPT: the rules of documents.ts. */
 async function postTypedLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBusiness: LockBusiness): Promise<Posting> {
   const rows = await readLines(tx, doc.id);
+  // Variant locks first: a catalog edit (unit factor, tracking flags) takes the same locks, so what we
+  // read next is not changed under us.
+  await lockVariants(rows.map((r) => r.variantId), lockBusiness);
   const biz = await businessOf(tx);
   const catalog = await loadCatalog(tx, rows);
   const today = businessToday(new Date(), biz.timezone);
@@ -375,8 +378,7 @@ async function postTypedLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBusiness
     }
   }
 
-  // The stock-dependent checks run under the variants' locks (postMovements takes them again).
-  await lockVariants(rows.map((r) => r.variantId), lockBusiness);
+  // The stock-dependent checks run under the variants' locks (taken above; postMovements takes them again).
   if (doc.kind === "OPENING") await refuseOpeningAfterMovement(tx, doc.locationId, [...groups.values()]);
 
   const batchIds = await resolveBatches(tx, actor.businessId, [...groups.values()]);
@@ -465,6 +467,7 @@ async function postAdjustmentLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBus
   const direction = doc.direction;
   if (direction === null || (doc.kind === "WRITE_OFF" && direction !== "OUT")) throw new Error("postAdjustmentLines: bad direction");
   const rows = await readLines(tx, doc.id);
+  await lockVariants(rows.map((r) => r.variantId), lockBusiness); // before reading the catalog, as in postTypedLines
   const biz = await businessOf(tx);
   const catalog = await loadCatalog(tx, rows);
   const checked = rows.map((l) => {
@@ -475,8 +478,6 @@ async function postAdjustmentLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBus
     if (!batch && l.batchId !== null) refuse(l.lineNo, "BATCH_NOT_TRACKED");
     return c;
   });
-
-  await lockVariants(rows.map((r) => r.variantId), lockBusiness);
 
   // IN: the average under the locks, before this document (several IN lines of one variant all
   // take the same average). OUT: the ledger's value.

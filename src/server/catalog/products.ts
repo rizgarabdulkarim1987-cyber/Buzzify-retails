@@ -50,7 +50,9 @@ import { applyPrice, assertCurrencyEnabled, derivedUnitPrice, ensureDefaultLists
  *
  * Lock order (to never deadlock): idempotency lock (framework), then "catalog.taxonomy" (only when
  * a category/brand is assigned, because archiveCategory counts active products under it), then
- * the product lock, then the SKU counter row.
+ * the product lock, then `stock:<variantId>` (ascending; only when a change must read the stock
+ * history: unit factor, decimals, tracking flags; posting takes the same locks, after its document
+ * lock and without any product lock), then the SKU counter row.
  */
 
 type Tx = Prisma.TransactionClient;
@@ -179,17 +181,14 @@ const updateInput = z
 // Helpers
 
 /**
- * True once any variant in `variantIds` has a POSTED stock movement (R-D: drafts do not lock). A batch
- * row counts too: batches are created only by posting, and RtBatch is business-level, so it shows
- * stock history even to a branch-limited actor whose scoped client cannot see other branches'
- * movements (movements are branch-scoped).
+ * True once any variant in `variantIds` has had a POSTED stock movement (R-D: drafts do not lock).
+ * Reads RtVariant.stockStartedAt, set by the ledger on a variant's first movement: business-level, so a
+ * branch-limited editor, whose scoped client cannot see other branches' movements, is locked too (R-Q).
  */
 async function variantsHaveHistory(tx: Tx, variantIds: string[]): Promise<boolean> {
   if (variantIds.length === 0) return false;
-  const movement = await tx.rtStockMovement.findFirst({ where: { variantId: { in: variantIds } }, select: { id: true } });
-  if (movement) return true;
-  const batch = await tx.rtBatch.findFirst({ where: { variantId: { in: variantIds } }, select: { id: true } });
-  return batch !== null;
+  const started = await tx.rtVariant.findFirst({ where: { id: { in: variantIds }, stockStartedAt: { not: null } }, select: { id: true } });
+  return started !== null;
 }
 
 /** Waits for any posting in flight on these variants (posting holds `stock:<variantId>`), in ascending order. */

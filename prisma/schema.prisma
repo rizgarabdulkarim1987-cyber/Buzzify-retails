@@ -604,16 +604,20 @@ model RtProduct {
 // The sellable item (one per size/colour, or the single default variant of a market product).
 // The SKU is unique per business and never changes.
 model RtVariant {
-  id         String    @id @default(cuid())
-  businessId String
-  productId  String
-  sku        String
-  options    Json?
-  searchText String    @default("")
-  archivedAt DateTime?
-  version    Int       @default(1)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  businessId     String
+  productId      String
+  sku            String
+  options        Json?
+  searchText     String    @default("")
+  archivedAt     DateTime?
+  // Set once, by the ledger, when the variant gets its first movement (any branch). Business-level on
+  // purpose: the catalog locks (unit factor, tracking flags) read it, and a branch-limited editor
+  // cannot see other branches movements. Never cleared (reversals do not).
+  stockStartedAt DateTime?
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   business   RtBusiness    @relation(fields: [businessId], references: [id])
   product    RtProduct     @relation(fields: [businessId, productId], references: [businessId, id])

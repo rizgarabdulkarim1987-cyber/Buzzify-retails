@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { RtTrackingMode } from "@/generated/prisma/client";
+import { z } from "zod";
+import { updateProduct, updateUnit } from "@/server/catalog/products";
+import { defineAction } from "@/server/framework/action";
 import { normalizeSearchText } from "@/server/domain/catalog";
 import { businessToday } from "@/server/domain/stock";
-import { adjustStock, writeOffStock } from "@/server/stock/adjust";
+import { adjustStock, reverseStockDocument, writeOffStock } from "@/server/stock/adjust";
 import { postStockDocument, saveStockDraft, type DraftLineInput } from "@/server/stock/documents";
 import { getVariantStock, listExpiring, listMovements, listStock, stockContext } from "@/server/stock/queries";
 import { useTestDb } from "../helpers/db";
@@ -194,6 +197,9 @@ describe("stock queries", () => {
     // An explicit window replaces the per-product days.
     expect(codes(ok(await listExpiring({ withinDays: 10 }, s.as("owner"))))).toEqual(["BOLD", "A4", "A6"]);
     expect(codes(ok(await listExpiring({ withinDays: 100 }, s.as("owner"))))).toEqual(["BOLD", "A4", "A6", "B20", "B40"]);
+    // The status stays the product's own: the 5 alert days of A make A6 OK even inside a 10-day window.
+    const wide = ok(await listExpiring({ withinDays: 10 }, s.as("owner"))).rows;
+    expect(wide.map((r) => [r.code, r.status])).toEqual([["BOLD", "EXPIRED"], ["A4", "SOON"], ["A6", "OK"]]);
 
     // The same expiry date is SOON in the last time zone of the day and EXPIRED in the first.
     const c = await s.item({ name: "قشطة", tracksExpiry: true });
@@ -330,5 +336,141 @@ describe("stock queries", () => {
     expect(await listMovements({ variantId: ia.variantId }, b.as("owner"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
     expect(ok(await listExpiring({ withinDays: 3650 }, b.as("owner"))).rows).toEqual([]);
     expect(ok(await listStock({}, a.as("owner"))).rows).toHaveLength(1);
+  });
+});
+
+describe("stock queries: paging and listing contracts", () => {
+  it("expiringOnly pages fill up to the limit without gaps or repeats", async () => {
+    const s = await shop();
+    const N = 500;
+    const pad = (i: number) => String(i).padStart(4, "0");
+    const products = Array.from({ length: N }, (_, i) => ({ id: `p${pad(i)}`, businessId: s.businessId, nameAr: "صنف" }));
+    await db.rtProduct.createMany({ data: products });
+    await db.rtVariant.createMany({ data: products.map((p, i) => ({ id: `v${pad(i)}`, businessId: s.businessId, productId: p.id, sku: `SP-${i}` })) });
+    await db.rtUnit.createMany({
+      data: products.map((_, i) => ({ id: `u${pad(i)}`, businessId: s.businessId, variantId: `v${pad(i)}`, name: "حبة", factor: 1, isBase: true })),
+    });
+    const hot = [3, 10, 300, 450, 499];
+    for (const i of hot) {
+      const variantId = `v${pad(i)}`;
+      const batch = await db.rtBatch.create({
+        data: { businessId: s.businessId, variantId, code: `E${i}`, expiryDate: new Date(`${isoDay(2)}T00:00:00.000Z`) },
+      });
+      await db.rtStockBalance.create({
+        data: { businessId: s.businessId, branchId: s.branches.Main!.id, locationId: s.locations.Main!, variantId, batchId: batch.id, qty: 5n * U, valueMinor: 500n },
+      });
+    }
+    const want = hot.map((i) => `v${pad(i)}`);
+
+    const seen: string[] = [];
+    const pages: { n: number; more: boolean }[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 20; i++) {
+      const page = ok(await listStock({ expiringOnly: true, limit: 2, ...(cursor ? { cursor } : {}) }, s.as("owner")));
+      seen.push(...page.rows.map((r) => r.variantId));
+      pages.push({ n: page.rows.length, more: page.nextCursor !== null });
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+    expect(seen).toEqual(want);
+    // Full pages, except one cut short by the fill cap (the search went on, so there is a cursor)
+    // and the last one, where the search ended.
+    expect(pages).toEqual([
+      { n: 2, more: true },
+      { n: 1, more: true },
+      { n: 2, more: false },
+    ]);
+    // A page that fills in the middle of a search page puts the cursor right after its last row.
+    const one: string[] = [];
+    let cursor1 = undefined as string | undefined;
+    for (let i = 0; i < 20; i++) {
+      const page = ok(await listStock({ expiringOnly: true, limit: 1, ...(cursor1 ? { cursor: cursor1 } : {}) }, s.as("owner")));
+      one.push(...page.rows.map((r) => r.variantId));
+      if (!page.nextCursor) break;
+      cursor1 = page.nextCursor;
+    }
+    expect(one).toEqual(want);
+  }, 120_000);
+});
+
+describe("stock and the catalog under concurrent edits", () => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  let held = deferred();
+  let release = deferred();
+  /** Takes the variant's stock lock and keeps it until `release` resolves. */
+  const holder = defineAction({
+    name: "test.stock.hold",
+    permission: null,
+    input: z.object({ variantId: z.string() }),
+    writes: true,
+    timeoutMs: 30_000,
+    async run({ lockBusiness, input }) {
+      await lockBusiness(`stock:${input.variantId}`);
+      held.resolve();
+      await release.promise;
+      return true;
+    },
+  });
+
+  it("a post waits for the variant lock before it reads the catalog, so it sees a committed factor change", async () => {
+    const s = await shop();
+    const it1 = await s.item();
+    const d = ok(await saveStockDraft({ kind: "RECEIPT", lines: [line(it1, "1", { unitId: it1.carton, cost: iqd("2400") })] }, s.as("owner")));
+    held = deferred();
+    release = deferred();
+    const holding = holder({ variantId: it1.variantId }, s.as("owner"));
+    await held.promise;
+    // The post starts while the lock is held and must stop at the lock, before reading the catalog.
+    const posting = postStockDocument({ documentId: d.documentId, expectedVersion: d.version }, s.as("owner"));
+    for (let i = 0; i < 300; i++) {
+      const [row] = await db.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if (Number(row!.count) >= 1) break;
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    // A catalog edit that took the lock first and committed: the carton is now 12 pieces.
+    await db.rtUnit.update({ where: { id: it1.carton }, data: { factor: 12 } });
+    release.resolve();
+    await holding;
+    const r = await posting;
+    expect(r).toMatchObject({ ok: true, value: { lines: [{ quantity: 12n * U }] } });
+    expect(await s.balance(it1.variantId)).toMatchObject({ qty: 12n * U });
+  });
+
+  it("a branch-limited editor is still locked by movements in another branch; the marker is set once and kept", async () => {
+    const s = await shop();
+    const it1 = await s.item();
+    expect((await db.rtVariant.findUniqueOrThrow({ where: { id: it1.variantId } })).stockStartedAt).toBeNull();
+    // Receipts go to the oldest active branch: make that Second, which the stock officer cannot reach.
+    await db.rtBranch.update({ where: { id: s.branches.Main!.id }, data: { active: false } });
+    const doc = await post(s, [line(it1, "5", { cost: iqd("100") })]);
+    const marker = (await db.rtVariant.findUniqueOrThrow({ where: { id: it1.variantId } })).stockStartedAt;
+    expect(marker).not.toBeNull();
+    expect(await db.rtStockMovement.count({ where: { variantId: it1.variantId, branchId: s.branches.Second!.id } })).toBe(1);
+
+    expect(await updateUnit({ id: it1.carton, expectedVersion: 1, factor: 12 }, s.as("stock"))).toMatchObject({ ok: false, code: "UNIT_RULE" });
+    const p = await db.rtProduct.findUniqueOrThrow({ where: { id: it1.productId } });
+    expect(await updateProduct({ id: it1.productId, expectedVersion: p.version, trackingMode: "BATCH" }, s.as("stock"))).toMatchObject({
+      ok: false,
+      code: "TRACKING_RULE",
+    });
+
+    // Later movements and a reversal neither move nor clear it; the variant's version is untouched.
+    await post(s, [line(it1, "2", { cost: iqd("100") })]);
+    const version = (await db.rtStockDocument.findFirstOrThrow({ where: { id: doc.documentId } })).version;
+    ok(await reverseStockDocument({ documentId: doc.documentId, expectedVersion: version }, s.as("owner")));
+    const after = await db.rtVariant.findUniqueOrThrow({ where: { id: it1.variantId } });
+    expect(after.stockStartedAt).toEqual(marker);
+    expect(after.version).toBe(1);
+
+    // A draft alone never marks.
+    const other = await s.item({ name: "ماء" });
+    ok(await saveStockDraft({ kind: "RECEIPT", lines: [line(other, "1", { cost: iqd("10") })] }, s.as("owner")));
+    expect((await db.rtVariant.findUniqueOrThrow({ where: { id: other.variantId } })).stockStartedAt).toBeNull();
+    expect(await updateUnit({ id: other.carton, expectedVersion: 1, factor: 12 }, s.as("stock"))).toMatchObject({ ok: true });
   });
 });

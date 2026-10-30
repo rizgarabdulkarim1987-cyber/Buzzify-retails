@@ -186,6 +186,10 @@ export async function postMovements(
     };
   });
 
+  // The first movement of a variant marks it (R-Q), once: the catalog locks read this business-level
+  // marker. Under the variant locks, so a catalog edit and a first posting serialize. No version bump.
+  await tx.rtVariant.updateMany({ where: { id: { in: variantIds }, stockStartedAt: null }, data: { stockStartedAt: new Date() } });
+
   try {
     const missing = [...deltas.values()].filter((d) => !existing.some((r) => r.variantId === d.variantId && r.batchId === d.batchId));
     if (missing.length > 0) {

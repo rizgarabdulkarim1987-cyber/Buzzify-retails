@@ -418,6 +418,7 @@ describe("stock ledger", () => {
       const tx = scopedDb(w.actor, base);
       const lying = {
         rtStockMovement: tx.rtStockMovement,
+        rtVariant: tx.rtVariant,
         rtStockBalance: {
           ...tx.rtStockBalance,
           findMany: async (args: Parameters<typeof tx.rtStockBalance.findMany>[0]) =>

@@ -172,125 +172,123 @@ export type SearchInput = z.infer<typeof searchInput>;
 
 /** The search itself, for readers (the stock list) that page through the same hits inside their own read. */
 export async function searchInTx(tx: Tx, input: SearchInput): Promise<{ items: CatalogHit[]; nextCursor: string | null }> {
-  {
-    const cursor = input.cursor !== undefined ? decodeCursor(input.cursor) : null;
-    const normalized = normalizeSearchText(input.query);
-    const tokens = normalized === "" ? [] : normalized.split(" ").slice(0, MAX_TOKENS);
+  const cursor = input.cursor !== undefined ? decodeCursor(input.cursor) : null;
+  const normalized = normalizeSearchText(input.query);
+  const tokens = normalized === "" ? [] : normalized.split(" ").slice(0, MAX_TOKENS);
 
-    const variantWhere: Prisma.RtVariantWhereInput = {
+  const variantWhere: Prisma.RtVariantWhereInput = {
+    ...(input.includeArchived ? {} : { archivedAt: null }),
+    product: {
       ...(input.includeArchived ? {} : { archivedAt: null }),
-      product: {
-        ...(input.includeArchived ? {} : { archivedAt: null }),
-        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
-        ...(input.brandId ? { brandId: input.brandId } : {}),
-      },
+      ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+      ...(input.brandId ? { brandId: input.brandId } : {}),
+    },
+  };
+
+  const specials = normalized === "" ? [] : await specialHits(tx, input.query, normalized, variantWhere);
+  const limit = input.limit;
+
+  // 1) the exact hits still to return on this page
+  const specialStart = cursor === null ? 0 : "s" in cursor ? cursor.s : specials.length;
+  const head = specials.slice(specialStart, specialStart + limit);
+  let nextCursor: string | null = null;
+  let textRows: { id: string; nameAr: string }[] = [];
+
+  if (specialStart + limit < specials.length) {
+    nextCursor = encodeCursor({ s: specialStart + limit });
+  } else {
+    // 2) the text matches, after the cursor, until the page is full (one extra row says "more")
+    const room = limit - head.length;
+    const after = cursor !== null && "a" in cursor ? cursor : null;
+    const where: Prisma.RtVariantWhereInput = {
+      AND: [
+        variantWhere,
+        ...(specials.length > 0 ? [{ id: { notIn: specials.map((s) => s.variantId) } }] : []),
+        ...tokens.map((t) => ({ searchText: { contains: likeLiteral(t) } })),
+        ...(after
+          ? [{ OR: [{ product: { nameAr: { gt: after.a } } }, { product: { nameAr: after.a }, id: { gt: after.i } }] }]
+          : []),
+      ],
     };
-
-    const specials = normalized === "" ? [] : await specialHits(tx, input.query, normalized, variantWhere);
-    const limit = input.limit;
-
-    // 1) the exact hits still to return on this page
-    const specialStart = cursor === null ? 0 : "s" in cursor ? cursor.s : specials.length;
-    const head = specials.slice(specialStart, specialStart + limit);
-    let nextCursor: string | null = null;
-    let textRows: { id: string; nameAr: string }[] = [];
-
-    if (specialStart + limit < specials.length) {
-      nextCursor = encodeCursor({ s: specialStart + limit });
-    } else {
-      // 2) the text matches, after the cursor, until the page is full (one extra row says "more")
-      const room = limit - head.length;
-      const after = cursor !== null && "a" in cursor ? cursor : null;
-      const where: Prisma.RtVariantWhereInput = {
-        AND: [
-          variantWhere,
-          ...(specials.length > 0 ? [{ id: { notIn: specials.map((s) => s.variantId) } }] : []),
-          ...tokens.map((t) => ({ searchText: { contains: likeLiteral(t) } })),
-          ...(after
-            ? [{ OR: [{ product: { nameAr: { gt: after.a } } }, { product: { nameAr: after.a }, id: { gt: after.i } }] }]
-            : []),
-        ],
-      };
-      const rows = await tx.rtVariant.findMany({
-        where,
-        orderBy: [{ product: { nameAr: "asc" } }, { id: "asc" }],
-        take: room + 1,
-        select: { id: true, product: { select: { nameAr: true } } },
-      });
-      const more = rows.length > room;
-      textRows = rows.slice(0, room).map((r) => ({ id: r.id, nameAr: r.product.nameAr }));
-      if (more) {
-        const last = textRows[textRows.length - 1];
-        // room 0: the exact hits filled the page exactly and text matches follow from the start.
-        nextCursor = last ? encodeCursor({ a: last.nameAr, i: last.id }) : encodeCursor({ s: specials.length });
-      }
+    const rows = await tx.rtVariant.findMany({
+      where,
+      orderBy: [{ product: { nameAr: "asc" } }, { id: "asc" }],
+      take: room + 1,
+      select: { id: true, product: { select: { nameAr: true } } },
+    });
+    const more = rows.length > room;
+    textRows = rows.slice(0, room).map((r) => ({ id: r.id, nameAr: r.product.nameAr }));
+    if (more) {
+      const last = textRows[textRows.length - 1];
+      // room 0: the exact hits filled the page exactly and text matches follow from the start.
+      nextCursor = last ? encodeCursor({ a: last.nameAr, i: last.id }) : encodeCursor({ s: specials.length });
     }
-
-    const ordered: Special[] = [...head, ...textRows.map((r) => ({ variantId: r.id }))];
-    if (ordered.length === 0) return { items: [], nextCursor };
-
-    // 3) hydrate: variants+products, base units, prices (one query each, `in` filters)
-    const variantIds = ordered.map((o) => o.variantId);
-    const variants = await tx.rtVariant.findMany({
-      where: { id: { in: variantIds } },
-      select: {
-        id: true,
-        sku: true,
-        productId: true,
-        archivedAt: true,
-        product: { select: { nameAr: true, nameCkb: true, nameEn: true, tracksExpiry: true, soldByWeight: true, isTestData: true, archivedAt: true } },
-      },
-    });
-    const byVariant = new Map(variants.map((v) => [v.id, v]));
-    const bases = await tx.rtUnit.findMany({
-      where: { variantId: { in: variantIds }, isBase: true },
-      select: { id: true, variantId: true },
-    });
-    const baseOf = new Map(bases.map((u) => [u.variantId, u.id]));
-    const unitOf = (o: Special) => o.unitId ?? baseOf.get(o.variantId);
-    const unitIds = [...new Set(ordered.map(unitOf).filter((u): u is string => !!u))];
-
-    const now = new Date();
-    const prices = await tx.rtPrice.findMany({
-      where: {
-        unitId: { in: unitIds },
-        priceList: { kind: "DEFAULT" },
-        validFrom: { lte: now },
-        OR: [{ validTo: null }, { validTo: { gt: now } }],
-      },
-      select: { unitId: true, currency: true, amountMinor: true },
-    });
-    const preferred = prices.length > 0 ? await businessCurrency(tx) : null;
-    const priceOf = (unitId: string | undefined) => {
-      if (!unitId) return undefined;
-      const mine = prices.filter((p) => p.unitId === unitId).sort((x, y) => (x.currency < y.currency ? -1 : 1));
-      const pick = mine.find((p) => p.currency === preferred) ?? mine[0];
-      return pick ? { currency: pick.currency, amountMinor: pick.amountMinor } : undefined;
-    };
-
-    const items: CatalogHit[] = [];
-    for (const o of ordered) {
-      const v = byVariant.get(o.variantId);
-      if (!v) continue; // cannot happen: the ids come from this business's variants
-      const unitId = unitOf(o);
-      const unitPrice = priceOf(unitId);
-      items.push({
-        productId: v.productId,
-        variantId: v.id,
-        ...(unitId ? { unitId } : {}),
-        nameAr: v.product.nameAr,
-        ...(v.product.nameCkb ? { nameCkb: v.product.nameCkb } : {}),
-        ...(v.product.nameEn ? { nameEn: v.product.nameEn } : {}),
-        sku: v.sku,
-        tracksExpiry: v.product.tracksExpiry,
-        soldByWeight: v.product.soldByWeight,
-        archived: v.archivedAt !== null || v.product.archivedAt !== null,
-        isTestData: v.product.isTestData,
-        ...(o.matchedBarcode ? { matchedBarcode: o.matchedBarcode } : {}),
-        ...(o.matchedUnitName ? { matchedUnitName: o.matchedUnitName } : {}),
-        ...(unitPrice ? { unitPrice } : {}),
-      });
-    }
-    return { items, nextCursor };
   }
+
+  const ordered: Special[] = [...head, ...textRows.map((r) => ({ variantId: r.id }))];
+  if (ordered.length === 0) return { items: [], nextCursor };
+
+  // 3) hydrate: variants+products, base units, prices (one query each, `in` filters)
+  const variantIds = ordered.map((o) => o.variantId);
+  const variants = await tx.rtVariant.findMany({
+    where: { id: { in: variantIds } },
+    select: {
+      id: true,
+      sku: true,
+      productId: true,
+      archivedAt: true,
+      product: { select: { nameAr: true, nameCkb: true, nameEn: true, tracksExpiry: true, soldByWeight: true, isTestData: true, archivedAt: true } },
+    },
+  });
+  const byVariant = new Map(variants.map((v) => [v.id, v]));
+  const bases = await tx.rtUnit.findMany({
+    where: { variantId: { in: variantIds }, isBase: true },
+    select: { id: true, variantId: true },
+  });
+  const baseOf = new Map(bases.map((u) => [u.variantId, u.id]));
+  const unitOf = (o: Special) => o.unitId ?? baseOf.get(o.variantId);
+  const unitIds = [...new Set(ordered.map(unitOf).filter((u): u is string => !!u))];
+
+  const now = new Date();
+  const prices = await tx.rtPrice.findMany({
+    where: {
+      unitId: { in: unitIds },
+      priceList: { kind: "DEFAULT" },
+      validFrom: { lte: now },
+      OR: [{ validTo: null }, { validTo: { gt: now } }],
+    },
+    select: { unitId: true, currency: true, amountMinor: true },
+  });
+  const preferred = prices.length > 0 ? await businessCurrency(tx) : null;
+  const priceOf = (unitId: string | undefined) => {
+    if (!unitId) return undefined;
+    const mine = prices.filter((p) => p.unitId === unitId).sort((x, y) => (x.currency < y.currency ? -1 : 1));
+    const pick = mine.find((p) => p.currency === preferred) ?? mine[0];
+    return pick ? { currency: pick.currency, amountMinor: pick.amountMinor } : undefined;
+  };
+
+  const items: CatalogHit[] = [];
+  for (const o of ordered) {
+    const v = byVariant.get(o.variantId);
+    if (!v) continue; // cannot happen: the ids come from this business's variants
+    const unitId = unitOf(o);
+    const unitPrice = priceOf(unitId);
+    items.push({
+      productId: v.productId,
+      variantId: v.id,
+      ...(unitId ? { unitId } : {}),
+      nameAr: v.product.nameAr,
+      ...(v.product.nameCkb ? { nameCkb: v.product.nameCkb } : {}),
+      ...(v.product.nameEn ? { nameEn: v.product.nameEn } : {}),
+      sku: v.sku,
+      tracksExpiry: v.product.tracksExpiry,
+      soldByWeight: v.product.soldByWeight,
+      archived: v.archivedAt !== null || v.product.archivedAt !== null,
+      isTestData: v.product.isTestData,
+      ...(o.matchedBarcode ? { matchedBarcode: o.matchedBarcode } : {}),
+      ...(o.matchedUnitName ? { matchedUnitName: o.matchedUnitName } : {}),
+      ...(unitPrice ? { unitPrice } : {}),
+    });
+  }
+  return { items, nextCursor };
 }
