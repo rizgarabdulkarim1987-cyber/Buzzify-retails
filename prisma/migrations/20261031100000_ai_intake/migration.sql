@@ -66,6 +66,9 @@ CREATE TABLE "RtAiUsage" (
 CREATE INDEX "RtIntake_businessId_filesHash_idx" ON "RtIntake"("businessId", "filesHash");
 
 -- CreateIndex
+CREATE INDEX "RtIntake_businessId_createdAt_idx" ON "RtIntake"("businessId", "createdAt");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "RtIntake_businessId_id_key" ON "RtIntake"("businessId", "id");
 
 -- CreateIndex

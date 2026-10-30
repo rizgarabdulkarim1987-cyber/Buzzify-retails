@@ -1094,10 +1094,12 @@ model RtIntake {
 
   @@unique([businessId, id])
   @@index([businessId, filesHash])
+  @@index([businessId, createdAt])
 }
 
-// One page (image or PDF) of an intake, its bytes stored in the database. The bytes are deleted by
-// the retention policy; sha256 stays. In the migration: position >= 1.
+// One page (image or PDF) of an intake, its bytes stored in the database. The retention policy
+// (30 days) deletes these page rows; the intake's filesHash and result stay. In the migration:
+// position >= 1.
 model RtIntakeFile {
   id          String   @id @default(cuid())
   businessId  String
