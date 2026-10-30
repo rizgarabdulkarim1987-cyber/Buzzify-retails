@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { db } from "@/server/db";
 import type { Actor } from "./actor";
 import { RuleError } from "./errors";
+import { currentPlatformTx } from "./platform-tx";
 
 type Client = PrismaClient | Prisma.TransactionClient;
 
@@ -17,8 +18,11 @@ export const AI_INTAKE_FEATURE = "ai.intake";
 /** Which override is in force: the newest by createdAt, then the greater id on a tie. */
 export const OVERRIDE_LATEST_FIRST = [{ createdAt: "desc" }, { id: "desc" }] as const satisfies Prisma.RtFeatureOverrideOrderByWithRelationInput[];
 
-/** Whether `feature` is on for the business right now (no override row: off). */
-export async function featureEnabled(businessId: string, feature: string, client: Client = db): Promise<boolean> {
+/**
+ * Whether `feature` is on for the business right now (no override row: off). Without a client it
+ * reads on the running action's transaction when there is one (see platform-tx.ts), else on `db`.
+ */
+export async function featureEnabled(businessId: string, feature: string, client: Client = currentPlatformTx() ?? db): Promise<boolean> {
   const row = await client.rtFeatureOverride.findFirst({
     where: { businessId, feature },
     orderBy: [...OVERRIDE_LATEST_FIRST],

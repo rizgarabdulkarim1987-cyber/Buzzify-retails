@@ -16,6 +16,7 @@ import {
   type Result,
 } from "./errors";
 import { gateOf } from "./gate";
+import { withPlatformTx } from "./platform-tx";
 import { SerializationError, canonicalHash } from "./serialize";
 import { runIdempotentWrite, runRead, type AuditDraft } from "./transaction";
 import { scopedDb } from "./scoped-db";
@@ -160,7 +161,11 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
       await spec.precondition?.({ actor, input });
 
       if (!spec.writes) {
-        const value = await runRead((tx) => spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) }), db, spec.timeoutMs);
+        const value = await runRead(
+          (tx) => withPlatformTx(tx, () => spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) })),
+          db,
+          spec.timeoutMs,
+        );
         return { ok: true, value };
       }
 
@@ -174,7 +179,9 @@ export function defineAction<I, O>(spec: ActionSpec<I, O>) {
         timeoutMs: spec.timeoutMs,
         storedValue: spec.storedValue,
         async run(tx) {
-          const result = await spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) });
+          const result = await withPlatformTx(tx, () =>
+            spec.run({ actor, tx: scopedDb(actor, tx), input, lockBusiness: businessLocker(actor.businessId, tx) }),
+          );
           const audit = spec.audit?.(input, result) ?? {
             entity: spec.name,
             entityId: "",

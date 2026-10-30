@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { gateOf, type GateMode } from "./gate";
+import { currentPlatformTx } from "./platform-tx";
 
 /*
  * Platform facts about a business that tenant code may need but cannot read itself (the plan and
@@ -24,4 +25,20 @@ export async function planBranchLimit(businessId: string): Promise<number> {
     (await db.rtSubscription.findFirst({ where: { businessId, status: { in: ["TRIAL", "ACTIVE", "GRACE"] } }, orderBy, select })) ??
     (await db.rtSubscription.findFirst({ where: { businessId }, orderBy, select }));
   return sub?.plan.maxBranches ?? 0;
+}
+
+/**
+ * AI receipt reads per month in the plan of the business's live subscription (TRIAL, ACTIVE or
+ * GRACE, newest first). 0 when there is no live subscription: the AI quota is then closed (unlike
+ * planBranchLimit, an expired subscription's plan grants nothing here). Inside an action it reads on
+ * the action's own transaction (see platform-tx.ts), so concurrent reservations cannot starve the pool.
+ */
+export async function planAiMonthly(businessId: string): Promise<number> {
+  const client = currentPlatformTx() ?? db;
+  const sub = await client.rtSubscription.findFirst({
+    where: { businessId, status: { in: ["TRIAL", "ACTIVE", "GRACE"] } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { plan: { select: { aiMonthly: true } } },
+  });
+  return Math.max(0, sub?.plan.aiMonthly ?? 0);
 }
