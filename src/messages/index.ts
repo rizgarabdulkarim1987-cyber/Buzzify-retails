@@ -41,6 +41,23 @@ export function formatNumber(locale: Locale, value: number | bigint): string {
   return new Intl.NumberFormat(INTL_TAGS[locale]).format(value);
 }
 
+/** A date-only value (stored as UTC midnight, e.g. an expiry date) as that same calendar day, in the UI locale's digits. */
+export function formatDay(locale: Locale, value: Date): string {
+  return new Intl.DateTimeFormat(INTL_TAGS[locale], { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" }).format(value);
+}
+
+/** An instant as a Baghdad date and time of day, in the UI locale's digits. */
+export function formatDateTime(locale: Locale, value: Date): string {
+  return new Intl.DateTimeFormat(INTL_TAGS[locale], {
+    timeZone: "Asia/Baghdad",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(value);
+}
+
 /** A calendar date in Baghdad time, in the UI locale's digits. */
 export function formatDate(locale: Locale, value: Date): string {
   return new Intl.DateTimeFormat(INTL_TAGS[locale], {

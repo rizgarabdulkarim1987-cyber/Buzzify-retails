@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Locale, Messages } from "@/messages";
-import { BranchIcon, PackageIcon, SignOutIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
+import { BranchIcon, PackageIcon, SignOutIcon, StockIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { signOut } from "../session-actions";
 
@@ -11,13 +11,15 @@ type Props = {
   branch: string | null;
   terminal: string | null;
   user: string;
+  /** The user may see the stock screens (stock.view in the business shown). */
+  canViewStock: boolean;
 };
 
 /**
  * The bar every retail screen carries: business, branch, terminal (when one is chosen) and user.
  * Long names are cut with an ellipsis (full text in the title tooltip) and never widen the page.
  */
-export function ShellHeader({ locale, t, business, branch, terminal, user }: Props) {
+export function ShellHeader({ locale, t, business, branch, terminal, user, canViewStock }: Props) {
   return (
     <header className="shell-header" data-testid="shell-header">
       <div className="bar">
@@ -33,6 +35,11 @@ export function ShellHeader({ locale, t, business, branch, terminal, user }: Pro
           <Link href="/retail/catalog" className="bar-button" aria-label={t.catalog.title} title={t.catalog.title} data-testid="nav-catalog">
             <PackageIcon />
           </Link>
+          {canViewStock ? (
+            <Link href="/retail/stock" className="bar-button" aria-label={t.stock.title} title={t.stock.title} data-testid="nav-stock">
+              <StockIcon />
+            </Link>
+          ) : null}
           <Link href="/retail/select" className="bar-button" aria-label={t.header.switchBranch} title={t.header.switchBranch}>
             <SwitchIcon />
           </Link>

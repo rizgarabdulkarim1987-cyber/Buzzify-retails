@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { can } from "@/server/domain/permissions";
 import { getI18n } from "../../_lib/i18n";
-import { PackageIcon } from "../../_ui/icons";
+import { PackageIcon, StockIcon } from "../../_ui/icons";
 import { StateBlock } from "../../_ui/state";
 import { requireShell } from "../_shell";
 
@@ -24,6 +24,7 @@ export default async function RetailHomePage() {
   }
   if (!shell.branch) redirect("/retail/select");
   const canSetUp = shell.options?.ok === true && can(shell.options.value.role, "staff.manage");
+  const canViewStock = shell.options?.ok === true && can(shell.options.value.role, "stock.view");
 
   return (
     <main className="page">
@@ -43,6 +44,13 @@ export default async function RetailHomePage() {
           <strong>{t.catalog.title}</strong>
           <span className="muted">{t.catalog.homeCardBody}</span>
         </Link>
+        {canViewStock ? (
+          <Link href="/retail/stock" className="business-link" data-testid="open-stock">
+            <StockIcon />
+            <strong>{t.stock.title}</strong>
+            <span className="muted">{t.stock.homeCardBody}</span>
+          </Link>
+        ) : null}
       </nav>
       <StateBlock
         kind="empty"

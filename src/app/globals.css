@@ -1615,3 +1615,343 @@ textarea.input {
   gap: var(--space-2);
   margin: 0;
 }
+
+/* Stock ----------------------------------------------------------------------------------------- */
+
+.stock-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+/* A search or a refresh is on its way: the old rows stay, dimmed, until the newest answer replaces them. */
+.stock-list[aria-busy="true"] {
+  opacity: 0.6;
+}
+
+.stock-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* Status is said by the badge; the row only takes a quiet full border in the same tone. */
+.stock-row[data-status="EXPIRED"] {
+  border-color: var(--color-danger-line);
+}
+
+.stock-row[data-status="SOON"] {
+  border-color: color-mix(in oklch, var(--color-warn) 35%, var(--color-line));
+}
+
+.stock-row-main {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Two lines at most, then an ellipsis; a name with no spaces still breaks inside the row. */
+.stock-row-name {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--color-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.stock-row-name:hover {
+  color: var(--color-accent-hover);
+  text-decoration: underline;
+}
+
+.stock-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+}
+
+.stock-row-qty {
+  display: grid;
+  justify-items: end;
+  gap: 0.125rem;
+  min-width: 0;
+  max-width: 16rem;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-qty {
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.stock-qty[data-zero="true"] {
+  color: var(--color-ink-3);
+  font-weight: 600;
+}
+
+.stock-available,
+.stock-value {
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+}
+
+.stock-value {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.stock-row-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.stock-keep-looking {
+  text-align: center;
+}
+
+@media (max-width: 30rem) {
+  .stock-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stock-row-qty {
+    justify-items: start;
+    max-width: none;
+    text-align: start;
+  }
+}
+
+.stock-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: var(--space-3) var(--space-4);
+  margin: 0;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+.stock-summary[aria-busy="true"],
+.stock-movements-wrap[aria-busy="true"] {
+  opacity: 0.6;
+}
+
+.stock-summary div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.stock-summary dt {
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.stock-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-sku-line {
+  margin: 0;
+  text-align: start;
+  unicode-bidi: plaintext;
+}
+
+.stock-batches {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stock-batches li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+}
+
+.stock-batch-code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.stock-batches .stock-num {
+  margin-inline-start: auto;
+}
+
+.stock-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stock-movements [data-tone="out"] {
+  color: var(--color-danger);
+}
+
+.stock-movements [data-tone="in"] {
+  color: var(--color-success);
+}
+
+.stock-cell-label {
+  display: none;
+}
+
+.stock-cell-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.stock-left {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.stock-more {
+  margin-block-start: var(--space-3);
+}
+
+.stock-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+  margin-block-end: var(--space-5);
+}
+
+.stock-window .field {
+  flex: 1 1 14rem;
+  max-width: 22rem;
+}
+
+/* At phone width the table head is hidden (see .data-table): each cell carries its own label. */
+@media (max-width: 40rem) {
+  .stock-cell-label {
+    display: inline;
+    margin-inline-end: var(--space-1);
+    color: var(--color-ink-3);
+    font-size: var(--text-xs);
+    font-weight: 400;
+  }
+
+  .stock-num {
+    white-space: normal;
+  }
+
+  .stock-movements tr,
+  .stock-expiring tr {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* The adjust dialog: a native modal, sized for a phone first. */
+.stock-dialog {
+  width: min(34rem, calc(100vw - 2 * var(--gutter)));
+  max-height: calc(100dvh - 2 * var(--space-4));
+  margin: auto;
+  padding: var(--space-4);
+  overflow: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-1);
+  overscroll-behavior: contain;
+}
+
+.stock-dialog::backdrop {
+  background: color-mix(in oklch, var(--color-ink) 45%, transparent);
+}
+
+.stock-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.stock-dialog-title {
+  display: grid;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.stock-dialog-title h2 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+.stock-dialog-item {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.stock-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+}
+
+.stock-mode:has(input:disabled) {
+  color: var(--color-ink-3);
+  cursor: not-allowed;
+}
+
+.stock-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.stock-dialog .field-row {
+  align-items: start;
+}

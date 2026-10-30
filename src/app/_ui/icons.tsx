@@ -109,3 +109,12 @@ export const PackageIcon = () => (
     <path d="M12 11.5V21" />
   </Icon>
 );
+
+export const StockIcon = () => (
+  <Icon>
+    <path d="M4 20h16" />
+    <path d="M5 20v-6h6v6" />
+    <path d="M13 20V9h6v11" />
+    <path d="M8 14V8h5" />
+  </Icon>
+);
