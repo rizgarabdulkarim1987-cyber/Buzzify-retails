@@ -28,7 +28,7 @@ type Props = {
   locale: Locale;
   t: Messages;
   variantId: string;
-  item: { productId: string; name: string; sku: string } | null;
+  item: { productId: string; name: string; sku: string };
   currency: Currency;
   canSeeCost: boolean;
   canAdjust: boolean;
@@ -91,7 +91,7 @@ export function VariantScreen({ locale, t, variantId, item, currency, canSeeCost
   };
 
   const short = t.catalog.currencyShort[currency];
-  const title = item?.name ?? m.fallbackTitle;
+  const title = item.name;
 
   return (
     <>
@@ -102,7 +102,17 @@ export function VariantScreen({ locale, t, variantId, item, currency, canSeeCost
           </h1>
           <div className="title-actions">
             {canAdjust ? (
-              <button type="button" className="btn btn-primary" disabled={readOnly || refreshing} onClick={() => setAdjusting(true)} data-testid="variant-adjust">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={readOnly}
+                aria-disabled={refreshing ? true : undefined}
+                onClick={() => {
+                  // While the page data reloads the button keeps focus (aria-disabled) but does nothing.
+                  if (!refreshing) setAdjusting(true);
+                }}
+                data-testid="variant-adjust"
+              >
                 {t.stock.list.adjust}
               </button>
             ) : null}
@@ -111,11 +121,9 @@ export function VariantScreen({ locale, t, variantId, item, currency, canSeeCost
             </Link>
           </div>
         </div>
-        {item ? (
-          <p dir="ltr" className="muted variant-sku stock-sku-line">
-            {t.stock.list.sku} {item.sku}
-          </p>
-        ) : null}
+        <p dir="ltr" className="muted variant-sku stock-sku-line">
+          {t.stock.list.sku} {item.sku}
+        </p>
       </div>
 
       <div aria-live="polite" role="status" className="visually-hidden">
@@ -189,7 +197,7 @@ export function VariantScreen({ locale, t, variantId, item, currency, canSeeCost
         ) : null}
       </section>
 
-      {adjusting && item ? (
+      {adjusting ? (
         <AdjustDialog
           locale={locale}
           t={t}

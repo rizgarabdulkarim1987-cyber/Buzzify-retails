@@ -136,6 +136,9 @@ export type StockRow = {
   productId: string;
   variantId: string;
   nameAr: string;
+  /** The Kurdish and English names, when the product has them (as the catalog search gives them). */
+  nameCkb?: string;
+  nameEn?: string;
   sku: string;
   qty: bigint;
   availableQty: bigint;
@@ -184,6 +187,8 @@ export const listStock = defineAction({
           productId: hit.productId,
           variantId: hit.variantId,
           nameAr: hit.nameAr,
+          ...(hit.nameCkb ? { nameCkb: hit.nameCkb } : {}),
+          ...(hit.nameEn ? { nameEn: hit.nameEn } : {}),
           sku: hit.sku,
           qty: s.qty,
           availableQty: s.availableQty,
@@ -217,6 +222,12 @@ export const listStock = defineAction({
 
 export type VariantBatch = { batchId: string | null; code: string | null; expiry: Date | null; status: ExpiryState; qty: bigint };
 export type VariantStock = {
+  /** The variant's product and names, so a screen can title the variant from its id alone. */
+  productId: string;
+  nameAr: string;
+  nameCkb: string | null;
+  nameEn: string | null;
+  sku: string;
   batches: VariantBatch[];
   total: {
     qty: bigint;
@@ -232,14 +243,19 @@ export type VariantStock = {
 /**
  * One variant's batches that still hold stock, earliest expiry first (no expiry last; the no-batch
  * row has batchId null), and its total. A batch carries no value (R-P); the total does, with cost.view.
+ * With includeEmpty, every batch of the variant is listed, also those at qty 0 (an IN adjustment can
+ * go back into a used-up batch); the no-batch row is still listed only when it holds stock.
  */
 export const getVariantStock = defineAction({
   name: "stock.variant",
   permission: "stock.view",
-  input: z.object({ variantId: id }).strict(),
+  input: z.object({ variantId: id, includeEmpty: z.boolean().default(false) }).strict(),
   writes: false,
   async run({ actor, tx, input }): Promise<VariantStock> {
-    const exists = await tx.rtVariant.findFirst({ where: { id: input.variantId }, select: { id: true } });
+    const exists = await tx.rtVariant.findFirst({
+      where: { id: input.variantId },
+      select: { id: true, sku: true, productId: true, product: { select: { nameAr: true, nameCkb: true, nameEn: true } } },
+    });
     if (!exists) throw new NotFoundError();
     const today = await todayOf(tx);
     const facts = await loadFacts(tx, [input.variantId]);
@@ -249,9 +265,16 @@ export const getVariantStock = defineAction({
 
     const perBatch = new Map<string | null, bigint>();
     for (const r of rows) perBatch.set(r.batchId, (perBatch.get(r.batchId) ?? 0n) + r.qty);
+    if (input.includeEmpty) {
+      const all = await tx.rtBatch.findMany({ where: { variantId: input.variantId }, select: { id: true, code: true, expiryDate: true } });
+      for (const b of all) {
+        facts.batches.set(b.id, b);
+        if (!perBatch.has(b.id)) perBatch.set(b.id, 0n);
+      }
+    }
     const batches: VariantBatch[] = [];
     for (const [batchId, qty] of perBatch) {
-      if (qty <= 0n) continue;
+      if (qty < 0n || (qty === 0n && !(input.includeEmpty && batchId !== null))) continue;
       const b = batchId === null ? null : (facts.batches.get(batchId) ?? null);
       batches.push({
         batchId,
@@ -270,6 +293,11 @@ export const getVariantStock = defineAction({
 
     const s = summarize(rows, facts.batches, info.alertDays, today);
     return {
+      productId: exists.productId,
+      nameAr: exists.product.nameAr,
+      nameCkb: exists.product.nameCkb,
+      nameEn: exists.product.nameEn,
+      sku: exists.sku,
       batches,
       total: {
         qty: s.qty,
@@ -414,6 +442,8 @@ export type ExpiringRow = {
   productId: string;
   variantId: string;
   nameAr: string;
+  nameCkb: string | null;
+  nameEn: string | null;
   sku: string;
   batchId: string;
   code: string | null;
@@ -464,7 +494,7 @@ export const listExpiring = defineAction({
         id: true,
         sku: true,
         productId: true,
-        product: { select: { nameAr: true, expiryAlertDays: true } },
+        product: { select: { nameAr: true, nameCkb: true, nameEn: true, expiryAlertDays: true } },
         units: { where: { archivedAt: null }, select: { name: true, factor: true } },
       },
     });
@@ -484,6 +514,8 @@ export const listExpiring = defineAction({
         productId: v.productId,
         variantId: v.id,
         nameAr: v.product.nameAr,
+        nameCkb: v.product.nameCkb,
+        nameEn: v.product.nameEn,
         sku: v.sku,
         batchId: b.id,
         code: b.code,

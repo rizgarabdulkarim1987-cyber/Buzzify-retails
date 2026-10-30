@@ -585,7 +585,6 @@ export const ckb: Messages = {
     },
     movement: {
       title: "جووڵەی کاڵا",
-      fallbackTitle: "جووڵەی کاڵایەک",
       back: "گەڕانەوە بۆ کۆگا",
       summary: "بڕی ئێستا",
       onHand: "بڕ",
@@ -603,7 +602,7 @@ export const ckb: Messages = {
       colDate: "بەروار",
       colKind: "بەڵگەنامە",
       colBatch: "وەجبە",
-      colChange: "بڕ",
+      colChange: "گۆڕان",
       colBalance: "بڕ دوای ئەوە",
       colValueChange: "بەها",
       colValueAfter: "بەها دوای ئەوە",

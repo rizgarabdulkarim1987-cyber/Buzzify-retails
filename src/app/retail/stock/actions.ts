@@ -1,8 +1,10 @@
 "use server";
 
 import { getProduct } from "@/server/catalog/products";
+import { can } from "@/server/domain/permissions";
 import { adjustStock, writeOffStock } from "@/server/stock/adjust";
 import { getVariantStock, listMovements, listStock } from "@/server/stock/queries";
+import { loadShell } from "../_shell";
 import { call, fail } from "../catalog/_lib/call";
 import { batchDto, movementDto, stockRowDto } from "./_lib/format";
 import type { AdjustDone, AdjustSetup, MovementPage, StockPage, StockResult } from "./_lib/types";
@@ -56,7 +58,7 @@ export async function adjustSetupAction(input: Wire): Promise<StockResult<Adjust
   const p = product.value;
   const variant = p.variants.find((v) => v.id === variantId);
   if (!variant) return fail("NOT_FOUND");
-  const stock = await call("", (m) => getVariantStock({ variantId }, m));
+  const stock = await call("", (m) => getVariantStock({ variantId, includeEmpty: true }, m));
   if (!stock.ok) return stock;
   return {
     ok: true,
@@ -91,10 +93,13 @@ export async function adjustAction(key: unknown, input: Wire): Promise<StockResu
   const note = str(input.note).slice(0, 1000);
   const fields = { variantId, unitId, batchId, quantity: str(input.quantity).slice(0, 40), note: note.trim() === "" ? null : note };
   const reason = str(input.reason);
+  // "Valued at zero" speaks about cost: it reaches only a caller with cost.view.
+  const shell = await loadShell();
+  const seesCost = shell?.options?.ok === true && can(shell.options.value.role, "cost.view");
   const done = (posted: { documentId: string; number: number; warnings: { code: string }[] }): AdjustDone => ({
     documentId: posted.documentId,
     number: posted.number,
-    costUnknown: posted.warnings.some((w) => w.code === "COST_UNKNOWN"),
+    ...(seesCost && posted.warnings.some((w) => w.code === "COST_UNKNOWN") ? { costUnknown: true as const } : {}),
   });
   if (input.mode === "WRITE_OFF") {
     if (reason !== "DAMAGED" && reason !== "EXPIRED" && reason !== "OTHER") return fail("INVALID_INPUT");

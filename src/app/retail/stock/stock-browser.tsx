@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatNumber, type Locale, type Messages } from "@/messages";
-import { fill } from "../../_lib/format";
+import { fill, pickName } from "../../_lib/format";
 import { SearchIcon } from "../../_ui/icons";
 import { Notice } from "../../_ui/state";
 import { listStockAction } from "./actions";
@@ -129,7 +129,7 @@ export function StockBrowser({ locale, t, currency, canSeeCost, canAdjust, readO
           </div>
         </label>
         <label className="check">
-          <input type="checkbox" checked={expiringOnly} onChange={(event) => setExpiringOnly(event.target.checked)} data-testid="stock-expiring-toggle" />
+          <input type="checkbox" name="expiring" value="1" checked={expiringOnly} onChange={(event) => setExpiringOnly(event.target.checked)} data-testid="stock-expiring-toggle" />
           {l.expiringOnly}
         </label>
       </form>
@@ -150,10 +150,11 @@ export function StockBrowser({ locale, t, currency, canSeeCost, canAdjust, readO
           currency={currency}
           canSeeCost={canSeeCost}
           canAdjust={canAdjust}
-          adjustDisabled={readOnly || busy !== "idle"}
+          adjustDisabled={readOnly}
+          adjustWaiting={busy !== "idle"}
           onAdjust={(r) => {
             setNotice(null);
-            setTarget({ productId: r.productId, variantId: r.variantId, name: r.nameAr });
+            setTarget({ productId: r.productId, variantId: r.variantId, name: pickName(locale, r) });
           }}
           busy={busy !== "idle" && busy !== "more"}
         />

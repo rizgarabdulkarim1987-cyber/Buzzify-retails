@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { formatDateTime, formatDay, formatNumber, type Locale, type Messages } from "@/messages";
-import { fill, formatMoney } from "../../../_lib/format";
+import { fill, formatMoney, pickName } from "../../../_lib/format";
 import { PageSkeleton } from "../../../_ui/page-skeleton";
 import { Notice, StateBlock } from "../../../_ui/state";
 import { breakdownText, formatQty, signedQty, type ExpiringDto } from "./format";
@@ -11,7 +11,7 @@ import type { BatchDto, Currency, ExpiryState, MovementDto, StockRowDto } from "
  * server pages both use these. Value cells exist only when canSeeCost and the server sent the value.
  */
 
-export const variantHref = (variantId: string, productId: string) => `/retail/stock/${variantId}?product=${encodeURIComponent(productId)}`;
+export const variantHref = (variantId: string) => `/retail/stock/${encodeURIComponent(variantId)}`;
 
 export function ExpiryBadge({ t, status }: { t: Messages; status: ExpiryState }) {
   if (status === "SOON") {
@@ -38,24 +38,30 @@ type ListProps = {
   currency: Currency;
   canSeeCost: boolean;
   canAdjust: boolean;
-  /** Drawn but not usable (READ_ONLY business, or the data is being refreshed). */
+  /** Drawn but not usable: the business is READ_ONLY. */
   adjustDisabled: boolean;
+  /**
+   * The quantities are being read again: the button stays focusable (aria-disabled, the click does
+   * nothing) so focus that returns to it after the dialog closes is not lost to the page body.
+   */
+  adjustWaiting?: boolean;
   onAdjust: ((row: StockRowDto) => void) | undefined;
   busy?: boolean;
 };
 
 /** The stock rows: name, SKU, badges, on hand in the item's units, available when it differs, value (cost.view only). */
-export function StockList({ locale, t, rows, currency, canSeeCost, canAdjust, adjustDisabled, onAdjust, busy }: ListProps) {
+export function StockList({ locale, t, rows, currency, canSeeCost, canAdjust, adjustDisabled, adjustWaiting, onAdjust, busy }: ListProps) {
   const l = t.stock.list;
   return (
     <ul className="stock-list" aria-label={l.resultsList} aria-busy={busy ? true : undefined} data-testid="stock-list">
       {rows.map((r) => {
         const showValue = canSeeCost && r.valueMinor !== undefined;
+        const name = pickName(locale, r);
         return (
           <li key={r.variantId} className="stock-row" data-testid="stock-row" data-status={r.status}>
             <div className="stock-row-main">
-              <Link href={variantHref(r.variantId, r.productId)} className="stock-row-name" title={r.nameAr} data-testid="stock-row-name">
-                {r.nameAr}
+              <Link href={variantHref(r.variantId)} className="stock-row-name" title={name} data-testid="stock-row-name">
+                {name}
               </Link>
               <span className="stock-row-meta">
                 <span dir="ltr" className="catalog-sku">
@@ -90,8 +96,9 @@ export function StockList({ locale, t, rows, currency, canSeeCost, canAdjust, ad
                   type="button"
                   className="btn btn-secondary btn-small"
                   disabled={adjustDisabled}
-                  aria-label={fill(l.adjustFor, { name: r.nameAr })}
-                  onClick={onAdjust ? () => onAdjust(r) : undefined}
+                  aria-disabled={adjustWaiting ? true : undefined}
+                  aria-label={fill(l.adjustFor, { name })}
+                  onClick={onAdjust && !adjustWaiting ? () => onAdjust(r) : undefined}
                   data-testid="stock-adjust"
                 >
                   {l.adjust}
@@ -255,8 +262,8 @@ export function ExpiringTable({ locale, t, rows }: { locale: Locale; t: Messages
         {rows.map((r) => (
           <tr key={r.batchId} data-testid="expiring-row" data-status={r.status}>
             <td>
-              <Link href={variantHref(r.variantId, r.productId)} className="stock-cell-name" title={r.nameAr}>
-                {r.nameAr}
+              <Link href={variantHref(r.variantId)} className="stock-cell-name" title={pickName(locale, r)}>
+                {pickName(locale, r)}
               </Link>
             </td>
             <td data-secondary>

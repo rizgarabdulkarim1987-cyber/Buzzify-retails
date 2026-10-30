@@ -16,6 +16,8 @@ export type StockRowDto = {
   productId: string;
   variantId: string;
   nameAr: string;
+  nameCkb?: string;
+  nameEn?: string;
   sku: string;
   qty: string;
   availableQty: string;
@@ -56,11 +58,15 @@ export type AdjustSetup = {
   /** The product or the variant is archived: stock can only go out. */
   archived: boolean;
   units: { id: string; name: string; factor: number; quantityScale: number; isBase: boolean }[];
-  /** Batches holding stock (the no-batch row has batchId null), earliest expiry first. */
+  /**
+   * Every batch of the variant, also the used-up ones at qty 0 (an IN can go back into them), and the
+   * no-batch row when it holds stock (batchId null); earliest expiry first.
+   */
   batches: BatchDto[];
 };
 
-export type AdjustDone = { documentId: string; number: number; costUnknown: boolean };
+/** costUnknown: the IN was valued at zero (no stock to take an average from); only for cost.view holders. */
+export type AdjustDone = { documentId: string; number: number; costUnknown?: true };
 
 export type AdjustMode = "IN" | "OUT" | "WRITE_OFF";
 export type AdjustReason = "DAMAGED" | "EXPIRED" | "LOST" | "COUNT_FIX" | "OTHER";

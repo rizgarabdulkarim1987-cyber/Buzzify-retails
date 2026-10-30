@@ -175,6 +175,29 @@ describe("stock queries", () => {
     const after = ok(await listStock({ query: "حليب" }, s.as("owner"))).rows[0]!;
     expect(after).toMatchObject({ qty: 7n * U, availableQty: 7n * U, status: "SOON" });
     expect(ok(await getVariantStock({ variantId: m.variantId }, s.as("owner"))).batches.map((b) => b.code)).toEqual(["NEW"]);
+
+    // includeEmpty also lists the used-up batch (qty 0, no value), so stock can be adjusted back into it.
+    const all = ok(await getVariantStock({ variantId: m.variantId, includeEmpty: true }, s.as("cashier")));
+    expect(all.batches.map((b) => [b.code, b.qty])).toEqual([
+      ["OLD", 0n],
+      ["NEW", 7n * U],
+    ]);
+    expect(text(all.batches)).not.toContain("alue");
+    ok(await adjustStock({ variantId: m.variantId, unitId: m.piece, batchId: oldBatch, quantity: "1", direction: "IN", reason: "COUNT_FIX" }, s.as("owner")));
+    expect(ok(await getVariantStock({ variantId: m.variantId }, s.as("owner"))).batches.map((b) => b.code)).toEqual(["OLD", "NEW"]);
+  });
+
+  it("the stock reads carry the product's names, so screens can title an item from its variant alone", async () => {
+    const s = await shop();
+    const m = await s.item({ name: "حليب" });
+    await db.rtProduct.update({ where: { id: m.productId }, data: { nameCkb: "شیر", nameEn: "Milk" } });
+    const bare = await s.item({ name: "ماء" });
+    const detail = ok(await getVariantStock({ variantId: m.variantId }, s.as("cashier")));
+    expect(detail).toMatchObject({ productId: m.productId, nameAr: "حليب", nameCkb: "شیر", nameEn: "Milk", sku: m.sku });
+    const rows = ok(await listStock({}, s.as("cashier"))).rows;
+    expect(rows.find((r) => r.variantId === m.variantId)).toMatchObject({ nameCkb: "شیر", nameEn: "Milk" });
+    const plain = rows.find((r) => r.variantId === bare.variantId)!;
+    expect("nameEn" in plain).toBe(false);
   });
 
   it("listExpiring honours each product's alert days and the business timezone", async () => {

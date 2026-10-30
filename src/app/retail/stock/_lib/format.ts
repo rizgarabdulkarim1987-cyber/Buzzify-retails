@@ -23,6 +23,8 @@ export function stockRowDto(r: StockRow): StockRowDto {
     productId: r.productId,
     variantId: r.variantId,
     nameAr: r.nameAr,
+    ...(r.nameCkb ? { nameCkb: r.nameCkb } : {}),
+    ...(r.nameEn ? { nameEn: r.nameEn } : {}),
     sku: r.sku,
     qty: r.qty.toString(),
     availableQty: r.availableQty.toString(),

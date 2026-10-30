@@ -584,7 +584,6 @@ export const ar = {
     },
     movement: {
       title: "حركة الصنف",
-      fallbackTitle: "حركة صنف",
       back: "العودة إلى المخزون",
       summary: "الرصيد الحالي",
       onHand: "الرصيد",

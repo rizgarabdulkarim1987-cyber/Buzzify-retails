@@ -1,6 +1,6 @@
 import type { Messages } from "@/messages";
 import { toBaseQty } from "@/server/domain/stock";
-import type { AdjustMode, AdjustReason, StockFailure } from "./types";
+import type { AdjustMode, AdjustReason, AdjustSetup, BatchDto, StockFailure } from "./types";
 
 /*
  * The adjust dialog's own checks, run before anything is sent so a missing reason or note is said
@@ -54,6 +54,34 @@ export function quantityFits(text: string, unit: { factor: number; quantityScale
   } catch {
     return false;
   }
+}
+
+export type BatchChoices = {
+  /** The picker is drawn. */
+  show: boolean;
+  /** A batch must be chosen (the product tracks expiry): the no-batch row is not offered. */
+  needed: boolean;
+  /** The no-batch row is offered (a BATCH product without expiry tracking). */
+  allowNone: boolean;
+  /** The named batches offered for this movement. */
+  batches: BatchDto[];
+  /** A batch is needed and none can be offered: the movement cannot be posted from here. */
+  blocked: boolean;
+};
+
+/**
+ * Which batches the dialog offers. Taking stock out (OUT, write-off) offers only batches holding
+ * stock; adding stock (IN) offers every batch of the variant, also the used-up ones, so a
+ * depleted item that tracks expiry can be counted back into its batch.
+ */
+export function batchChoices(
+  setup: Pick<AdjustSetup, "trackingMode" | "tracksExpiry" | "batches">,
+  mode: AdjustMode,
+): BatchChoices {
+  const named = setup.batches.filter((b) => b.batchId !== null && (mode === "IN" || BigInt(b.qty) > 0n));
+  if (setup.trackingMode !== "BATCH") return { show: false, needed: false, allowNone: false, batches: [], blocked: false };
+  const needed = setup.tracksExpiry;
+  return { show: needed || named.length > 0, needed, allowNone: !needed, batches: named, blocked: needed && named.length === 0 };
 }
 
 /**

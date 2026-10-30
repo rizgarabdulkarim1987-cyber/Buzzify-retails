@@ -584,7 +584,6 @@ export const en: Messages = {
     },
     movement: {
       title: "Item movements",
-      fallbackTitle: "Item movements",
       back: "Back to stock",
       summary: "Current stock",
       onHand: "On hand",

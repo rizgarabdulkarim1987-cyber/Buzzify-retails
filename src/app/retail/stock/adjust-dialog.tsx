@@ -6,7 +6,7 @@ import { fill, pickName } from "../../_lib/format";
 import { Notice } from "../../_ui/state";
 import { newKey } from "../catalog/_lib/keys";
 import { adjustAction, adjustSetupAction } from "./actions";
-import { checkAdjustForm, isStaleFailure, reasonsFor, stockFailureMessage, type AdjustProblem } from "./_lib/adjust-rules";
+import { batchChoices, checkAdjustForm, isStaleFailure, reasonsFor, stockFailureMessage, type AdjustProblem, type BatchChoices } from "./_lib/adjust-rules";
 import { formatQty } from "./_lib/format";
 import type { AdjustDone, AdjustMode, AdjustSetup, StockFailure, StockResult } from "./_lib/types";
 
@@ -25,6 +25,12 @@ const MODES: AdjustMode[] = ["IN", "OUT", "WRITE_OFF"];
 /** The select value of the no-batch row (a batch id is never this). */
 const NO_BATCH = "-";
 
+/** The batch preselected for a movement: the only one offered, else none (or the no-batch row when allowed). */
+function defaultBatch(c: BatchChoices): string {
+  if (c.allowNone) return NO_BATCH;
+  return c.batches.length === 1 ? c.batches[0]!.batchId! : "";
+}
+
 type Load = { state: "loading" } | { state: "failed"; failure: StockFailure | null } | { state: "ready"; setup: AdjustSetup };
 
 /**
@@ -36,7 +42,8 @@ type Load = { state: "loading" } | { state: "failed"; failure: StockFailure | nu
 export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
   const a = t.stock.adjust;
   const dialog = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
+  const uid = useId();
+  const titleId = `${uid}-title`;
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [mode, setMode] = useState<AdjustMode>("OUT");
   const [unitId, setUnitId] = useState("");
@@ -51,6 +58,12 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
   const loadSeq = useRef(0);
   const formRef = useRef<HTMLFormElement>(null);
   const [checkRun, setCheckRun] = useState(0);
+  const modeRef = useRef<AdjustMode>("OUT");
+  // The element that had focus when the dialog was asked for (the button that opened it), taken
+  // while rendering, before showModal moves focus inside (an effect that runs twice would see the dialog).
+  const [opener] = useState<HTMLElement | null>(() =>
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
 
   // What a read of the item answered (only the newest read may apply its answer).
   const applySetup = useCallback((seq: number, r: StockResult<AdjustSetup> | null) => {
@@ -62,9 +75,9 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
     const s = r.value;
     setLoad({ state: "ready", setup: s });
     setUnitId((s.units.find((u) => u.isBase) ?? s.units[0])?.id ?? "");
-    const named = s.batches.filter((b) => b.batchId !== null);
-    setBatch(s.tracksExpiry ? (named.length === 1 ? named[0]!.batchId! : "") : NO_BATCH);
-    if (s.archived) setMode((m) => (m === "IN" ? "OUT" : m));
+    if (s.archived && modeRef.current === "IN") modeRef.current = "OUT";
+    setMode(modeRef.current);
+    setBatch(defaultBatch(batchChoices(s, modeRef.current)));
   }, []);
 
   const requestSetup = useCallback(() => {
@@ -84,7 +97,6 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
 
   // Open as a modal at once; read the item; give focus back to the opener when the dialog goes away.
   useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const d = dialog.current;
     if (d && !d.open) d.showModal();
     requestSetup();
@@ -93,7 +105,7 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
       reads.current += 1; // an answer that arrives after closing is dropped
       if (opener?.isConnected) opener.focus();
     };
-  }, [requestSetup]);
+  }, [requestSetup, opener]);
 
   // After a refused check, take the user to the first field to fix.
   useEffect(() => {
@@ -102,9 +114,10 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
 
   const setup = load.state === "ready" ? load.setup : null;
   const blocked = setup ? setup.trackingMode === "SERIAL" || setup.isTestData : false;
-  const named = setup ? setup.batches.filter((b) => b.batchId !== null) : [];
-  const showBatch = setup !== null && setup.trackingMode === "BATCH" && (setup.tracksExpiry || named.length > 0);
-  const noBatchToUse = setup !== null && setup.trackingMode === "BATCH" && setup.tracksExpiry && named.length === 0;
+  const choices = setup ? batchChoices(setup, mode) : null;
+  const named = choices?.batches ?? [];
+  const showBatch = choices?.show ?? false;
+  const noBatchToUse = choices?.blocked ?? false;
   const unit = setup?.units.find((u) => u.id === unitId);
   const reasons = reasonsFor(mode);
 
@@ -119,7 +132,7 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
       unitId,
       ...(unit ? { unit } : {}),
       quantity,
-      batch: { needed: showBatch && setup.tracksExpiry, chosen: batch === "" ? null : batch === NO_BATCH ? "" : batch },
+      batch: { needed: choices?.needed ?? false, chosen: batch === "" ? null : batch === NO_BATCH ? "" : batch },
       reason,
       note,
     });
@@ -178,6 +191,11 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
         // Escape: close, unless a post is on its way (its answer must be seen).
         event.preventDefault();
         if (!sending) onClose();
+      }}
+      onClose={() => {
+        // Closed by the browser itself: keep the screen in step (reopen while a post is on its way).
+        if (sending) dialog.current?.showModal();
+        else onClose();
       }}
       data-testid="adjust-dialog"
     >
@@ -239,8 +257,12 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                       checked={mode === m}
                       disabled={m === "IN" && setup.archived}
                       onChange={() => {
+                        modeRef.current = m;
                         setMode(m);
                         if (!(reasonsFor(m) as readonly string[]).includes(reason)) setReason("");
+                        // The batches on offer depend on the movement: keep the choice only if it is still offered.
+                        const next = batchChoices(setup, m);
+                        if (batch !== NO_BATCH && !next.batches.some((b) => b.batchId === batch)) setBatch(defaultBatch(next));
                       }}
                     />
                     {a.modes[m]}
@@ -258,7 +280,7 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                     value={unitId}
                     onChange={(event) => setUnitId(event.target.value)}
                     aria-invalid={unitProblem ? true : undefined}
-                    aria-describedby={describedBy("adjust-unit", unitProblem)}
+                    aria-describedby={describedBy(`${uid}-unit`, unitProblem)}
                     data-testid="adjust-unit"
                   >
                     {setup.units.map((u) => (
@@ -267,7 +289,7 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                       </option>
                     ))}
                   </select>
-                  {unitProblem ? <FieldError id="adjust-unit-error" text={problemText(unitProblem)} /> : null}
+                  {unitProblem ? <FieldError id={`${uid}-unit-error`} text={problemText(unitProblem)} /> : null}
                 </label>
                 <label className="field">
                   <span>{a.quantity}</span>
@@ -280,13 +302,13 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                     value={quantity}
                     onChange={(event) => setQuantity(event.target.value)}
                     aria-invalid={qtyProblem ? true : undefined}
-                    aria-describedby={describedBy("adjust-qty", qtyProblem, a.quantityHint)}
+                    aria-describedby={describedBy(`${uid}-qty`, qtyProblem, a.quantityHint)}
                     data-testid="adjust-quantity"
                   />
-                  <span className="hint" id="adjust-qty-hint">
+                  <span className="hint" id={`${uid}-qty-hint`}>
                     {a.quantityHint}
                   </span>
-                  {qtyProblem ? <FieldError id="adjust-qty-error" text={problemText(qtyProblem)} /> : null}
+                  {qtyProblem ? <FieldError id={`${uid}-qty-error`} text={problemText(qtyProblem)} /> : null}
                 </label>
               </div>
 
@@ -298,15 +320,15 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                     value={batch}
                     onChange={(event) => setBatch(event.target.value)}
                     aria-invalid={batchProblem ? true : undefined}
-                    aria-describedby={describedBy("adjust-batch", batchProblem)}
+                    aria-describedby={describedBy(`${uid}-batch`, batchProblem)}
                     data-testid="adjust-batch"
                   >
-                    {setup.tracksExpiry ? (
+                    {choices?.needed ? (
                       <option value="" disabled>
                         {a.batchChoose}
                       </option>
                     ) : null}
-                    {!setup.tracksExpiry ? <option value={NO_BATCH}>{a.batchNone}</option> : null}
+                    {choices?.allowNone ? <option value={NO_BATCH}>{a.batchNone}</option> : null}
                     {named.map((b) => {
                       const qty = fill(t.stock.qty.baseUnits, { qty: formatQty(locale, b.qty) });
                       const code = b.code ?? t.stock.movement.noCode;
@@ -319,7 +341,7 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                       );
                     })}
                   </select>
-                  {batchProblem ? <FieldError id="adjust-batch-error" text={problemText(batchProblem)} /> : null}
+                  {batchProblem ? <FieldError id={`${uid}-batch-error`} text={problemText(batchProblem)} /> : null}
                 </label>
               ) : null}
               {noBatchToUse ? <Notice tone="danger">{a.noBatches}</Notice> : null}
@@ -331,7 +353,7 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                   value={reason}
                   onChange={(event) => setReason(event.target.value)}
                   aria-invalid={reasonProblem ? true : undefined}
-                  aria-describedby={describedBy("adjust-reason", reasonProblem)}
+                  aria-describedby={describedBy(`${uid}-reason`, reasonProblem)}
                   required
                   data-testid="adjust-reason"
                 >
@@ -344,7 +366,7 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                     </option>
                   ))}
                 </select>
-                {reasonProblem ? <FieldError id="adjust-reason-error" text={problemText(reasonProblem)} /> : null}
+                {reasonProblem ? <FieldError id={`${uid}-reason-error`} text={problemText(reasonProblem)} /> : null}
               </label>
 
               <label className="field">
@@ -356,13 +378,13 @@ export function AdjustDialog({ locale, t, target, onClose, onDone }: Props) {
                   onChange={(event) => setNote(event.target.value)}
                   required={reason === "OTHER"}
                   aria-invalid={noteProblem ? true : undefined}
-                  aria-describedby={describedBy("adjust-note", noteProblem, a.noteHint)}
+                  aria-describedby={describedBy(`${uid}-note`, noteProblem, a.noteHint)}
                   data-testid="adjust-note"
                 />
-                <span className="hint" id="adjust-note-hint">
+                <span className="hint" id={`${uid}-note-hint`}>
                   {a.noteHint}
                 </span>
-                {noteProblem ? <FieldError id="adjust-note-error" text={problemText(noteProblem)} /> : null}
+                {noteProblem ? <FieldError id={`${uid}-note-error`} text={problemText(noteProblem)} /> : null}
               </label>
             </fieldset>
 
