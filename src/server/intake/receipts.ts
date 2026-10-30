@@ -4,7 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { Currency, type RtIntakeStatus } from "@/generated/prisma/enums";
 import { createMinimalProductInTx } from "@/server/catalog/products";
 import { normalizeSearchText } from "@/server/domain/catalog";
-import { INTAKE_MAX_BYTES, INTAKE_MAX_IMAGES, intakeFileHash } from "@/server/domain/intake";
+import { INTAKE_MAX_BYTES, INTAKE_MAX_IMAGES, intakeFileHash, intakeMaxBytesOf } from "@/server/domain/intake";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction, validKey, type ActionMeta } from "@/server/framework/action";
@@ -27,7 +27,7 @@ import {
   type IntakeResult,
   type VariantInfo,
 } from "./matching";
-import { AiBadOutputError, AiUnavailableError, extractedReceiptSchema, getIntakeProvider, type ExtractedReceipt } from "./provider";
+import { AiBadOutputError, AiUnavailableError, extractedReceiptSchema, getIntakeProvider, logProviderFailure, type ExtractedReceipt } from "./provider";
 import { INTAKE_DEFAULT_MODEL, INTAKE_RECEIPT_TIMEOUT_MS } from "./provider-claude";
 import { refundUnits, reserveUnits } from "./quota";
 
@@ -219,6 +219,8 @@ function validatePages(raw: unknown): Page[] | null {
     const declared = f.contentType.trim().toLowerCase();
     const sniffed = sniffPageType(f.bytes);
     if (sniffed === null || (DECLARED_ALIASES[declared] ?? declared) !== sniffed) return null;
+    // Images up to 5 MB (the provider's per-image limit), a PDF up to the 5.5 MB upload budget.
+    if (f.bytes.byteLength > intakeMaxBytesOf(sniffed)) return null;
     pages.push({ contentType: sniffed, bytes: f.bytes, sha256: createHash("sha256").update(f.bytes).digest("hex") });
   }
   return pages;
@@ -330,7 +332,7 @@ function createIntakeAction(pages: Page[]) {
 }
 
 /**
- * Uploads the pages of one receipt (1..6 JPEG/PNG/WebP/PDF files, each <= 8 MB, type sniffed from
+ * Uploads the pages of one receipt (1..6 JPEG/PNG/WebP files of <= 5 MB, PDFs of <= 5.5 MB, type sniffed from
  * the bytes) and reserves one read. `meta.idempotencyKey` is per submission attempt.
  */
 export async function createIntake(raw: unknown, meta: ActionMeta): Promise<Result<{ intakeId: string; duplicateOf?: string }>> {
@@ -553,7 +555,8 @@ export async function runIntakeRead(raw: unknown, meta: ActionMeta): Promise<Res
   try {
     extracted = await getIntakeProvider().readReceipt(l.pages, { signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
   } catch (err) {
-    if (!(err instanceof AiUnavailableError) && !(err instanceof AiBadOutputError)) logUnexpected("intake.read.provider", err);
+    if (err instanceof AiUnavailableError || err instanceof AiBadOutputError) logProviderFailure(err);
+    else logUnexpected("intake.read.provider", err);
     return fail(err instanceof AiBadOutputError ? "AI_BAD_OUTPUT" : "AI_UNAVAILABLE");
   }
 

@@ -340,7 +340,7 @@ export async function addVariantAction(key: unknown, input: Wire): Promise<UiRes
 // the code up, read a photo with AI when the browser could not, and list an item's units for
 // linking (which itself is addBarcodeAction above). Answers carry names, ids, SKU and flags only.
 
-/** At most this much base64 for one barcode photo (made smaller in the browser; the server allows 8 MB of bytes). */
+/** At most this much base64 for one barcode photo (made smaller in the browser; the server allows 5 MB of bytes). */
 const MAX_SCAN_BASE64 = 4 * 1024 * 1024;
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 

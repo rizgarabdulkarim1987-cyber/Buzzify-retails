@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RtRole } from "@/generated/prisma/client";
 import { addBarcode } from "@/server/catalog/products";
 import { normalizeSearchText } from "@/server/domain/catalog";
-import { INTAKE_MAX_BYTES } from "@/server/domain/intake";
+import { INTAKE_MAX_IMAGE_BYTES } from "@/server/domain/intake";
 import { AI_INTAKE_FEATURE } from "@/server/framework/features";
 import { BARCODE_LEASE_MS, lookupBarcode, readBarcodeFromImage } from "@/server/intake/barcode";
 import { CONSENT_VERSION } from "@/server/intake/consent";
@@ -303,6 +303,18 @@ describe("readBarcodeFromImage", () => {
     expect(box.calls).toBe(1);
   });
 
+  it("logs a provider HTTP failure by reason and status only", async () => {
+    const s = await shop();
+    counting(new AiUnavailableError("http", 400));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await readBarcodeFromImage({ image: image() }, s.as())).toMatchObject({ ok: false, code: "AI_UNAVAILABLE" });
+      expect(spy).toHaveBeenCalledWith("[intake.provider] http 400");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("refunds once on bad output; injected text in the digits field is inert", async () => {
     const s = await shop();
     await s.setUsage(4);
@@ -380,7 +392,7 @@ describe("readBarcodeFromImage", () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 3]);
     const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 1, 2, 3]);
-    const big = jpeg(INTAKE_MAX_BYTES + 1);
+    const big = jpeg(INTAKE_MAX_IMAGE_BYTES + 1);
     const cases: unknown[] = [
       { image: image(randomBytes(64)) }, // no JPEG magic
       { image: image(png, "image/jpeg") }, // declared type does not match the bytes

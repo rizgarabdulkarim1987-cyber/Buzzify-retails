@@ -6,7 +6,17 @@ import { normalizeSearchText, parseMoneyText, toAsciiDigits } from "./catalog";
 
 export const INTAKE_MAX_IMAGES = 6;
 export const INTAKE_MAX_LINES = 100;
-export const INTAKE_MAX_BYTES = 8 * 1024 * 1024;
+/** One JPEG/PNG/WebP page or barcode photo: the provider's per-image limit (the browser sends <= 1800 px JPEGs). */
+export const INTAKE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+/** One PDF page set: it is sent as it is, so it may use the whole upload budget (5.5 MB of bytes). */
+export const INTAKE_MAX_PDF_BYTES = 5_500_000;
+/** The largest file of any allowed type (the per-type limits above are what is enforced). */
+export const INTAKE_MAX_BYTES = Math.max(INTAKE_MAX_IMAGE_BYTES, INTAKE_MAX_PDF_BYTES);
+
+/** The byte limit of one stored page of this (sniffed) type. */
+export function intakeMaxBytesOf(contentType: string): number {
+  return contentType === "application/pdf" ? INTAKE_MAX_PDF_BYTES : INTAKE_MAX_IMAGE_BYTES;
+}
 
 /** Arabic-Indic and Persian/Kurdish digits to ASCII; Arabic thousands and decimal separators to "," and ".". */
 export function normalizeDigits(s: string): string {

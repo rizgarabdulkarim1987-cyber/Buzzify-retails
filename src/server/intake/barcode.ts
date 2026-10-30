@@ -2,14 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { normalizeBarcode } from "@/server/domain/catalog";
-import { INTAKE_MAX_BYTES, barcodeCheck, normalizeDigits } from "@/server/domain/intake";
+import { INTAKE_MAX_IMAGE_BYTES, barcodeCheck, normalizeDigits } from "@/server/domain/intake";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction, validKey, type ActionMeta } from "@/server/framework/action";
 import { ForbiddenError, RuleError, failure, type Result } from "@/server/framework/errors";
 import { aiEnabledPrecondition } from "@/server/framework/features";
 import { assertConsent } from "./consent";
-import { AiBadOutputError, AiUnavailableError, getIntakeProvider } from "./provider";
+import { AiBadOutputError, AiUnavailableError, getIntakeProvider, logProviderFailure } from "./provider";
 import { INTAKE_BARCODE_TIMEOUT_MS } from "./provider-claude";
 import { refundUnits, reserveUnits } from "./quota";
 import { DECLARED_ALIASES, sniffPageType } from "./receipts";
@@ -33,7 +33,7 @@ type Tx = Prisma.TransactionClient;
  *
  * readBarcodeFromImage: the AI fallback when the browser cannot decode. ai.use + catalog.manage, the
  * master switch (re-checked on every call, replays included), a FULL gate, the owner's consent, one
- * half unit of quota. One JPEG/PNG/WebP image <= INTAKE_MAX_BYTES, type sniffed from the bytes and
+ * half unit of quota. One JPEG/PNG/WebP image <= INTAKE_MAX_IMAGE_BYTES (5 MB), type sniffed from the bytes and
  * equal to the declared one, checked before anything else (INVALID_INPUT). The bytes are never
  * stored: the idempotency payload is their sha256. The model's digits are data: they pass the digit
  * gate and normalisation on the server, a retail-length code with a wrong check digit is
@@ -177,12 +177,12 @@ const imageInput = z.object({ image: z.object({ contentType: z.string().max(100)
 
 type Image = { contentType: ImageType; bytes: Uint8Array; sha256: string };
 
-/** One JPEG/PNG/WebP image, 1 byte..INTAKE_MAX_BYTES, its sniffed type equal to the declared one; else null. */
+/** One JPEG/PNG/WebP image, 1 byte..INTAKE_MAX_IMAGE_BYTES, its sniffed type equal to the declared one; else null. */
 function validateImage(raw: unknown): Image | null {
   const parsed = imageInput.safeParse(raw);
   if (!parsed.success) return null;
   const { contentType, bytes } = parsed.data.image;
-  if (bytes.byteLength === 0 || bytes.byteLength > INTAKE_MAX_BYTES) return null;
+  if (bytes.byteLength === 0 || bytes.byteLength > INTAKE_MAX_IMAGE_BYTES) return null;
   const sniffed = sniffPageType(bytes);
   if (sniffed === null || !(IMAGE_TYPES as readonly string[]).includes(sniffed)) return null;
   const declared = contentType.trim().toLowerCase();
@@ -302,7 +302,8 @@ export async function readBarcodeFromImage(raw: unknown, meta: ActionMeta): Prom
       );
       outcome = outcomeOfDigits(answer.digits);
     } catch (err) {
-      if (!(err instanceof AiUnavailableError) && !(err instanceof AiBadOutputError)) logUnexpected("barcode.read.provider", err);
+      if (err instanceof AiUnavailableError || err instanceof AiBadOutputError) logProviderFailure(err);
+      else logUnexpected("barcode.read.provider", err);
       outcome = { kind: "FAILED", code: err instanceof AiBadOutputError ? "AI_BAD_OUTPUT" : "AI_UNAVAILABLE" };
     }
     finished = await finishAction(outcome)(finishInput, finishMeta);

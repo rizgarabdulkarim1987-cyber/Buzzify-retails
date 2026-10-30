@@ -10,8 +10,10 @@
 
 /** At most this many pages per receipt (INTAKE_MAX_IMAGES). */
 export const MAX_PAGES = 6;
-/** One page's bytes as the server takes them (INTAKE_MAX_BYTES). */
-export const MAX_PAGE_BYTES = 8 * 1024 * 1024;
+/** One page's bytes as the server takes them, any type (INTAKE_MAX_BYTES: the PDF limit). */
+export const MAX_PAGE_BYTES = 5_500_000;
+/** One photo page as the server takes it (INTAKE_MAX_IMAGE_BYTES: the provider's per-image limit). */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** The longest side of a page sent, in pixels. */
 export const MAX_SIDE = 1800;
 /**
@@ -23,7 +25,7 @@ export const UPLOAD_BUDGET_BYTES = 5_500_000;
  * A PDF is sent as it is, so it must fit the whole upload on its own: one limit, checked when the
  * file is added (a bigger PDF is refused there with its own message, never later at "read").
  */
-export const MAX_PDF_BYTES = UPLOAD_BUDGET_BYTES;
+export const MAX_PDF_BYTES = UPLOAD_BUDGET_BYTES; // = INTAKE_MAX_PDF_BYTES
 /** What one photo aims at, so six of them fit the budget together. */
 export const PAGE_TARGET_BYTES = Math.floor(UPLOAD_BUDGET_BYTES / MAX_PAGES);
 /** JPEG qualities tried in turn until the page fits its share. */
@@ -152,7 +154,7 @@ export async function preparePage(file: File): Promise<PreparedPage> {
     }
     canvas.width = 0;
     canvas.height = 0;
-    if (blob.size > MAX_PAGE_BYTES) throw new PageError("TOO_LARGE");
+    if (blob.size > MAX_IMAGE_BYTES) throw new PageError("TOO_LARGE");
     return { contentType: "image/jpeg", blob, width: size.width, height: size.height };
   } finally {
     img.close();

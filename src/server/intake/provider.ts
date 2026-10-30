@@ -70,6 +70,15 @@ export class AiBadOutputError extends Error {
   }
 }
 
+/**
+ * Logs a provider failure as `[intake.provider] <reason> <httpStatus|->`: the error class's reason and
+ * the HTTP status only, never a body, key, image or model output.
+ */
+export function logProviderFailure(err: AiUnavailableError | AiBadOutputError): void {
+  const status = err instanceof AiUnavailableError && err.status !== undefined ? String(err.status) : "-";
+  console.error(`[intake.provider] ${err.reason} ${status}`);
+}
+
 export function parseExtractedReceipt(raw: unknown): ExtractedReceipt {
   const r = extractedReceiptSchema.safeParse(raw);
   if (!r.success) throw new AiBadOutputError("schema");

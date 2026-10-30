@@ -1,8 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Currency, RtRole, RtTrackingMode } from "@/generated/prisma/client";
 import { normalizeSearchText } from "@/server/domain/catalog";
-import { INTAKE_MAX_BYTES } from "@/server/domain/intake";
+import { INTAKE_MAX_IMAGE_BYTES, INTAKE_MAX_PDF_BYTES } from "@/server/domain/intake";
 import { AI_INTAKE_FEATURE } from "@/server/framework/features";
 import { CONSENT_VERSION } from "@/server/intake/consent";
 import { AiUnavailableError, type ExtractedLine, type ExtractedReceipt } from "@/server/intake/provider";
@@ -507,6 +507,21 @@ describe("quota, failures and duplicates", () => {
     expect(await s.usage()).toBe(0);
   });
 
+  it("logs a provider failure by reason and HTTP status only", async () => {
+    const s = await shop();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { read } = await readReceipt(s, new AiUnavailableError("http", 400));
+      expect(read).toMatchObject({ ok: false, code: "AI_UNAVAILABLE" });
+      expect(spy).toHaveBeenCalledWith("[intake.provider] http 400");
+      spy.mockClear();
+      await readReceipt(s, new AiUnavailableError("timeout"));
+      expect(spy).toHaveBeenCalledWith("[intake.provider] timeout -");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("a page that is not a readable receipt is INTAKE_NOT_READABLE and stays counted", async () => {
     const s = await shop();
     const { intakeId, read } = await readReceipt(s, { lines: [] });
@@ -549,8 +564,13 @@ describe("quota, failures and duplicates", () => {
 
 describe("upload validation", () => {
   const big = () => {
-    const b = new Uint8Array(INTAKE_MAX_BYTES + 1);
+    const b = new Uint8Array(INTAKE_MAX_IMAGE_BYTES + 1);
     b.set([0xff, 0xd8, 0xff, 0xe0], 0);
+    return b;
+  };
+  const bigPdf = (size: number) => {
+    const b = new Uint8Array(size);
+    b.set(new TextEncoder().encode("%PDF-1.7\n"), 0);
     return b;
   };
   const gif = () => new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 3, 4]);
@@ -561,7 +581,8 @@ describe("upload validation", () => {
   it.each([
     ["seven files", () => Array.from({ length: 7 }, () => page())],
     ["no file", () => []],
-    ["an oversized file", () => [page(big())]],
+    ["an image over 5 MB", () => [page(big())]],
+    ["a PDF over 5.5 MB", () => [{ contentType: "application/pdf", bytes: bigPdf(INTAKE_MAX_PDF_BYTES + 1) }]],
     ["an empty file", () => [page(new Uint8Array())]],
     ["a GIF", () => [{ contentType: "image/gif", bytes: gif() }]],
     ["a GIF declared as JPEG", () => [{ contentType: "image/jpeg", bytes: gif() }]],
@@ -574,6 +595,12 @@ describe("upload validation", () => {
     expect(await s.usage()).toBe(0);
     expect(await db.rtIntake.count()).toBe(0);
     expect(await db.rtAiUsage.count()).toBe(0);
+  });
+
+  it("a PDF may be larger than the 5 MB image limit (up to the 5.5 MB upload budget)", async () => {
+    const s = await shop();
+    const r = await createIntake({ files: [{ contentType: "application/pdf", bytes: bigPdf(INTAKE_MAX_IMAGE_BYTES + 1) }] }, s.as());
+    expect(r.ok).toBe(true);
   });
 
   it("accepts JPEG, PNG, WebP and PDF together (six pages) and keeps their bytes", async () => {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   INTAKE_MAX_BYTES,
+  INTAKE_MAX_IMAGE_BYTES,
+  INTAKE_MAX_PDF_BYTES,
   INTAKE_MAX_IMAGES,
   INTAKE_MAX_LINES,
   barcodeCheck,
@@ -28,7 +30,10 @@ describe("intake limits", () => {
   it("exposes the constants", () => {
     expect(INTAKE_MAX_IMAGES).toBe(6);
     expect(INTAKE_MAX_LINES).toBe(100);
-    expect(INTAKE_MAX_BYTES).toBe(8 * 1024 * 1024);
+    // Images: the provider's per-image limit (5 MB). A PDF: the whole upload budget (5.5 MB).
+    expect(INTAKE_MAX_IMAGE_BYTES).toBe(5 * 1024 * 1024);
+    expect(INTAKE_MAX_PDF_BYTES).toBe(5_500_000);
+    expect(INTAKE_MAX_BYTES).toBe(Math.max(INTAKE_MAX_IMAGE_BYTES, INTAKE_MAX_PDF_BYTES));
   });
 });
 

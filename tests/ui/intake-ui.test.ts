@@ -5,13 +5,14 @@ import { describe, expect, it } from "vitest";
 import { ar } from "@/messages/ar";
 import { ckb } from "@/messages/ckb";
 import { en } from "@/messages/en";
-import { INTAKE_MAX_BYTES, INTAKE_MAX_IMAGES } from "@/server/domain/intake";
+import { INTAKE_MAX_BYTES, INTAKE_MAX_IMAGE_BYTES, INTAKE_MAX_IMAGES, INTAKE_MAX_PDF_BYTES } from "@/server/domain/intake";
 import { CONSENT_VERSION } from "@/server/intake/consent";
 import type { IntakeView } from "@/server/intake/receipts";
 import {
   DECODE_OPTIONS,
   JPEG_QUALITIES,
   MAX_PAGES,
+  MAX_IMAGE_BYTES,
   MAX_PAGE_BYTES,
   MAX_PDF_BYTES,
   MAX_SIDE,
@@ -57,6 +58,8 @@ describe("photo downscale rules", () => {
   it("shares the server's limits", () => {
     expect(MAX_PAGES).toBe(INTAKE_MAX_IMAGES);
     expect(MAX_PAGE_BYTES).toBe(INTAKE_MAX_BYTES);
+    expect(MAX_IMAGE_BYTES).toBe(INTAKE_MAX_IMAGE_BYTES);
+    expect(MAX_PDF_BYTES).toBe(INTAKE_MAX_PDF_BYTES);
     expect(MAX_SIDE).toBe(1800);
     // All pages together, base64-encoded, stay inside the 8 MB Server Action body (next.config.ts).
     expect(Math.ceil(UPLOAD_BUDGET_BYTES / 3) * 4).toBeLessThan(8 * 1024 * 1024 - 64 * 1024);

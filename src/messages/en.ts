@@ -1159,7 +1159,7 @@ export const en: Messages = {
         hint: "Images are made smaller on your device before they are sent. The whole receipt counts as one read.",
         tooMany: "A receipt has at most 6 pages; {count} were not added.",
         unreadable: "The file “{name}” could not be opened. Use a JPEG, PNG or WebP image, or a PDF.",
-        fileTooLarge: "The file “{name}” is larger than allowed (8 MB).",
+        fileTooLarge: "The file “{name}” is larger than allowed (5 MB).",
         pdfTooLarge: "The PDF “{name}” is larger than 5.5 MB. Upload its pages as photos, or a smaller PDF.",
         noAnswer: "No answer came from the server. Press “Read the receipt” again; it will not be counted twice.",
         blocked: {
