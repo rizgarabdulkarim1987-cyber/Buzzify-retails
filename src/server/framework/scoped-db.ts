@@ -76,6 +76,11 @@ const SCOPE_RULES = {
   RtStockMovement: { business: "businessId", branch: "branchId" },
   RtStockBalance: { business: "businessId", branch: "branchId" },
   RtStockCounter: { business: "businessId" },
+  // AI intake (R1b): business-level (no branch), and in no support scope (src/server/admin/support.ts):
+  // intakes, their page bytes and the monthly usage counter.
+  RtIntake: { business: "businessId" },
+  RtIntakeFile: { business: "businessId" },
+  RtAiUsage: { business: "businessId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**

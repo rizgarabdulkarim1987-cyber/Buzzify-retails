@@ -37,7 +37,16 @@ export type ErrorCode =
   | "SERIAL_NOT_SUPPORTED"
   | "STOCK_RULE"
   | "DOCUMENT_POSTED"
-  | "IMPORT_SAME_FILE";
+  | "IMPORT_SAME_FILE"
+  // AI intake (R1b).
+  | "AI_DISABLED"
+  | "AI_CONSENT_REQUIRED"
+  | "AI_QUOTA_EXCEEDED"
+  | "AI_UNAVAILABLE"
+  | "AI_BAD_OUTPUT"
+  | "INTAKE_NOT_READABLE"
+  | "INTAKE_UNRESOLVED"
+  | "DUPLICATE_RECEIPT";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -89,6 +98,14 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   STOCK_RULE: "بيانات المخزون غير مقبولة: تحقق من الكمية والوحدة والدفعة وتاريخ الانتهاء والتكلفة والعملة.",
   DOCUMENT_POSTED: "هذا المستند مُرحَّل، فلا يمكن تعديله أو حذفه. للتصحيح رحِّل تعديلاً (أو إتلافاً) بالفرق.",
   IMPORT_SAME_FILE: "رُحِّل رصيد افتتاحي من هذا الملف نفسه سابقاً، فلا يُستورد مرة ثانية حتى لا يتضاعف الرصيد. للتصحيح رحِّل تعديلاً (أو إتلافاً) بالفرق.",
+  AI_DISABLED: "ميزة القراءة بالذكاء الاصطناعي غير مفعّلة لمحلك. اطلب تفعيلها من فريق الدعم.",
+  AI_CONSENT_REQUIRED: "القراءة بالذكاء الاصطناعي تتطلب موافقة مالك المنشأة على إرسال الصور إلى مزوّد الخدمة. اطلب من المالك منحها من إعدادات الذكاء الاصطناعي.",
+  AI_QUOTA_EXCEEDED: "نفدت قراءات الذكاء الاصطناعي المتاحة في باقتك لهذا الشهر. أدخل البيانات يدوياً أو اطلب ترقية الباقة.",
+  AI_UNAVAILABLE: "خدمة القراءة بالذكاء الاصطناعي غير متاحة الآن، ولم تُحسب هذه المحاولة من حصتك. أعد المحاولة لاحقاً أو أدخل البيانات يدوياً.",
+  AI_BAD_OUTPUT: "تعذّر فهم نتيجة القراءة، ولم تُحسب هذه المحاولة من حصتك. أعد المحاولة أو أدخل البيانات يدوياً.",
+  INTAKE_NOT_READABLE: "تعذّرت قراءة الصورة كوصل شراء. صوّر الوصل كاملاً بإضاءة جيدة ثم أعد المحاولة، أو أدخله يدوياً.",
+  INTAKE_UNRESOLVED: "في الوصل أسطر لم تُحسم بعد (غير معروفة أو مشكوك فيها). احسم كل سطر أو احذفه، ثم أنشئ المسودة.",
+  DUPLICATE_RECEIPT: "يبدو أن هذا الوصل قُرئ سابقاً. راجع المستند السابق قبل المتابعة حتى لا يُستلم مرتين.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

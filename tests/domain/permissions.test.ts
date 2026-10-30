@@ -24,8 +24,8 @@ describe("permissions", () => {
 
   it("OWNER holds every permission", () => {
     const all = new Set(Object.values(ROLE_PERMISSIONS).flat());
-    expect(permissionsOf("OWNER").size).toBe(18);
-    expect(all.size).toBe(18);
+    expect(permissionsOf("OWNER").size).toBe(19);
+    expect(all.size).toBe(19);
   });
 
   it("pins the whole role matrix", () => {
@@ -50,7 +50,7 @@ describe("permissions", () => {
     expect(roles.filter((r) => can(r, "catalog.import")).sort()).toEqual(["MANAGER", "OWNER"]);
     expect(PERMISSIONS).toContain("catalog.manage");
     expect(PERMISSIONS).toContain("catalog.import");
-    expect(PERMISSIONS.length).toBe(18);
+    expect(PERMISSIONS.length).toBe(19);
     expect(Object.isFrozen(PERMISSIONS)).toBe(true);
   });
 
@@ -62,7 +62,16 @@ describe("permissions", () => {
     );
     expect(PERMISSIONS).toContain("stock.adjust");
     expect(PERMISSIONS).toContain("stock.view");
-    expect(PERMISSIONS.length).toBe(18);
+    expect(PERMISSIONS.length).toBe(19);
+    expect(Object.isFrozen(PERMISSIONS)).toBe(true);
+  });
+
+  it("ai.consent is the owner's alone and the permission table stays frozen", () => {
+    const roles = Object.keys(ROLE_PERMISSIONS) as RtRole[];
+    expect(roles.filter((r) => can(r, "ai.consent"))).toEqual(["OWNER"]);
+    for (const role of roles.filter((r) => r !== "OWNER")) expect(permissionsOf(role).has("ai.consent"), role).toBe(false);
+    expect(PERMISSIONS).toContain("ai.consent");
+    expect(PERMISSIONS.length).toBe(19);
     expect(Object.isFrozen(PERMISSIONS)).toBe(true);
   });
 

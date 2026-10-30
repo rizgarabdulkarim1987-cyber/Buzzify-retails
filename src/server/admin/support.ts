@@ -43,7 +43,8 @@ type ModelName = Prisma.ModelName;
 /**
  * The models each support scope may read. Default deny: a model not listed here (RtStaff,
  * RtSetupProgress, RtSupportGrant, RtCapability, RtBusiness, RtBranch, RtCatalogCounter,
- * RtStockCounter, and any model added to the schema later) cannot be read by a support actor,
+ * RtStockCounter, the AI intake models RtIntake, RtIntakeFile (page bytes) and RtAiUsage, and any
+ * model added to the schema later) cannot be read by a support actor,
  * whatever scopes the grant has.
  */
 export const SCOPE_MODELS: Readonly<Record<SupportScope, readonly ModelName[]>> = Object.freeze({

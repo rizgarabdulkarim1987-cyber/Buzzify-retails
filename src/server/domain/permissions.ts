@@ -19,6 +19,8 @@ const PERMISSION_LIST = [
   "catalog.import",
   "stock.adjust",
   "stock.view",
+  // Grant or withdraw the business's consent to send images to the AI provider (R1b). OWNER only.
+  "ai.consent",
 ] as const;
 
 export type Permission = (typeof PERMISSION_LIST)[number];

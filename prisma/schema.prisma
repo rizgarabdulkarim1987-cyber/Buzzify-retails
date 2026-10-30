@@ -36,6 +36,10 @@ model RtBusiness {
   timezone          String           @default("Asia/Baghdad")
   defaultCurrency   Currency
   enabledCurrencies Currency[]
+  // AI intake (R1b): when the owner consented to sending images to the AI provider, and the
+  // version of the consent text agreed to (a newer text version voids an older consent).
+  aiConsentAt       DateTime?
+  aiConsentVersion  Int?
   version           Int              @default(1)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
@@ -74,6 +78,10 @@ model RtBusiness {
   stockMovements RtStockMovement[]
   stockBalances  RtStockBalance[]
   stockCounter   RtStockCounter?
+
+  intakes     RtIntake[]
+  intakeFiles RtIntakeFile[]
+  aiUsage     RtAiUsage[]
 }
 
 model RtBranch {
@@ -1035,4 +1043,87 @@ model RtStockCounter {
   nextNumber Int    @default(1)
 
   business RtBusiness @relation(fields: [businessId], references: [id])
+}
+
+// AI intake (R1b). A photographed purchase receipt is read by the AI provider into RtIntake.result
+// (suggestions only); a stock draft is created from it only once every line is resolved by a person.
+// Usage is counted in half units: 2 = one receipt read, 1 = one AI barcode fallback. Every row is
+// business-level and readable by no support scope (the page bytes in particular). Hand-written in the
+// migration (Prisma cannot express them): the CHECKs noted on each model.
+
+enum RtIntakeKind {
+  PURCHASE_RECEIPT
+}
+
+enum RtIntakeStatus {
+  UPLOADED
+  READING
+  READ
+  FAILED
+  DRAFTED
+  DISCARDED
+}
+
+// One upload to be read. filesHash: sha256 over the ordered pages (duplicate warning, idempotency).
+// model: the AI model used. usageHalfUnits: what was reserved from the month's quota (`month`, the
+// business-local YYYY-MM it was reserved from, so a refund returns it there); refundedAt is set once
+// when a technical failure returns it. failureCode: the ErrorCode of a failed read. result: the
+// extracted lines and the reviewer's choices. stockDocumentId: the draft created from it; a plain
+// column, not a foreign key, because R2 lets a draft be deleted (the intake keeps the stale id).
+// In the migration: usageHalfUnits >= 0; month, when set, is YYYY-MM.
+model RtIntake {
+  id              String         @id @default(cuid())
+  businessId      String
+  kind            RtIntakeKind   @default(PURCHASE_RECEIPT)
+  status          RtIntakeStatus @default(UPLOADED)
+  createdById     String
+  filesHash       String
+  model           String
+  usageHalfUnits  Int            @default(0)
+  month           String?
+  result          Json?
+  failureCode     String?
+  stockDocumentId String?
+  refundedAt      DateTime?
+  version         Int            @default(1)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  business RtBusiness     @relation(fields: [businessId], references: [id])
+  files    RtIntakeFile[]
+
+  @@unique([businessId, id])
+  @@index([businessId, filesHash])
+}
+
+// One page (image or PDF) of an intake, its bytes stored in the database. The bytes are deleted by
+// the retention policy; sha256 stays. In the migration: position >= 1.
+model RtIntakeFile {
+  id          String   @id @default(cuid())
+  businessId  String
+  intakeId    String
+  position    Int
+  contentType String
+  bytes       Bytes
+  sha256      String
+  createdAt   DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  intake   RtIntake   @relation(fields: [businessId, intakeId], references: [businessId, id], onDelete: Cascade)
+
+  @@unique([businessId, intakeId, position])
+}
+
+// The AI usage of a business in one business-local month (YYYY-MM), in half units. Updated under a
+// row lock. In the migration: halfUnits >= 0; month is YYYY-MM.
+model RtAiUsage {
+  id         String   @id @default(cuid())
+  businessId String
+  month      String
+  halfUnits  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, month])
 }
