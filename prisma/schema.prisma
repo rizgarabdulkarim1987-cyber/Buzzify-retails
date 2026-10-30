@@ -1072,22 +1072,27 @@ enum RtIntakeStatus {
 // column, not a foreign key, because R2 lets a draft be deleted (the intake keeps the stale id).
 // In the migration: usageHalfUnits >= 0; month, when set, is YYYY-MM.
 model RtIntake {
-  id              String         @id @default(cuid())
-  businessId      String
-  kind            RtIntakeKind   @default(PURCHASE_RECEIPT)
-  status          RtIntakeStatus @default(UPLOADED)
-  createdById     String
-  filesHash       String
-  model           String
-  usageHalfUnits  Int            @default(0)
-  month           String?
-  result          Json?
-  failureCode     String?
-  stockDocumentId String?
-  refundedAt      DateTime?
-  version         Int            @default(1)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id               String         @id @default(cuid())
+  businessId       String
+  kind             RtIntakeKind   @default(PURCHASE_RECEIPT)
+  status           RtIntakeStatus @default(UPLOADED)
+  createdById      String
+  filesHash        String
+  model            String
+  usageHalfUnits   Int            @default(0)
+  month            String?
+  result           Json?
+  failureCode      String?
+  stockDocumentId  String?
+  refundedAt       DateTime?
+  // The current read attempt (a lease): set when the intake enters READING; only this attempt may
+  // store its result or failure, and a READING intake whose lease is older than the provider timeout
+  // plus a margin is swept to FAILED with its refund.
+  readingStartedAt DateTime?
+  readingAttemptId String?
+  version          Int            @default(1)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   business RtBusiness     @relation(fields: [businessId], references: [id])
   files    RtIntakeFile[]
@@ -1107,6 +1112,8 @@ model RtIntakeFile {
   position    Int
   contentType String
   bytes       Bytes
+  // Byte length of `bytes` (summed against the plan's storageMb). In the migration: size >= 0.
+  size        Int      @default(0)
   sha256      String
   createdAt   DateTime @default(now())
 

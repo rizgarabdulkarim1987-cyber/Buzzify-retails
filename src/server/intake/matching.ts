@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Currency, RtTrackingMode } from "@/generated/prisma/enums";
 import { searchInTx } from "@/server/catalog/search";
@@ -109,6 +110,13 @@ export type IntakeResult = {
   /** An enabled currency of the business, or null until the reviewer picks one. */
   receiptCurrency: Currency | null;
   totalCheck: { ok: boolean };
+  /**
+   * The reviewer accepted a receipt total that does not match (ruling R1b-F): the fingerprint of the
+   * totals accepted (totalsFingerprint). Any later change to what the total check reads voids it.
+   */
+  totalAck?: string;
+  /** totalAck still matches the current totals. */
+  totalAcknowledged: boolean;
   lines: IntakeLine[];
 };
 
@@ -279,6 +287,12 @@ export function evaluateLine(line: IntakeLine, info: VariantInfo | undefined, cu
   return { ...line, variantId, unitId: unit?.id, notes, reasons, status, resolved: status === "MATCHED" };
 }
 
+/** What the receipt total check reads: the printed total, the currency and each line's printed amounts. */
+export function totalsFingerprint(result: Pick<IntakeResult, "lines" | "total" | "receiptCurrency">): string {
+  const lines = result.lines.map((l) => [l.quantity, l.printedUnitPrice ?? (l.priceFromTotal ? null : (l.unitPrice ?? null)), l.lineTotal ?? null]);
+  return createHash("sha256").update(JSON.stringify([result.total ?? null, result.receiptCurrency, lines])).digest("hex");
+}
+
 export function totalCheckOf(result: Pick<IntakeResult, "lines" | "total" | "receiptCurrency">): { ok: boolean } {
   if (result.total === undefined) return { ok: true };
   if (result.receiptCurrency === null) return { ok: false };
@@ -405,7 +419,8 @@ export async function reevaluate(tx: Tx, result: IntakeResult): Promise<IntakeRe
     result.lines.flatMap((l) => (l.variantId ? [l.variantId] : [])),
   );
   const lines = result.lines.map((l) => evaluateLine(l, l.variantId ? info.get(l.variantId) : undefined, result.receiptCurrency));
-  return { ...result, lines, totalCheck: totalCheckOf({ ...result, lines }) };
+  const next = { ...result, lines };
+  return { ...next, totalCheck: totalCheckOf(next), totalAcknowledged: result.totalAck !== undefined && result.totalAck === totalsFingerprint(next) };
 }
 
 /** The stored result of a fresh reading: lookups, checks and statuses of every line. */
@@ -420,6 +435,7 @@ export async function matchReceipt(tx: Tx, extracted: ExtractedReceipt, biz: Bus
     ...(extracted.total !== undefined ? { total: extracted.total } : {}),
     receiptCurrency: receiptCurrencyOf(extracted.currency, biz),
     totalCheck: { ok: true },
+    totalAcknowledged: false,
     lines,
   };
   return reevaluate(tx, base);

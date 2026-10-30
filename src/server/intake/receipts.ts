@@ -9,6 +9,7 @@ import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction, validKey, type ActionMeta } from "@/server/framework/action";
 import { ForbiddenError, NotFoundError, RuleError, VersionConflictError, failure, type ErrorCode, type Result } from "@/server/framework/errors";
+import { planStorageMb } from "@/server/framework/business-info";
 import { aiEnabledPrecondition } from "@/server/framework/features";
 import { updateVersioned } from "@/server/framework/versioned";
 import { createReceiptDraftInTx, type DraftLineInput } from "@/server/stock/documents";
@@ -21,6 +22,7 @@ import {
   plainQuantity,
   priceFromTotal,
   reevaluate,
+  totalsFingerprint,
   type IntakeLine,
   type IntakeResult,
   type VariantInfo,
@@ -51,23 +53,33 @@ type Tx = Prisma.TransactionClient;
  *   is IDEMPOTENCY_MISMATCH. The same images again (another key) are a new read: reserved again,
  *   and the answer carries duplicateOf (the latest earlier intake with the same hash within 90
  *   days that did not fail): a warning, not a refusal.
- * - runIntakeRead (an orchestrator, not one action; ruling R1b-A): a short step sets READING
- *   (switch, permissions, consent; without consent the intake FAILS with AI_CONSENT_REQUIRED and
- *   its reservation is refunded, no call is made); a read step loads the pages and re-checks switch
- *   and consent; the provider is called OUTSIDE any transaction with a timeout; a last short step
- *   stores the matched result (READ) or, on AI_UNAVAILABLE / AI_BAD_OUTPUT, FAILED plus the refund.
- *   A refund happens at most once per intake (refundedAt, set in the refund's transaction), so
- *   every path that answers AI_UNAVAILABLE / AI_BAD_OUTPUT has refunded. An empty reading (no
+ * - createIntake also refuses INVALID_INPUT {reason: STORAGE} when the business's stored pages plus
+ *   the upload exceed the plan's storageMb (before reserving), and prunes expired pages: finished
+ *   intakes (FAILED, DISCARDED, DRAFTED with the draft posted or deleted) 30 idle days after
+ *   updatedAt, open ones (UPLOADED, READ) after 90, READING never.
+ * - runIntakeRead (an orchestrator, not one action; rulings R1b-A, R1b-E): a short step opens a read
+ *   attempt (switch, permissions, consent): READING with readingStartedAt and a new attemptId (the
+ *   lease). A READING intake with a live lease answers READING without a second provider call;
+ *   one whose lease (provider timeout + 2 min) expired gets a new attempt on the same reservation.
+ *   Without consent the intake FAILS with AI_CONSENT_REQUIRED and is refunded, nothing is sent.
+ *   A read step loads the pages and re-checks switch and consent (no consent, or no pages left:
+ *   FAILED and refunded, no call). The provider is called OUTSIDE any transaction with a timeout.
+ *   The closing steps (store the matched result: READ; or FAILED with AI_UNAVAILABLE /
+ *   AI_BAD_OUTPUT and the refund) accept only the current attemptId and need neither the switch
+ *   nor ai.use / cost.view nor a FULL gate: they only record what already happened. A storing step
+ *   that throws fails the attempt with its refund. A READING intake past its lease is swept to
+ *   FAILED(AI_UNAVAILABLE) with its refund by getIntake / listIntakes (a separate write after their
+ *   read). A refund happens at most once per intake (refundedAt, set in the refund's transaction),
+ *   so every path that answers AI_UNAVAILABLE / AI_BAD_OUTPUT has refunded. An empty reading (no
  *   lines) is INTAKE_NOT_READABLE: FAILED and NOT refunded (spec 3.10). A FAILED intake is never
- *   read again; a retry is a new intake (new reservation). A step refused by the switch leaves the
- *   intake as it was (READING stays READING; running again calls the provider again for the
- *   reservation already taken).
- * - The steps use internal idempotency keys of their own; the status machine under the intake's
- *   lock (`intake:<id>`) makes each step safe to repeat or race.
+ *   read again; a retry is a new intake (new reservation).
+ * - The steps use internal idempotency keys of their own; the status machine and the attempt id
+ *   under the intake's lock (`intake:<id>`) make each step safe to repeat or race.
  * - resolveIntakeLine / setIntakeCurrency / createIntakeItems change RtIntake.result (version-
  *   checked, `intake:<id>` lock). createDraftFromIntake re-evaluates every line against the
  *   current catalog and refuses INTAKE_UNRESOLVED while a kept line is not MATCHED or the receipt
- *   currency is not chosen; then creates the draft through createReceiptDraftInTx (R2's checks:
+ *   currency is not chosen or a mismatching receipt total is not acknowledged (acknowledgeIntakeTotal,
+ *   tied to the totals it saw); then creates the draft through createReceiptDraftInTx (R2's checks:
  *   TEST_ITEM, SERIAL_NOT_SUPPORTED, ...) and records DRAFTED + stockDocumentId.
  * - stockDocumentId has no foreign key: it is resolved through the scoped client, and a missing
  *   document means the draft was deleted, so the intake counts as READ again (re-draft allowed).
@@ -80,11 +92,16 @@ type Tx = Prisma.TransactionClient;
  * and counts.
  */
 
+/** Pages of a finished intake (FAILED, DISCARDED, DRAFTED with its draft posted or gone) go after 30 idle days. */
 const RETENTION_DAYS = 30;
+/** Pages of an intake still waiting for review (UPLOADED, READ) go after 90 idle days; READING never. */
+const OPEN_RETENTION_DAYS = 90;
 const RETENTION_BATCH = 20;
 const DUPLICATE_DAYS = 90;
 const DAY_MS = 86_400_000;
 const READ_TIMEOUT_MS = 90_000;
+/** A read attempt's lease: the provider timeout plus a margin. Past it the attempt is stale (swept, or replaced). */
+export const READ_LEASE_MS = READ_TIMEOUT_MS + 2 * 60_000;
 export const MAX_NEW_ITEMS = 50;
 const LIST_LIMIT = 50;
 /** The base unit of a new item when the receipt names none (the catalog's quick-create default). */
@@ -121,6 +138,8 @@ const intakeSelect = {
   failureCode: true,
   stockDocumentId: true,
   refundedAt: true,
+  readingStartedAt: true,
+  readingAttemptId: true,
   version: true,
   createdAt: true,
   updatedAt: true,
@@ -222,23 +241,42 @@ function modelName(): string {
 }
 
 /**
- * Deletes the stored pages of up to RETENTION_BATCH intakes of this business idle for over 30 days,
- * except an intake whose draft still exists unposted. The intake row (hash and result) stays.
+ * Deletes the stored pages of up to RETENTION_BATCH intakes of this business: a finished one (FAILED,
+ * DISCARDED, or DRAFTED whose draft was posted or deleted) idle for over 30 days, an open one
+ * (UPLOADED, READ) idle for over 90 days. Never a READING intake nor one whose draft is still a
+ * DRAFT. The intake row (hash and result) stays.
  */
 async function pruneExpiredPages(tx: Tx, now: Date): Promise<void> {
-  const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS);
-  const candidates = await tx.rtIntake.findMany({
-    where: { updatedAt: { lt: cutoff }, files: { some: {} } },
-    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+  const ago = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  const select = { id: true, status: true, stockDocumentId: true } as const;
+  const orderBy = [{ updatedAt: "asc" as const }, { id: "asc" as const }];
+  const finished = await tx.rtIntake.findMany({
+    where: { status: { in: ["FAILED", "DISCARDED", "DRAFTED"] }, updatedAt: { lt: ago(RETENTION_DAYS) }, files: { some: {} } },
+    orderBy,
     take: RETENTION_BATCH * 2,
-    select: { id: true, status: true, stockDocumentId: true },
+    select,
   });
-  const docIds = candidates.flatMap((c) => (c.status === "DRAFTED" && c.stockDocumentId ? [c.stockDocumentId] : []));
+  const open = await tx.rtIntake.findMany({
+    where: { status: { in: ["UPLOADED", "READ"] }, updatedAt: { lt: ago(OPEN_RETENTION_DAYS) }, files: { some: {} } },
+    orderBy,
+    take: RETENTION_BATCH,
+    select,
+  });
+  const docIds = finished.flatMap((c) => (c.status === "DRAFTED" && c.stockDocumentId ? [c.stockDocumentId] : []));
   const pending = new Set(
     docIds.length ? (await tx.rtStockDocument.findMany({ where: { id: { in: docIds }, status: "DRAFT" }, select: { id: true } })).map((d) => d.id) : [],
   );
-  const expired = candidates.filter((c) => !(c.status === "DRAFTED" && c.stockDocumentId && pending.has(c.stockDocumentId))).slice(0, RETENTION_BATCH);
+  const expired = [...finished.filter((c) => !(c.stockDocumentId && pending.has(c.stockDocumentId))), ...open].slice(0, RETENTION_BATCH);
   if (expired.length) await tx.rtIntakeFile.deleteMany({ where: { intakeId: { in: expired.map((c) => c.id) } } });
+}
+
+const MB = 1024 * 1024;
+
+/** STORAGE refusal when the business's stored pages plus `adding` bytes exceed its plan's storageMb. */
+async function assertStorage(tx: Tx, businessId: string, adding: number): Promise<void> {
+  const limit = (await planStorageMb(businessId)) * MB;
+  const used = (await tx.rtIntakeFile.aggregate({ _sum: { size: true } }))._sum.size ?? 0;
+  if (used + adding > limit) throw new RuleError("INVALID_INPUT", { reason: "STORAGE" });
 }
 
 function createIntakeAction(pages: Page[]) {
@@ -257,6 +295,7 @@ function createIntakeAction(pages: Page[]) {
       await assertConsent(tx, actor.businessId);
       const now = new Date();
       await pruneExpiredPages(tx, now);
+      await assertStorage(tx, actor.businessId, pages.reduce((n, p) => n + p.bytes.byteLength, 0));
       const earlier = await tx.rtIntake.findFirst({
         where: { filesHash: input.filesHash, status: { not: "FAILED" }, createdAt: { gte: new Date(now.getTime() - DUPLICATE_DAYS * DAY_MS) } },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -274,6 +313,7 @@ function createIntakeAction(pages: Page[]) {
           position: i + 1,
           contentType: p.contentType,
           bytes: new Uint8Array(p.bytes),
+          size: p.bytes.byteLength,
           sha256: p.sha256,
         })),
       });
@@ -306,9 +346,35 @@ export async function createIntake(raw: unknown, meta: ActionMeta): Promise<Resu
 // runIntakeRead: its steps
 
 const idInput = z.object({ intakeId: z.string().min(1).max(64) }).strict();
+const attemptInput = idInput.extend({ attemptId: z.string().min(1).max(64) }).strict();
 
-type StartState = { state: "READING" } | { state: "DONE"; status: RtIntakeStatus } | { state: "FAILED"; code: ErrorCode };
+/** The read attempt's lease ran out (or the intake never recorded one). */
+const leaseExpired = (startedAt: Date | null, now: Date) => startedAt === null || startedAt.getTime() < now.getTime() - READ_LEASE_MS;
 
+/**
+ * Ends the intake as FAILED with `code` (clearing the attempt). With `refund`, gives its reservation
+ * back once (refundedAt). Call under the intake lock.
+ */
+async function failIntake(tx: Tx, actor: Actor, row: IntakeRow, code: ErrorCode, refund: boolean): Promise<void> {
+  const refunded = refund && (await refundOnce(tx, actor, row));
+  await tx.rtIntake.updateMany({
+    where: { id: row.id },
+    data: { status: "FAILED", failureCode: code, readingAttemptId: null, version: { increment: 1 }, ...(refunded ? { refundedAt: new Date() } : {}) },
+  });
+}
+
+type StartState =
+  | { state: "READING"; attemptId: string }
+  | { state: "BUSY" }
+  | { state: "DONE"; status: RtIntakeStatus }
+  | { state: "FAILED"; code: ErrorCode };
+
+/**
+ * Opens a read attempt: UPLOADED, or READING whose previous attempt's lease expired, becomes READING
+ * with a new attemptId and readingStartedAt. A READING intake with a live lease is BUSY (another
+ * attempt is calling the provider: no second call). Without consent the intake fails with
+ * AI_CONSENT_REQUIRED and its reservation goes back (nothing is sent).
+ */
 const startRead = defineAction({
   name: "intake.read.start",
   permission: "stock.receive",
@@ -319,84 +385,127 @@ const startRead = defineAction({
     const row = await lockIntake(tx, actor, input.intakeId, lockBusiness);
     if (row.status === "FAILED") return { state: "FAILED", code: failureOf(row.failureCode) };
     if (row.status !== "UPLOADED" && row.status !== "READING") return { state: "DONE", status: (await effectiveState(tx, row)).status };
+    const now = new Date();
+    if (row.status === "READING" && !leaseExpired(row.readingStartedAt, now)) return { state: "BUSY" };
     try {
       await assertConsent(tx, actor.businessId);
     } catch (err) {
       if (!(err instanceof RuleError)) throw err;
-      // No consent: nothing is sent, the intake fails and its reservation goes back.
-      const refunded = await refundOnce(tx, actor, row);
-      await tx.rtIntake.updateMany({
-        where: { id: row.id },
-        data: { status: "FAILED", failureCode: "AI_CONSENT_REQUIRED", version: { increment: 1 }, ...(refunded ? { refundedAt: new Date() } : {}) },
-      });
+      await failIntake(tx, actor, row, "AI_CONSENT_REQUIRED", true);
       return { state: "FAILED", code: "AI_CONSENT_REQUIRED" };
     }
-    if (row.status === "UPLOADED") await tx.rtIntake.updateMany({ where: { id: row.id }, data: { status: "READING", version: { increment: 1 } } });
-    return { state: "READING" };
+    const attemptId = randomUUID();
+    await tx.rtIntake.updateMany({
+      where: { id: row.id },
+      data: { status: "READING", readingStartedAt: now, readingAttemptId: attemptId, version: { increment: 1 } },
+    });
+    return { state: "READING", attemptId };
   },
   audit: (input, value) => ({ entity: "RtIntake", entityId: input.intakeId, changes: { state: value.state } }),
 });
 
-/** The pages to send, when the intake is READING; re-checks the switch (precondition) and the consent just before the call. */
+type Loaded =
+  | { kind: "pages"; pages: { contentType: string; bytes: Uint8Array }[] }
+  | { kind: "consent" }
+  | { kind: "nopages" }
+  | { kind: "stale"; status: RtIntakeStatus; failureCode: string | null };
+
+/** The pages to send for this attempt; re-checks the switch (precondition) and the consent just before the call. */
 const loadPages = defineAction({
   name: "intake.read.pages",
   permission: "stock.receive",
-  input: idInput,
+  input: attemptInput,
   writes: false,
   timeoutMs: 20_000,
   precondition: writePrecondition,
-  async run({ actor, tx, input }): Promise<{ status: RtIntakeStatus; failureCode: string | null; pages: { contentType: string; bytes: Uint8Array }[] }> {
+  async run({ actor, tx, input }): Promise<Loaded> {
     const row = await findIntake(tx, actor, input.intakeId);
-    if (row.status !== "READING") return { status: row.status, failureCode: row.failureCode, pages: [] };
-    await assertConsent(tx, actor.businessId);
+    if (row.status !== "READING" || row.readingAttemptId !== input.attemptId) return { kind: "stale", status: row.status, failureCode: row.failureCode };
+    try {
+      await assertConsent(tx, actor.businessId);
+    } catch (err) {
+      if (err instanceof RuleError) return { kind: "consent" };
+      throw err;
+    }
     const files = await tx.rtIntakeFile.findMany({ where: { intakeId: row.id }, orderBy: { position: "asc" }, select: { contentType: true, bytes: true } });
-    return { status: row.status, failureCode: null, pages: files.map((f) => ({ contentType: f.contentType, bytes: new Uint8Array(f.bytes) })) };
+    if (files.length === 0) return { kind: "nopages" };
+    return { kind: "pages", pages: files.map((f) => ({ contentType: f.contentType, bytes: new Uint8Array(f.bytes) })) };
   },
 });
 
 type Outcome = { status: RtIntakeStatus; code?: ErrorCode };
 
+/*
+ * The closing steps (ruling R1b-E) only record what already happened for THIS attempt: no master
+ * switch, no ai.use / cost.view, allowed while READ_ONLY (never CLOSED). The intake must still be
+ * visible to the caller under its lock; any other attempt (stale or newer) is ignored, untouched.
+ * Not exported: only runIntakeRead / getIntake / listIntakes call them.
+ */
+const closingStep = { permission: null, writes: true, allowWhenReadOnly: true } as const;
+
+const FAIL_CODES = ["AI_UNAVAILABLE", "AI_BAD_OUTPUT", "AI_CONSENT_REQUIRED", "INTAKE_NOT_READABLE"] as const;
+
+/** FAILED with `code` and the reservation back once (nothing usable was read for it). */
 const failRead = defineAction({
   name: "intake.read.fail",
-  permission: "stock.receive",
-  input: idInput.extend({ code: z.enum(["AI_UNAVAILABLE", "AI_BAD_OUTPUT"]) }).strict(),
-  writes: true,
-  precondition: writePrecondition,
+  ...closingStep,
+  input: attemptInput.extend({ code: z.enum(FAIL_CODES) }).strict(),
   async run({ actor, tx, input, lockBusiness }): Promise<Outcome> {
     const row = await lockIntake(tx, actor, input.intakeId, lockBusiness);
-    if (row.status === "FAILED") return { status: "FAILED", code: failureOf(row.failureCode) };
-    if (row.status !== "READING") return { status: row.status };
-    const refunded = await refundOnce(tx, actor, row);
-    await tx.rtIntake.updateMany({
-      where: { id: row.id },
-      data: { status: "FAILED", failureCode: input.code, version: { increment: 1 }, ...(refunded ? { refundedAt: new Date() } : {}) },
-    });
+    if (row.status !== "READING" || row.readingAttemptId !== input.attemptId) {
+      return row.status === "FAILED" ? { status: "FAILED", code: failureOf(row.failureCode) } : { status: row.status };
+    }
+    await failIntake(tx, actor, row, input.code, true);
     return { status: "FAILED", code: input.code };
   },
   audit: (input, value) => ({ entity: "RtIntake", entityId: input.intakeId, changes: { status: value.status, code: value.code ?? null } }),
 });
 
+/** The matched result (READ), or INTAKE_NOT_READABLE (not refunded) for an answer without lines. */
 const storeRead = defineAction({
   name: "intake.read.store",
-  permission: "stock.receive",
-  input: idInput.extend({ extracted: extractedReceiptSchema }).strict(),
-  writes: true,
+  ...closingStep,
+  input: attemptInput.extend({ extracted: extractedReceiptSchema }).strict(),
   timeoutMs: 30_000,
-  precondition: writePrecondition,
   async run({ actor, tx, input, lockBusiness }): Promise<Outcome & { lines: number }> {
     const row = await lockIntake(tx, actor, input.intakeId, lockBusiness);
-    if (row.status === "FAILED") return { status: "FAILED", code: failureOf(row.failureCode), lines: 0 };
-    if (row.status !== "READING") return { status: row.status, lines: 0 };
+    if (row.status !== "READING" || row.readingAttemptId !== input.attemptId) {
+      return row.status === "FAILED" ? { status: "FAILED", code: failureOf(row.failureCode), lines: 0 } : { status: row.status, lines: 0 };
+    }
     if (input.extracted.lines.length === 0) {
       // A valid answer with nothing in it: not a technical failure, so not refunded (spec 3.10).
-      await tx.rtIntake.updateMany({ where: { id: row.id }, data: { status: "FAILED", failureCode: "INTAKE_NOT_READABLE", version: { increment: 1 } } });
+      await failIntake(tx, actor, row, "INTAKE_NOT_READABLE", false);
       return { status: "FAILED", code: "INTAKE_NOT_READABLE", lines: 0 };
     }
     const result = await matchReceipt(tx, input.extracted, await businessOf(tx));
-    await tx.rtIntake.updateMany({ where: { id: row.id }, data: { status: "READ", result: asJson(result), version: { increment: 1 } } });
+    await tx.rtIntake.updateMany({ where: { id: row.id }, data: { status: "READ", result: asJson(result), readingAttemptId: null, version: { increment: 1 } } });
     return { status: "READ", lines: result.lines.length };
   },
   audit: (input, value) => ({ entity: "RtIntake", entityId: input.intakeId, changes: { status: value.status, lines: value.lines } }),
+});
+
+/**
+ * Fails READING intakes whose lease expired (provider timeout + margin: the attempt crashed, or its
+ * closing step never ran) with AI_UNAVAILABLE and their refund once. Same access as the closing
+ * steps; called by getIntake/listIntakes after their read when they saw such an intake.
+ */
+const sweepStaleReads = defineAction({
+  name: "intake.read.sweep",
+  ...closingStep,
+  input: z.object({ intakeIds: z.array(z.string().min(1).max(64)).min(1).max(LIST_LIMIT) }).strict(),
+  async run({ actor, tx, input, lockBusiness }): Promise<{ swept: number }> {
+    const now = new Date();
+    let swept = 0;
+    for (const intakeId of [...new Set(input.intakeIds)].sort()) {
+      await lockBusiness(intakeLock(intakeId));
+      const row = await tx.rtIntake.findFirst({ where: { AND: [{ id: intakeId }, visibleWhere(actor)] }, select: intakeSelect });
+      if (!row || row.status !== "READING" || !leaseExpired(row.readingStartedAt, now)) continue;
+      await failIntake(tx, actor, row, "AI_UNAVAILABLE", true);
+      swept += 1;
+    }
+    return { swept };
+  },
+  audit: (input, value) => ({ entity: "RtIntake", entityId: "", changes: { intakes: input.intakeIds.length, swept: value.swept } }),
 });
 
 const stepMeta = (meta: ActionMeta, step: string): ActionMeta => ({ ...meta, idempotencyKey: `intake-read:${step}:${randomUUID()}` });
@@ -404,9 +513,13 @@ const stepMeta = (meta: ActionMeta, step: string): ActionMeta => ({ ...meta, ide
 const doneOrFailed = (intakeId: string, o: Outcome): Result<{ intakeId: string; status: RtIntakeStatus }> =>
   o.status === "FAILED" ? failure(o.code ?? "AI_UNAVAILABLE") : { ok: true, value: { intakeId, status: o.status } };
 
+/** Logs an unexpected error by its class only (never its message: it could carry provider output). */
+const logUnexpected = (where: string, err: unknown) => console.error(`[${where}] unexpected failure: ${err instanceof Error ? err.name : typeof err}`);
+
 /**
  * Reads an uploaded intake with the AI provider (see the file comment). Ok with the intake's
- * status (READ, or DRAFTED/DISCARDED when already past reading); a failed reading answers its code.
+ * status: READ, READING while another attempt is under way, or DRAFTED/DISCARDED when already
+ * past reading; a failed reading answers its code.
  */
 export async function runIntakeRead(raw: unknown, meta: ActionMeta): Promise<Result<{ intakeId: string; status: RtIntakeStatus }>> {
   const parsed = idInput.safeParse(raw);
@@ -418,25 +531,38 @@ export async function runIntakeRead(raw: unknown, meta: ActionMeta): Promise<Res
   const s = started.value;
   if (s.state === "FAILED") return failure(s.code);
   if (s.state === "DONE") return { ok: true, value: { intakeId, status: s.status } };
+  if (s.state === "BUSY") return { ok: true, value: { intakeId, status: "READING" } };
+  const { attemptId } = s;
 
-  const loaded = await loadPages({ intakeId }, meta);
+  const fail = async (code: (typeof FAIL_CODES)[number]): Promise<Result<{ intakeId: string; status: RtIntakeStatus }>> => {
+    const failed = await failRead({ intakeId, attemptId, code }, stepMeta(meta, "fail"));
+    return failed.ok ? doneOrFailed(intakeId, failed.value) : failed;
+  };
+
+  // A refusal here (switch off, permission lost) leaves the attempt to its lease and the sweep.
+  const loaded = await loadPages({ intakeId, attemptId }, meta);
   if (!loaded.ok) return loaded;
-  if (loaded.value.status !== "READING") {
-    return doneOrFailed(intakeId, { status: loaded.value.status, code: failureOf(loaded.value.failureCode) });
-  }
+  const l = loaded.value;
+  if (l.kind === "stale") return doneOrFailed(intakeId, { status: l.status, code: failureOf(l.failureCode) });
+  if (l.kind === "consent") return fail("AI_CONSENT_REQUIRED");
+  if (l.kind === "nopages") return fail("INTAKE_NOT_READABLE");
 
   let extracted: ExtractedReceipt;
   try {
-    extracted = await getIntakeProvider().readReceipt(loaded.value.pages, { signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
+    extracted = await getIntakeProvider().readReceipt(l.pages, { signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
   } catch (err) {
-    if (!(err instanceof AiUnavailableError) && !(err instanceof AiBadOutputError)) console.error("[intake.read] provider failed unexpectedly", err);
-    const code = err instanceof AiBadOutputError ? "AI_BAD_OUTPUT" : "AI_UNAVAILABLE";
-    const failed = await failRead({ intakeId, code }, stepMeta(meta, "fail"));
-    return failed.ok ? doneOrFailed(intakeId, failed.value) : failed;
+    if (!(err instanceof AiUnavailableError) && !(err instanceof AiBadOutputError)) logUnexpected("intake.read.provider", err);
+    return fail(err instanceof AiBadOutputError ? "AI_BAD_OUTPUT" : "AI_UNAVAILABLE");
   }
 
-  const stored = await storeRead({ intakeId, extracted }, stepMeta(meta, "store"));
-  return stored.ok ? doneOrFailed(intakeId, stored.value) : stored;
+  try {
+    const stored = await storeRead({ intakeId, attemptId, extracted }, stepMeta(meta, "store"));
+    return stored.ok ? doneOrFailed(intakeId, stored.value) : stored;
+  } catch (err) {
+    // Storing broke (our side): fail the attempt with its refund rather than leave it READING.
+    logUnexpected("intake.read.store", err);
+    return fail("AI_UNAVAILABLE");
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -449,6 +575,8 @@ export type IntakeView = {
   createdById: string;
   failureCode: string | null;
   version: number;
+  /** When the current read attempt started (READING), for polling. */
+  readingStartedAt: Date | null;
   /** Pages still stored (0 once the retention policy removed them). */
   pageCount: number;
   /** An earlier intake of the same images (90 days, not failed). */
@@ -458,8 +586,10 @@ export type IntakeView = {
   result: IntakeResult | null;
 };
 
-/** One intake with its reading (prices included: cost.view is required). */
-export const getIntake = defineAction({
+const isStale = (r: { status: RtIntakeStatus; readingStartedAt: Date | null }, now: Date) => r.status === "READING" && leaseExpired(r.readingStartedAt, now);
+const sweepMeta = (meta: ActionMeta): ActionMeta => ({ ...meta, idempotencyKey: `intake-sweep:${randomUUID()}` });
+
+const readIntake = defineAction({
   name: "intake.get",
   permission: "cost.view",
   input: idInput,
@@ -486,6 +616,7 @@ export const getIntake = defineAction({
       createdById: row.createdById,
       failureCode: row.failureCode,
       version: row.version,
+      readingStartedAt: row.readingStartedAt,
       pageCount,
       duplicateOf: earlier?.id ?? null,
       stockDocumentId: state.stockDocumentId,
@@ -494,10 +625,28 @@ export const getIntake = defineAction({
   },
 });
 
-export type IntakeListRow = { id: string; status: RtIntakeStatus; createdAt: Date; failureCode: string | null; supplier: string | null; lineCount: number };
+/**
+ * One intake with its reading (prices included: cost.view is required). A read attempt whose lease
+ * expired is first failed and refunded (a separate write after the read), then read again.
+ */
+export async function getIntake(raw: unknown, meta: ActionMeta): Promise<Result<IntakeView>> {
+  const first = await readIntake(raw, meta);
+  if (!first.ok || !isStale(first.value, new Date())) return first;
+  const swept = await sweepStaleReads({ intakeIds: [first.value.id] }, sweepMeta(meta));
+  return swept.ok ? readIntake(raw, meta) : first;
+}
 
-/** The caller's visible intakes, newest first (no prices). */
-export const listIntakes = defineAction({
+export type IntakeListRow = {
+  id: string;
+  status: RtIntakeStatus;
+  createdAt: Date;
+  readingStartedAt: Date | null;
+  failureCode: string | null;
+  supplier: string | null;
+  lineCount: number;
+};
+
+const readIntakeList = defineAction({
   name: "intake.list",
   permission: "cost.view",
   input: z.object({ cursor: z.string().min(1).max(64).optional(), limit: z.number().int().min(1).max(LIST_LIMIT).default(20) }).strict(),
@@ -514,7 +663,7 @@ export const listIntakes = defineAction({
       where: { AND: where },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: input.limit + 1,
-      select: { id: true, status: true, createdAt: true, failureCode: true, result: true },
+      select: { id: true, status: true, createdAt: true, readingStartedAt: true, failureCode: true, result: true },
     });
     const page = found.slice(0, input.limit);
     return {
@@ -524,6 +673,7 @@ export const listIntakes = defineAction({
           id: r.id,
           status: r.status,
           createdAt: r.createdAt,
+          readingStartedAt: r.readingStartedAt,
           failureCode: r.failureCode,
           supplier: result?.supplier ?? null,
           lineCount: result?.lines.length ?? 0,
@@ -533,6 +683,17 @@ export const listIntakes = defineAction({
     };
   },
 });
+
+/** The caller's visible intakes, newest first (no prices); stale read attempts on the page are swept first, as in getIntake. */
+export async function listIntakes(raw: unknown, meta: ActionMeta): Promise<Result<{ rows: IntakeListRow[]; nextCursor: string | null }>> {
+  const first = await readIntakeList(raw, meta);
+  if (!first.ok) return first;
+  const now = new Date();
+  const staleIds = first.value.rows.filter((r) => isStale(r, now)).map((r) => r.id);
+  if (staleIds.length === 0) return first;
+  const swept = await sweepStaleReads({ intakeIds: staleIds }, sweepMeta(meta));
+  return swept.ok ? readIntakeList(raw, meta) : first;
+}
 
 /** The bytes of one stored page (1-based position); NOT_FOUND once retention removed it. */
 export const getIntakeImage = defineAction({
@@ -703,18 +864,25 @@ export const createIntakeItems = defineAction({
     const result = resultOf(row);
     const targets = input.lineNos.map((n) => {
       const line = result.lines.find((l) => l.lineNo === n);
-      if (!line) throw new NotFoundError();
+      if (!line) throw new RuleError("NOT_FOUND", { lineNo: String(n) });
       if (line.discarded || line.variantId) throw new RuleError("INVALID_INPUT", { lineNo: String(n) });
       return line;
     });
     const assigned = new Map<number, { variantId: string; unitId: string }>();
     for (const line of [...targets].sort((x, y) => x.lineNo - y.lineNo)) {
       const unitText = line.unitText?.trim();
-      const created = await createMinimalProductInTx(tx, actor.businessId, {
-        nameAr: line.description.trim(),
-        baseUnitName: unitText && normalizeSearchText(unitText) !== "" ? unitText : DEFAULT_BASE_UNIT,
-        quantityScale: quantityScaleOf(line.quantity),
-      });
+      let created;
+      try {
+        created = await createMinimalProductInTx(tx, actor.businessId, {
+          nameAr: line.description.trim(),
+          baseUnitName: unitText && normalizeSearchText(unitText) !== "" ? unitText : DEFAULT_BASE_UNIT,
+          quantityScale: quantityScaleOf(line.quantity),
+        });
+      } catch (err) {
+        // Every refusal names the line it came from.
+        if (err instanceof RuleError) throw new RuleError(err.code, { ...err.details, lineNo: String(line.lineNo) });
+        throw err;
+      }
       assigned.set(line.lineNo, { variantId: created.variantId, unitId: created.baseUnitId });
     }
     const lines = result.lines.map((l): IntakeLine => {
@@ -726,6 +894,28 @@ export const createIntakeItems = defineAction({
     return { intakeId: row.id, version: row.version + 1, created: assigned.size };
   },
   audit: (input, value) => ({ entity: "RtIntake", entityId: value.intakeId, changes: { lineNos: input.lineNos, created: value.created, version: value.version } }),
+});
+
+/**
+ * The reviewer accepts a receipt total that does not match its lines (ruling R1b-F). The acceptance
+ * is tied to the totals it saw: a later change to the currency or the printed amounts voids it.
+ */
+export const acknowledgeIntakeTotal = defineAction({
+  name: "intake.total.ack",
+  permission: "stock.receive",
+  input: z.object({ intakeId: id, expectedVersion: version }).strict(),
+  writes: true,
+  precondition: writePrecondition,
+  async run({ actor, tx, input, lockBusiness }): Promise<{ intakeId: string; version: number }> {
+    const { row, state } = await openForReview(tx, actor, input.intakeId, input.expectedVersion, lockBusiness);
+    assertInReview(state);
+    const current = await reevaluate(tx, resultOf(row));
+    if (current.receiptCurrency === null) throw new RuleError("INTAKE_UNRESOLVED", { reason: "CURRENCY" });
+    const updated = await reevaluate(tx, { ...current, totalAck: totalsFingerprint(current) });
+    await saveResult(tx, row, updated, state.stockDocumentId === null && row.status === "DRAFTED" ? { status: "READ", stockDocumentId: null } : {});
+    return { intakeId: row.id, version: row.version + 1 };
+  },
+  audit: (_input, value) => ({ entity: "RtIntake", entityId: value.intakeId, changes: { totalAcknowledged: true, version: value.version } }),
 });
 
 function supplierRefOf(r: IntakeResult): string | null {
@@ -753,6 +943,7 @@ export const createDraftFromIntake = defineAction({
     if (result.receiptCurrency === null) throw new RuleError("INTAKE_UNRESOLVED", { reason: "CURRENCY" });
     const open = result.lines.find((l) => !l.discarded && !l.resolved);
     if (open) throw new RuleError("INTAKE_UNRESOLVED", { lineNo: String(open.lineNo) });
+    if (!result.totalCheck.ok && !result.totalAcknowledged) throw new RuleError("INTAKE_UNRESOLVED", { reason: "TOTAL" });
     const kept = result.lines.filter((l) => !l.discarded);
     if (kept.length === 0) throw new RuleError("INVALID_INPUT", { reason: "EMPTY" });
     const currency = result.receiptCurrency;

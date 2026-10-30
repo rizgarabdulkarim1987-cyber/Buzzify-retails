@@ -44,3 +44,18 @@ export async function planAiMonthly(businessId: string): Promise<number> {
   });
   return Math.max(0, sub?.plan.aiMonthly ?? 0);
 }
+
+/**
+ * Stored-file allowance (MB) of the plan of the business's live subscription (TRIAL, ACTIVE or GRACE,
+ * newest first); 0 when there is none. Counted against the AI intake pages (R1b). Inside an action it
+ * reads on the action's own transaction (see platform-tx.ts).
+ */
+export async function planStorageMb(businessId: string): Promise<number> {
+  const client = currentPlatformTx(businessId) ?? db;
+  const sub = await client.rtSubscription.findFirst({
+    where: { businessId, status: { in: ["TRIAL", "ACTIVE", "GRACE"] } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { plan: { select: { storageMb: true } } },
+  });
+  return Math.max(0, sub?.plan.storageMb ?? 0);
+}

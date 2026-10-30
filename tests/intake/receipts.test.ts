@@ -10,6 +10,7 @@ import { FAKE_DEFAULT_BARCODE, FAKE_DEFAULT_RECEIPT, type IntakeFakeRequest } fr
 import {
   createDraftFromIntake,
   createIntake,
+  acknowledgeIntakeTotal,
   createIntakeItems,
   getIntake,
   getIntakeImage,
@@ -285,13 +286,33 @@ describe("doubtful lines", () => {
     expect(await setIntakeCurrency({ intakeId, currency: "IQD", expectedVersion: v.version - 1 }, s.as())).toMatchObject({ ok: false, code: "VERSION_CONFLICT" });
   });
 
-  it("a receipt total that does not match the lines is flagged on the receipt", async () => {
+  it("a receipt total that does not match blocks the draft until the reviewer acknowledges it; a later change voids it", async () => {
     const s = await shop();
     await catalog(s);
-    const { intakeId } = await readReceipt(s, { ...FAKE_DEFAULT_RECEIPT, total: "9000" });
-    const v = await view(s, intakeId);
+    const { intakeId } = await readReceipt(s, receipt([tea], { total: "9000" }));
+    let v = await view(s, intakeId);
     expect(v.result!.totalCheck).toEqual({ ok: false });
-    expect(v.result!.lines[0]!.status).toBe("MATCHED");
+    expect(v.result!.totalAcknowledged).toBe(false);
+    expect(v.result!.lines[0]).toMatchObject({ status: "MATCHED", resolved: true });
+    expect(await createDraftFromIntake({ intakeId, expectedVersion: v.version }, s.as())).toMatchObject({
+      ok: false,
+      code: "INTAKE_UNRESOLVED",
+      details: { reason: "TOTAL" },
+    });
+
+    ok(await acknowledgeIntakeTotal({ intakeId, expectedVersion: v.version }, s.as()));
+    v = await view(s, intakeId);
+    expect(v.result!.totalAcknowledged).toBe(true);
+    // Changing the currency changes what the total check reads: the acknowledgement no longer holds.
+    ok(await setIntakeCurrency({ intakeId, currency: "USD", expectedVersion: v.version }, s.as()));
+    v = await view(s, intakeId);
+    expect(v.result!.totalAcknowledged).toBe(false);
+    ok(await setIntakeCurrency({ intakeId, currency: "IQD", expectedVersion: v.version }, s.as()));
+    v = await view(s, intakeId);
+    // Back to the very totals that were acknowledged.
+    expect(v.result!.totalAcknowledged).toBe(true);
+    const { documentId } = ok(await createDraftFromIntake({ intakeId, expectedVersion: v.version }, s.as()));
+    expect(await db.rtStockLine.count({ where: { documentId } })).toBe(1);
   });
 
   it("a currency the business does not use needs the reviewer's choice before the draft", async () => {
@@ -436,7 +457,11 @@ describe("createIntakeItems", () => {
     const v = await view(s, intakeId);
     const before = await db.rtProduct.count();
     // Line 1 is already matched: the whole call is refused.
-    expect(await createIntakeItems({ intakeId, lineNos: [2, 1, 3], expectedVersion: v.version }, s.as())).toMatchObject({ ok: false });
+    expect(await createIntakeItems({ intakeId, lineNos: [2, 1, 3], expectedVersion: v.version }, s.as())).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+      details: { lineNo: "1" },
+    });
     expect(await db.rtProduct.count()).toBe(before);
     expect((await view(s, intakeId)).version).toBe(v.version);
   });
@@ -445,8 +470,17 @@ describe("createIntakeItems", () => {
     const s = await shop();
     const { intakeId } = await readReceipt(s, receipt([unknowns[0]!, { description: "ـــ", quantity: "1", unitPrice: "1", confidence: 0.9 }]));
     const v = await view(s, intakeId);
-    expect(await createIntakeItems({ intakeId, lineNos: [1, 2], expectedVersion: v.version }, s.as())).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(await createIntakeItems({ intakeId, lineNos: [1, 2], expectedVersion: v.version }, s.as())).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+      details: { lineNo: "2" },
+    });
     expect(await db.rtProduct.count()).toBe(0);
+    expect(await createIntakeItems({ intakeId, lineNos: [9], expectedVersion: v.version }, s.as())).toMatchObject({
+      ok: false,
+      code: "NOT_FOUND",
+      details: { lineNo: "9" },
+    });
   });
 });
 
@@ -660,19 +694,178 @@ describe("the draft link", () => {
 });
 
 describe("retention", () => {
-  it("a new upload deletes the pages of this business's intakes idle for over 30 days, keeping hash and result", async () => {
+  it("a new upload deletes pages by state: finished after 30 idle days, open after 90, READING and live drafts never", async () => {
     const s = await shop();
     const other = await shop();
     await catalog(s);
-    const { intakeId: old } = await readReceipt(s, FAKE_DEFAULT_RECEIPT);
-    const { intakeId: foreign } = await readReceipt(other, FAKE_DEFAULT_RECEIPT);
-    const longAgo = new Date(Date.now() - 31 * DAY);
-    await db.$executeRaw`UPDATE "RtIntake" SET "updatedAt" = ${longAgo} WHERE id IN (${old}, ${foreign})`;
+    const read31 = (await readReceipt(s, FAKE_DEFAULT_RECEIPT)).intakeId;
+    const read91 = (await readReceipt(s, FAKE_DEFAULT_RECEIPT)).intakeId;
+    const failed31 = (await readReceipt(s, { lines: [] })).intakeId;
+    const reading = ok(await createIntake({ files: [page()] }, s.as())).intakeId;
+    await db.rtIntake.update({ where: { id: reading }, data: { status: "READING", readingStartedAt: new Date(), readingAttemptId: "a" } });
+    const drafted = (await readReceipt(s, receipt([tea]))).intakeId;
+    ok(await createDraftFromIntake({ intakeId: drafted, expectedVersion: (await view(s, drafted)).version }, s.as()));
+    const foreign = (await readReceipt(other, { lines: [] })).intakeId;
+    const ago = (days: number) => new Date(Date.now() - days * DAY);
+    const setIdle = async (ids: string[], days: number) => {
+      for (const id of ids) await db.$executeRaw`UPDATE "RtIntake" SET "updatedAt" = ${ago(days)} WHERE id = ${id}`;
+    };
+    await setIdle([read31, failed31, drafted, foreign], 31);
+    await setIdle([read91], 91);
+    await setIdle([reading], 200);
+
     ok(await createIntake({ files: [page()] }, s.as()));
-    expect(await db.rtIntakeFile.count({ where: { intakeId: old } })).toBe(0);
-    expect(await db.rtIntakeFile.count({ where: { intakeId: foreign } })).toBe(1);
-    const kept = await db.rtIntake.findUniqueOrThrow({ where: { id: old } });
+    const pages = async (id: string) => db.rtIntakeFile.count({ where: { intakeId: id } });
+    expect(await pages(read31)).toBe(1); // still open for review
+    expect(await pages(read91)).toBe(0);
+    expect(await pages(failed31)).toBe(0);
+    expect(await pages(reading)).toBe(1);
+    expect(await pages(drafted)).toBe(1); // its draft is still a draft
+    expect(await pages(foreign)).toBe(1); // another business
+    const kept = await db.rtIntake.findUniqueOrThrow({ where: { id: read91 } });
     expect(kept.filesHash).toMatch(/^[0-9a-f]{64}$/);
     expect(kept.result).not.toBeNull();
+
+    // Once the draft is posted the intake is finished and its pages go too.
+    const doc = await db.rtStockDocument.findFirstOrThrow({ where: { businessId: s.businessId } });
+    ok(await postStockDocument({ documentId: doc.id, expectedVersion: doc.version }, s.as()));
+    await setIdle([drafted], 31);
+    ok(await createIntake({ files: [page()] }, s.as()));
+    expect(await pages(drafted)).toBe(0);
+  });
+});
+
+describe("storage", () => {
+  it("pages beyond the plan's storageMb are refused before anything is reserved", async () => {
+    const s = await shop();
+    const plan = await db.rtPlan.findFirstOrThrow({ where: { code: `plan-${s.businessId}` } });
+    await db.rtPlan.update({ where: { id: plan.id }, data: { storageMb: 1 } });
+    ok(await createIntake({ files: [page(jpeg(700 * 1024))] }, s.as()));
+    expect(await s.usage()).toBe(2);
+    expect(await createIntake({ files: [page(jpeg(400 * 1024))] }, s.as())).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+      details: { reason: "STORAGE" },
+    });
+    expect(await s.usage()).toBe(2);
+    expect(await db.rtIntake.count()).toBe(1);
+    expect((await db.rtIntakeFile.findFirstOrThrow()).size).toBe(700 * 1024);
+    ok(await createIntake({ files: [page(jpeg(300 * 1024))] }, s.as()));
+  });
+});
+
+describe("read attempts", () => {
+  /** A fake that counts its calls and can run something (switch off, READ_ONLY) while "reading". */
+  function counting(during?: () => Promise<unknown>) {
+    const box = { calls: 0 };
+    globalThis.__intakeFake = async () => {
+      box.calls += 1;
+      await new Promise((r) => setTimeout(r, 150));
+      await during?.();
+      return FAKE_DEFAULT_RECEIPT;
+    };
+    return box;
+  }
+
+  it("two parallel reads of one intake call the provider once and reserve once", async () => {
+    const s = await shop();
+    await catalog(s);
+    const box = counting();
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    const [a, b] = await Promise.all([runIntakeRead({ intakeId }, s.as()), runIntakeRead({ intakeId }, s.as())]);
+    expect(box.calls).toBe(1);
+    expect([a, b].map((r) => (r.ok ? r.value.status : r.code)).sort()).toEqual(["READ", "READING"]);
+    expect(await s.usage()).toBe(2);
+    expect((await view(s, intakeId)).status).toBe("READ");
+  });
+
+  it("the result is stored even when the switch goes off during the call", async () => {
+    const s = await shop();
+    await catalog(s);
+    counting(() => s.setSwitch(false));
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: true, value: { status: "READ" } });
+    expect((await db.rtIntake.findUniqueOrThrow({ where: { id: intakeId } })).status).toBe("READ");
+  });
+
+  it("the result is stored even when the business turns READ_ONLY during the call", async () => {
+    const s = await shop();
+    await catalog(s);
+    counting(() => db.rtBusiness.update({ where: { id: s.businessId }, data: { status: "SUSPENDED" } }));
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: true, value: { status: "READ" } });
+  });
+
+  it("a failure is recorded and refunded even when the switch goes off during the call", async () => {
+    const s = await shop();
+    globalThis.__intakeFake = async () => {
+      await s.setSwitch(false);
+      return new AiUnavailableError("timeout");
+    };
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: false, code: "AI_UNAVAILABLE" });
+    expect(await s.usage()).toBe(0);
+    expect(await db.rtIntake.findUniqueOrThrow({ where: { id: intakeId } })).toMatchObject({ status: "FAILED", failureCode: "AI_UNAVAILABLE" });
+  });
+
+  it("a failure is recorded and refunded even when the business turns READ_ONLY during the call", async () => {
+    const s = await shop();
+    globalThis.__intakeFake = async () => {
+      await db.rtBusiness.update({ where: { id: s.businessId }, data: { status: "SUSPENDED" } });
+      return new AiUnavailableError("network");
+    };
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: false, code: "AI_UNAVAILABLE" });
+    expect(await s.usage()).toBe(0);
+  });
+
+  it("a READING intake past its lease is swept to FAILED and refunded once, by getIntake or listIntakes", async () => {
+    const s = await shop();
+    const long = new Date(Date.now() - 10 * 60_000);
+    const one = ok(await createIntake({ files: [page()] }, s.as())).intakeId;
+    const two = ok(await createIntake({ files: [page()] }, s.as())).intakeId;
+    const fresh = ok(await createIntake({ files: [page()] }, s.as())).intakeId;
+    await db.rtIntake.updateMany({ where: { id: { in: [one, two] } }, data: { status: "READING", readingStartedAt: long, readingAttemptId: "lost" } });
+    await db.rtIntake.update({ where: { id: fresh }, data: { status: "READING", readingStartedAt: new Date(), readingAttemptId: "live" } });
+    expect(await s.usage()).toBe(6);
+
+    expect(await view(s, one)).toMatchObject({ status: "FAILED", failureCode: "AI_UNAVAILABLE" });
+    expect(await s.usage()).toBe(4);
+    await view(s, one);
+    expect(await s.usage()).toBe(4);
+
+    const rows = ok(await listIntakes({}, s.as())).rows;
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toMatchObject({ [two]: "FAILED", [fresh]: "READING" });
+    expect(await s.usage()).toBe(2);
+    expect((await db.rtIntake.findUniqueOrThrow({ where: { id: two } })).refundedAt).not.toBeNull();
+    // Running it again answers the failure and refunds nothing more.
+    expect(await runIntakeRead({ intakeId: two }, s.as())).toMatchObject({ ok: false, code: "AI_UNAVAILABLE" });
+    expect(await s.usage()).toBe(2);
+  });
+
+  it("an expired attempt may be replaced by a new one on the same reservation", async () => {
+    const s = await shop();
+    await catalog(s);
+    const box = counting();
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    await db.rtIntake.update({
+      where: { id: intakeId },
+      data: { status: "READING", readingStartedAt: new Date(Date.now() - 10 * 60_000), readingAttemptId: "lost" },
+    });
+    expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: true, value: { status: "READ" } });
+    expect(box.calls).toBe(1);
+    expect(await s.usage()).toBe(2);
+  });
+
+  it("an intake whose pages are gone fails without calling the provider and is refunded", async () => {
+    const s = await shop();
+    const box = counting();
+    const { intakeId } = ok(await createIntake({ files: [page()] }, s.as()));
+    await db.rtIntakeFile.deleteMany({ where: { intakeId } });
+    expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: false, code: "INTAKE_NOT_READABLE" });
+    expect(box.calls).toBe(0);
+    expect(await s.usage()).toBe(0);
+    expect(await runIntakeRead({ intakeId }, s.as())).toMatchObject({ ok: false, code: "INTAKE_NOT_READABLE" });
+    expect(await s.usage()).toBe(0);
   });
 });
