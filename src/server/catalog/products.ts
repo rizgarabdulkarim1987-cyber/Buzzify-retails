@@ -178,11 +178,33 @@ const updateInput = z
 // ---------------------------------------------------------------------------------------------
 // Helpers
 
-/** R2 makes this true once the unit has stock movements; until then a factor may still change. */
+/**
+ * True once any variant in `variantIds` has a POSTED stock movement (R-D: drafts do not lock). A batch
+ * row counts too: batches are created only by posting, and RtBatch is business-level, so it shows
+ * stock history even to a branch-limited actor whose scoped client cannot see other branches'
+ * movements (movements are branch-scoped).
+ */
+async function variantsHaveHistory(tx: Tx, variantIds: string[]): Promise<boolean> {
+  if (variantIds.length === 0) return false;
+  const movement = await tx.rtStockMovement.findFirst({ where: { variantId: { in: variantIds } }, select: { id: true } });
+  if (movement) return true;
+  const batch = await tx.rtBatch.findFirst({ where: { variantId: { in: variantIds } }, select: { id: true } });
+  return batch !== null;
+}
+
+/** Waits for any posting in flight on these variants (posting holds `stock:<variantId>`), in ascending order. */
+async function lockStockOf(lock: (name: string) => Promise<void>, variantIds: string[]): Promise<void> {
+  for (const v of [...new Set(variantIds)].sort()) await lock(`stock:${v}`);
+}
+
+/**
+ * True once the unit's variant has a posted stock movement: from then on its factor (and the unit
+ * layout) is history. Callers that need it exact against a concurrent posting take lockStockOf first.
+ */
 export async function unitIsLocked(tx: Tx, unitId: string): Promise<boolean> {
-  void tx;
-  void unitId;
-  return false;
+  const unit = await tx.rtUnit.findFirst({ where: { id: unitId }, select: { variantId: true } });
+  if (!unit) return false;
+  return variantsHaveHistory(tx, [unit.variantId]);
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -614,6 +636,13 @@ export const updateProduct = defineAction({
     const data = Object.fromEntries(Object.entries(changes).filter(([, v]) => v !== undefined)) as Partial<typeof current>;
     const next = { ...current, ...data };
     checkTracking(next);
+    if (next.trackingMode !== current.trackingMode || next.tracksExpiry !== current.tracksExpiry) {
+      // After the first posted movement of any variant, how the product is tracked is history.
+      const variants = await tx.rtVariant.findMany({ where: { productId }, select: { id: true } });
+      const ids = variants.map((v) => v.id);
+      await lockStockOf(lockBusiness, ids);
+      if (await variantsHaveHistory(tx, ids)) throw new RuleError("TRACKING_RULE");
+    }
 
     const newCategory = data.categoryId && data.categoryId !== current.categoryId ? data.categoryId : null;
     const newBrand = data.brandId && data.brandId !== current.brandId ? data.brandId : null;
@@ -984,7 +1013,8 @@ export const addUnit = defineAction({
 
 /**
  * Renames a unit or changes its decimals or factor. The base unit keeps factor 1; any other
- * factor can change only while unitIsLocked says no (always in R1, R2 adds stock movements).
+ * factor can change only while unitIsLocked says no (no posted stock movement of its variant), and
+ * the decimals can then only grow.
  */
 export const updateUnit = defineAction({
   name: "catalog.unit.update",
@@ -1004,10 +1034,16 @@ export const updateUnit = defineAction({
     if (input.factor !== undefined && input.factor !== unit.factor) {
       if (unit.isBase) throw new RuleError("UNIT_RULE");
       checkFactor(input.factor);
+      await lockStockOf(lockBusiness, [unit.variantId]);
       if (await unitIsLocked(tx, unit.id)) throw new RuleError("UNIT_RULE");
     }
     if (input.quantityScale !== undefined && unit.isBase && unit.variant.product.soldByWeight && input.quantityScale < 1) {
       throw new RuleError("UNIT_RULE");
+    }
+    if (input.quantityScale !== undefined && input.quantityScale < unit.quantityScale) {
+      // Fewer decimals could strand a fractional quantity already in the ledger.
+      await lockStockOf(lockBusiness, [unit.variantId]);
+      if (await unitIsLocked(tx, unit.id)) throw new RuleError("UNIT_RULE");
     }
     if (input.name !== undefined) {
       const others = await tx.rtUnit.findMany({

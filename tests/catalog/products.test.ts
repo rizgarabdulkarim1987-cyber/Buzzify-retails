@@ -12,10 +12,14 @@ import {
   unarchiveProduct,
   getProduct,
   updateProduct,
+  unitIsLocked,
   updateUnit,
 } from "@/server/catalog/products";
 import { archiveBrand, archiveCategory, createBrand, createCategory } from "@/server/catalog/taxonomy";
+import { postStockDocument, saveStockDraft } from "@/server/stock/documents";
 import { normalizeSearchText } from "@/server/domain/catalog";
+import { z } from "zod";
+import { defineAction } from "@/server/framework/action";
 import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createPlan } from "../helpers/fixtures";
 
@@ -817,5 +821,91 @@ describe("fix round 1", () => {
     // Archived product: refused too.
     expect(await archiveProduct({ id: shirt.productId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: true });
     expect(await archiveVariant({ variantId: shirt.variantId, expectedVersion: 1 }, a.as("stock"))).toMatchObject({ ok: false, code: "NOT_FOUND" });
+  });
+});
+
+const lockedAction = defineAction({
+  name: "test.unit.locked",
+  permission: null,
+  input: z.object({ unitId: z.string() }),
+  writes: false,
+  run: ({ tx, input }) => unitIsLocked(tx, input.unitId),
+});
+
+async function locked(w: Shop, unitId: string): Promise<boolean> {
+  const r = await lockedAction({ unitId }, w.as("owner"));
+  if (!r.ok) throw new Error(r.code);
+  return r.value;
+}
+
+describe("locks after stock movements", () => {
+  /** Posts `quantity` pieces of the variant as an opening or a receipt; a draft is saved but not posted when `postIt` is false. */
+  async function stockIn(w: Shop, p: { variantId: string; baseUnitId: string }, opts: { postIt: boolean; batch?: boolean; kind?: "OPENING" | "RECEIPT" }) {
+    const branch = await db.rtBranch.findFirstOrThrow({ where: { businessId: w.business.id } });
+    if ((await db.rtLocation.count({ where: { businessId: w.business.id } })) === 0) {
+      await db.rtLocation.create({ data: { businessId: w.business.id, branchId: branch.id, name: "المخزن الرئيسي" } });
+    }
+    const expiryDate = new Date(Date.now() + 90 * DAY).toISOString().slice(0, 10);
+    const d = await saveStockDraft(
+      {
+        kind: opts.kind ?? "RECEIPT",
+        lines: [
+          {
+            variantId: p.variantId,
+            unitId: p.baseUnitId,
+            quantity: "5",
+            cost: { amount: "100", currency: "IQD" },
+            ...(opts.batch ? { batchCode: "B1", expiryDate } : {}),
+          },
+        ],
+      },
+      w.as("owner"),
+    );
+    if (!d.ok) throw new Error(`draft refused: ${d.code}`);
+    if (!opts.postIt) return;
+    const r = await postStockDocument({ documentId: d.value.documentId, expectedVersion: d.value.version }, w.as("owner"));
+    if (!r.ok) throw new Error(`post refused: ${r.code}`);
+  }
+
+  it("a unit with movements cannot change factor, and tracking and expiry flags are locked", async () => {
+    const { a } = await world();
+    const p = await product(a, { nameAr: "سكر", extraUnits: [{ name: "كيس", factor: 10 }] });
+    const bag = await db.rtUnit.findFirstOrThrow({ where: { variantId: p.variantId, isBase: false } });
+
+    // A draft is not a movement: nothing is locked yet.
+    await stockIn(a, p, { postIt: false });
+    expect(await locked(a, bag.id)).toBe(false);
+    expect(await updateUnit({ id: bag.id, expectedVersion: 1, factor: 12 }, a.as("stock"))).toMatchObject({ ok: true, value: { factor: 12, version: 2 } });
+    expect(await updateProduct({ id: p.productId, expectedVersion: 1, trackingMode: "BATCH", tracksExpiry: true, expiryAlertDays: 7 }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await updateProduct({ id: p.productId, expectedVersion: 2, trackingMode: "NONE", tracksExpiry: false, expiryAlertDays: null }, a.as("stock"))).toMatchObject({ ok: true });
+
+    // After the first posted movement the factor and both flags are fixed.
+    await stockIn(a, p, { postIt: true });
+    expect(await locked(a, bag.id)).toBe(true);
+    expect(await locked(a, p.baseUnitId)).toBe(true);
+    expect(await updateUnit({ id: bag.id, expectedVersion: 2, factor: 24 }, a.as("stock"))).toMatchObject({ ok: false, code: "UNIT_RULE" });
+    expect(await updateUnit({ id: p.baseUnitId, expectedVersion: 1, factor: 2 }, a.as("stock"))).toMatchObject({ ok: false, code: "UNIT_RULE" });
+    expect(await db.rtUnit.findUniqueOrThrow({ where: { id: bag.id } })).toMatchObject({ factor: 12 });
+    expect(await updateProduct({ id: p.productId, expectedVersion: 3, trackingMode: "BATCH" }, a.as("stock"))).toMatchObject({ ok: false, code: "TRACKING_RULE" });
+    expect(await updateProduct({ id: p.productId, expectedVersion: 3, trackingMode: "BATCH", tracksExpiry: true }, a.as("stock"))).toMatchObject({ ok: false, code: "TRACKING_RULE" });
+    // Unchanged flags, a rename, a name for the unit, a new carton and archiving a non-base unit stay open.
+    expect(await updateProduct({ id: p.productId, expectedVersion: 3, nameAr: "سكر ناعم", trackingMode: "NONE", tracksExpiry: false }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await updateUnit({ id: bag.id, expectedVersion: 2, name: "كيس كبير", factor: 12 }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await addUnit({ variantId: p.variantId, name: "كرتون", factor: 40 }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await archiveUnit({ id: bag.id, expectedVersion: 3 }, a.as("stock"))).toMatchObject({ ok: true });
+
+    // Another product of the business, with no movements, is still free.
+    const other = await product(a, { nameAr: "رز", extraUnits: [{ name: "كيس", factor: 10 }] });
+    const otherBag = await db.rtUnit.findFirstOrThrow({ where: { variantId: other.variantId, isBase: false } });
+    expect(await updateUnit({ id: otherBag.id, expectedVersion: 1, factor: 20 }, a.as("stock"))).toMatchObject({ ok: true });
+    expect(await updateProduct({ id: other.productId, expectedVersion: 1, trackingMode: "BATCH", tracksExpiry: true }, a.as("stock"))).toMatchObject({ ok: true });
+
+    // A batch product with stock keeps BATCH and its expiry flag, and cannot lose decimals.
+    const milk = await product(a, { nameAr: "حليب", trackingMode: "BATCH", tracksExpiry: true, baseUnit: { name: "لتر", quantityScale: 3 } });
+    await stockIn(a, milk, { postIt: true, batch: true });
+    expect(await updateProduct({ id: milk.productId, expectedVersion: 1, tracksExpiry: false }, a.as("stock"))).toMatchObject({ ok: false, code: "TRACKING_RULE" });
+    expect(await updateProduct({ id: milk.productId, expectedVersion: 1, trackingMode: "NONE", tracksExpiry: false }, a.as("stock"))).toMatchObject({ ok: false, code: "TRACKING_RULE" });
+    expect(await updateUnit({ id: milk.baseUnitId, expectedVersion: 1, quantityScale: 0 }, a.as("stock"))).toMatchObject({ ok: false, code: "UNIT_RULE" });
+    expect(await updateUnit({ id: milk.baseUnitId, expectedVersion: 1, quantityScale: 3 }, a.as("stock"))).toMatchObject({ ok: true });
   });
 });

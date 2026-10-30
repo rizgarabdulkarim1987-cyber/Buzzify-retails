@@ -165,7 +165,14 @@ export const searchCatalog = defineAction({
   permission: null,
   input: searchInput,
   writes: false,
-  async run({ tx, input }): Promise<{ items: CatalogHit[]; nextCursor: string | null }> {
+  run: ({ tx, input }) => searchInTx(tx, input),
+});
+
+export type SearchInput = z.infer<typeof searchInput>;
+
+/** The search itself, for readers (the stock list) that page through the same hits inside their own read. */
+export async function searchInTx(tx: Tx, input: SearchInput): Promise<{ items: CatalogHit[]; nextCursor: string | null }> {
+  {
     const cursor = input.cursor !== undefined ? decodeCursor(input.cursor) : null;
     const normalized = normalizeSearchText(input.query);
     const tokens = normalized === "" ? [] : normalized.split(" ").slice(0, MAX_TOKENS);
@@ -285,5 +292,5 @@ export const searchCatalog = defineAction({
       });
     }
     return { items, nextCursor };
-  },
-});
+  }
+}
