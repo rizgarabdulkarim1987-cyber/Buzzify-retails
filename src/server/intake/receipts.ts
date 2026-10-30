@@ -200,7 +200,8 @@ export function sniffPageType(b: Uint8Array): PageType | null {
   return null;
 }
 
-const DECLARED_ALIASES: Record<string, PageType> = { "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg" };
+/** Declared content types that name a sniffed type by another name (also used by the barcode image upload). */
+export const DECLARED_ALIASES: Readonly<Record<string, PageType>> ={ "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg" };
 
 const fileInput = z
   .object({ files: z.array(z.object({ contentType: z.string().max(100), bytes: z.instanceof(Uint8Array) }).strict()).min(1).max(INTAKE_MAX_IMAGES) })

@@ -131,6 +131,12 @@ describe("lookupBarcode", () => {
     expect(JSON.stringify(r)).not.toMatch(/price|cost|amount/i);
   });
 
+  it("a valid UPC-E (whose EAN-8 check fails) is UNKNOWN checked, not INVALID_CHECKSUM", async () => {
+    const s = await shop();
+    expect(await lookupBarcode({ code: "04252614" }, s.as())).toEqual({ ok: true, value: { status: "UNKNOWN", code: "04252614", checked: true } });
+    expect(await lookupBarcode({ code: "04252615" }, s.as())).toEqual({ ok: true, value: { status: "INVALID_CHECKSUM" } });
+  });
+
   it("an unknown valid code is UNKNOWN (checked), an unknown bad checksum is INVALID_CHECKSUM", async () => {
     const s = await shop();
     expect(await lookupBarcode({ code: FAKE_DEFAULT_BARCODE }, s.as())).toEqual({ ok: true, value: { status: "UNKNOWN", code: FAKE_DEFAULT_BARCODE, checked: true } });
@@ -258,6 +264,23 @@ describe("readBarcodeFromImage", () => {
     expect(JSON.stringify(r)).not.toContain(EAN13_BAD);
     expect(JSON.stringify(await db.rtIdempotency.findMany({ where: { scope: s.businessId } }))).not.toContain(EAN13_BAD);
     expect(await s.usage()).toBe(1);
+  });
+
+  it("model digits of a non-retail length (not 8/12/13) are NOT_READABLE, never a code, and not refunded", async () => {
+    const s = await shop();
+    await s.item("داخلي", { barcode: "12345" }); // even an owner of those digits is not suggested
+    for (const digits of ["12345", "1", "123456789", "12345678901234", "٠٠١٢٣"]) {
+      counting({ digits });
+      const r = await readBarcodeFromImage({ image: image() }, s.as());
+      expect(r).toEqual({ ok: true, value: { status: "NOT_READABLE" } });
+    }
+    expect(await s.usage()).toBe(5);
+  });
+
+  it("a UPC-E read by the model is accepted", async () => {
+    const s = await shop();
+    counting({ digits: "04252614" });
+    expect(await readBarcodeFromImage({ image: image() }, s.as())).toEqual({ ok: true, value: { status: "UNKNOWN", code: "04252614", checked: true } });
   });
 
   it("no digits read is NOT_READABLE and not refunded", async () => {

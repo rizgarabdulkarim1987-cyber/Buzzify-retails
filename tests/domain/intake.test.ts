@@ -55,6 +55,18 @@ describe("barcode checksum", () => {
     expect(barcodeCheck("036000291452")).toEqual({ ok: true, checked: true });
     expect(barcodeCheck("036000291453")).toEqual({ ok: false, checked: true });
   });
+  it("accepts an 8-digit UPC-E whose expanded UPC-A check digit is right, though its EAN-8 check fails", () => {
+    // Each expansion rule: last data digit 0-2, 3, 4; number systems 0 and 1.
+    for (const c of ["04252614", "01234531", "01234543", "14252611"]) {
+      expect(barcodeCheck(c)).toEqual({ ok: true, checked: true });
+    }
+    expect(barcodeCheck("٠٤٢٥٢٦١٤")).toEqual({ ok: true, checked: true });
+  });
+  it("still rejects an 8-digit code that is neither a valid EAN-8 nor a valid UPC-E", () => {
+    for (const c of ["04252615", "01234532", "01234544", "14252612", "24252611"]) {
+      expect(barcodeCheck(c)).toEqual({ ok: false, checked: true });
+    }
+  });
   it("normalizes Arabic-Indic digits first", () => {
     expect(barcodeCheck("٧٣٥١٣٥٣٧")).toEqual({ ok: true, checked: true });
   });

@@ -11,7 +11,7 @@ import { aiEnabledPrecondition } from "@/server/framework/features";
 import { assertConsent } from "./consent";
 import { AiBadOutputError, AiUnavailableError, getIntakeProvider } from "./provider";
 import { refundUnits, reserveUnits } from "./quota";
-import { sniffPageType } from "./receipts";
+import { DECLARED_ALIASES, sniffPageType } from "./receipts";
 
 type Tx = Prisma.TransactionClient;
 
@@ -36,7 +36,8 @@ type Tx = Prisma.TransactionClient;
  * equal to the declared one, checked before anything else (INVALID_INPUT). The bytes are never
  * stored: the idempotency payload is their sha256. The model's digits are data: they pass the digit
  * gate and normalisation on the server, a retail-length code with a wrong check digit is
- * INVALID_CHECKSUM and its digits are never returned or kept; no digits is NOT_READABLE. Both are
+ * INVALID_CHECKSUM and its digits are never returned or kept; no digits, or digits of a length
+ * without a checksum to verify (not 8/12/13), is NOT_READABLE. Both are
  * charged (the provider worked). A valid code answers what lookupBarcode answers for it.
  *
  * Steps (no table of its own; durable state is two idempotency rows, keys derived from the caller's
@@ -170,7 +171,6 @@ export const lookupBarcode = defineAction({
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 type ImageType = (typeof IMAGE_TYPES)[number];
-const DECLARED_ALIASES: Record<string, ImageType> = { "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg" };
 
 const imageInput = z.object({ image: z.object({ contentType: z.string().max(100), bytes: z.instanceof(Uint8Array) }).strict() }).strict();
 
@@ -250,14 +250,19 @@ function finishAction(outcome: Outcome | null) {
   });
 }
 
-/** The model's answer through the digit gate, normalisation and the retail checksum. */
+/**
+ * The model's answer through the digit gate, normalisation and the retail checksum. Only a code
+ * whose checksum was verified and is right is used: a wrong check digit is INVALID_CHECKSUM, digits
+ * of any other length (not 8/12/13, so nothing to verify) are NOT_READABLE.
+ */
 function outcomeOfDigits(digits: string | null): Outcome {
   if (digits === null) return { kind: "NOT_READABLE" };
   const raw = digits.trim();
   if (!DIGIT_GATE.test(raw)) return { kind: "FAILED", code: "AI_BAD_OUTPUT" };
   const code = normalizeDigits(raw);
   const check = barcodeCheck(code);
-  if (check.checked && !check.ok) return { kind: "INVALID_CHECKSUM" };
+  if (!check.checked) return { kind: "NOT_READABLE" };
+  if (!check.ok) return { kind: "INVALID_CHECKSUM" };
   return { kind: "CODE", code: normalizeBarcode(code) };
 }
 
