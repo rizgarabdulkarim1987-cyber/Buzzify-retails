@@ -301,10 +301,17 @@ function Review({
       if (h) return h.focus();
       return linesHead.current?.focus();
     }
-    if (to.kind === "draft") return draftRef.current?.focus();
-    if (to.kind === "currency") return currencyRef.current?.focus();
-    if (to.kind === "total") return totalRef.current?.querySelector<HTMLElement>("button, h3")?.focus();
-    if (to.kind === "failure" && failureRef.current) return failureRef.current.focus();
+    // A target that is missing or disabled falls back to the notices area (always there, focusable).
+    const notices = () => failureRef.current?.focus();
+    const tryFocus = (el: HTMLElement | null | undefined) => {
+      if (!el || !el.isConnected || el.matches(":disabled, [aria-disabled=\"true\"]")) return notices();
+      el.focus();
+      if (document.activeElement !== el) notices();
+    };
+    if (to.kind === "draft") return tryFocus(draftRef.current);
+    if (to.kind === "currency") return tryFocus(currencyRef.current);
+    if (to.kind === "total") return tryFocus(totalRef.current?.querySelector<HTMLElement>("button:not([aria-disabled=\"true\"]), h3"));
+    if (to.kind === "failure") return notices();
     linesHead.current?.focus();
   }, [focus]);
 
@@ -669,6 +676,8 @@ function PageViewer({ t, locale, intakeId, pageCount }: { t: Messages; locale: L
   // A page the <img> could not show: a PDF (said so, with the full page to open) or gone/broken.
   const [broken, setBroken] = useState<Record<number, "pdf" | "gone">>({});
   if (pageCount < 1) return null;
+  // Zoom means nothing for a page that is not shown as an image (a PDF, or a page that is gone).
+  const noZoom = broken[page] !== undefined;
   const src = `${photoHref(intakeId)}/image/${page}`;
   const label = fill(r.pageN, { n: formatNumber(locale, page) });
   return (
@@ -691,8 +700,8 @@ function PageViewer({ t, locale, intakeId, pageCount }: { t: Messages; locale: L
         <button
           type="button"
           className="btn btn-secondary btn-small"
-          aria-disabled={zoom === 0 || undefined}
-          onClick={() => setZoom((z) => Math.max(0, z - 1))}
+          aria-disabled={noZoom || zoom === 0 || undefined}
+          onClick={() => !noZoom && setZoom((z) => Math.max(0, z - 1))}
           data-testid="intake-zoom-out"
         >
           {r.zoomOut}
@@ -700,8 +709,8 @@ function PageViewer({ t, locale, intakeId, pageCount }: { t: Messages; locale: L
         <button
           type="button"
           className="btn btn-secondary btn-small"
-          aria-disabled={zoom === ZOOMS.length - 1 || undefined}
-          onClick={() => setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))}
+          aria-disabled={noZoom || zoom === ZOOMS.length - 1 || undefined}
+          onClick={() => !noZoom && setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))}
           data-testid="intake-zoom-in"
         >
           {r.zoomIn}

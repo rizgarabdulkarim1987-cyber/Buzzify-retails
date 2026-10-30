@@ -10,6 +10,7 @@ import { RefusedPage } from "../../../catalog/_lib/state-pages";
 import { loadStockAccess } from "../../_lib/access";
 import { ReadOnlyBanner } from "../../_lib/views";
 import { ConsentPanel } from "./consent-panel";
+import { RetryButton } from "./retry-button";
 import { PhotoCapture } from "./photo-capture";
 import { loadAiStatus, photoRole } from "./_lib/load";
 import { photoAccess } from "./_lib/rules";
@@ -66,9 +67,7 @@ export default async function ReceiptPhotoPage() {
           testId="state-status-failed"
           action={
             <>
-              <Link href="/retail/stock/receive/photo" className="btn btn-primary" data-testid="intake-status-retry">
-                {t.common.retry}
-              </Link>
+              <RetryButton label={t.common.retry} busyLabel={t.common.loading} />
               {manual}
             </>
           }

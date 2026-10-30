@@ -12,7 +12,7 @@ import { metaFor } from "../../../../../catalog/_lib/call";
 export const dynamic = "force-dynamic";
 
 const json = (body: unknown, status = 200) =>
-  Response.json(body, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+  Response.json(body, { status, headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
 
 export async function GET(_req: Request, ctx: { params: Promise<{ intakeId: string }> }) {
   const { intakeId } = await ctx.params;

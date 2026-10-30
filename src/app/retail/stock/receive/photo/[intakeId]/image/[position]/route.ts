@@ -7,17 +7,20 @@ import { metaFor } from "../../../../../../catalog/_lib/call";
  * every request (switch, cost.view, who may see the intake). A supplier receipt carries prices, so
  * it is never stored by any cache, the browser's included (a shared terminal must not show it to
  * the next user from its cache); it is served with the type the server sniffed at upload, never
- * sniffed by the browser, and sandboxed when opened on its own (no script runs in it).
+ * sniffed by the browser. An image is sandboxed when opened on its own (no script runs in it); a
+ * PDF is not, as the browser’s PDF viewer needs scripts to show it (nosniff and the sniffed type
+ * keep it a PDF).
  */
 
 export const dynamic = "force-dynamic";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
-const BASE = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox" } as const;
+const BASE = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } as const;
+const SANDBOX = { "Content-Security-Policy": "sandbox" } as const;
 
 type Ctx = { params: Promise<{ intakeId: string; position: string }> };
 
-const refuse = (status: number) => new Response(null, { status, headers: BASE });
+const refuse = (status: number) => new Response(null, { status, headers: { ...BASE, ...SANDBOX } });
 
 async function page(ctx: Ctx, withBody: boolean): Promise<Response> {
   const { intakeId, position } = await ctx.params;
@@ -31,6 +34,7 @@ async function page(ctx: Ctx, withBody: boolean): Promise<Response> {
   return new Response(withBody ? new Uint8Array(read.value.bytes) : null, {
     headers: {
       ...BASE,
+      ...(type === "application/pdf" ? {} : SANDBOX),
       "Content-Type": type,
       "Content-Length": String(read.value.bytes.byteLength),
       "Content-Disposition": `inline; filename="receipt-page-${n}${type === "application/pdf" ? ".pdf" : ""}"`,

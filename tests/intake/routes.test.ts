@@ -94,6 +94,25 @@ describe("the page image route", () => {
     expect(head.body).toBeNull();
   });
 
+  it("serves a PDF page without the sandbox (Chrome's PDF viewer needs scripts), still never cached or sniffed", async () => {
+    const s = await shop();
+    const pdf = new TextEncoder().encode("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
+    const made = await createIntake({ files: [{ contentType: "image/jpeg", bytes: jpeg() }, { contentType: "application/pdf", bytes: pdf }] }, s.as());
+    if (!made.ok) throw new Error(made.code);
+    session.meta = s.as();
+    for (const head of [false, true]) {
+      const res = await image(made.value.intakeId, "2", head);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("application/pdf");
+      expect(res.headers.get("Content-Security-Policy")).toBeNull();
+      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+      expect(res.headers.get("Content-Disposition")).toBe(`inline; filename="receipt-page-2.pdf"`);
+    }
+    // The image page beside it stays sandboxed.
+    expect((await image(made.value.intakeId, "1")).headers.get("Content-Security-Policy")).toBe("sandbox");
+  });
+
   it("refuses without cost.view, without a session, for another business or a colleague's receipt; refusals are not cached either", async () => {
     const a = await shop();
     const b = await shop();
@@ -127,7 +146,7 @@ describe("the status route", () => {
     session.meta = s.as();
     const res = await status(intakeId);
     expect(res.status).toBe(200);
-    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     const body = (await res.json()) as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(["failureCode", "ok", "status"]);
     expect(body).toEqual({ ok: true, status: "READ", failureCode: null });
@@ -141,7 +160,7 @@ describe("the status route", () => {
     session.meta = a.as("MANAGER");
     const noCost = await status(intakeId);
     expect(noCost.status).toBe(403);
-    expect(noCost.headers.get("Cache-Control")).toBe("no-store");
+    expect(noCost.headers.get("Cache-Control")).toBe("private, no-store");
     expect(await noCost.json()).toEqual({ ok: false, code: "FORBIDDEN" });
 
     session.meta = b.as();
