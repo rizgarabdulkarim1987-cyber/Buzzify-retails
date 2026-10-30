@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { isEmbeddedUrl, isLocalHost, startServer } from "../../scripts/embedded-pg";
 import {
   ADMIN,
+  AI_MONTHLY,
   BRANCH_A,
   BRANCH_B,
   BUSINESS,
@@ -27,6 +28,7 @@ import {
   SUGAR,
   TERMINAL_A,
   E2E_SECRET,
+  INTAKE_ITEM,
 } from "./fixtures";
 
 const url = E2E_DATABASE_URL;
@@ -66,7 +68,7 @@ async function main() {
   const adminId = await signUp(ADMIN);
   await db.rtPlatformAdmin.create({ data: { userId: adminId } });
   await db.rtPlan.create({
-    data: { code: "basic", name: "Basic", maxBranches: 5, maxTerminals: 10, maxUsers: 20, storageMb: 1024, aiMonthly: 0 },
+    data: { code: "basic", name: "Basic", maxBranches: 5, maxTerminals: 10, maxUsers: 20, storageMb: 1024, aiMonthly: AI_MONTHLY },
   });
 
   let n = 0;
@@ -150,6 +152,14 @@ async function main() {
       price: { currency: "IQD", amountMinor: "1500" },
     },
     "e2e-seed-stock-item",
+  );
+  await seedProduct(
+    {
+      nameAr: INTAKE_ITEM.nameAr,
+      baseUnit: { name: INTAKE_ITEM.piece, barcodes: [INTAKE_ITEM.barcode] },
+      price: { currency: "IQD", amountMinor: "2000" },
+    },
+    "e2e-seed-intake-item",
   );
 
   await db.$disconnect();

@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_DATABASE_URL, E2E_PORT, E2E_SECRET } from "./tests/e2e/fixtures";
+import { E2E_DATABASE_URL, E2E_PORT, E2E_SECRET, INTAKE_FAKE_FILE } from "./tests/e2e/fixtures";
 
 const baseURL = `http://localhost:${E2E_PORT}`;
 
@@ -26,6 +26,11 @@ export default defineConfig({
       APP_URL: baseURL,
       NEXT_DIST_DIR: ".next-e2e",
       NEXT_TELEMETRY_DISABLED: "1",
+      // The AI intake reads with the fake provider, its answer from a fixed file (tests/e2e/intake.spec.ts).
+      // `next dev` runs as development; getIntakeProvider never selects the fake in production.
+      INTAKE_PROVIDER: "fake",
+      INTAKE_FAKE_FILE,
+      ANTHROPIC_API_KEY: "",
     },
   },
 });

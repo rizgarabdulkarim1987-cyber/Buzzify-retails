@@ -1,4 +1,5 @@
 /* Seed data shared by tests/e2e/seed.ts and the e2e specs (test-only values). */
+import { fileURLToPath } from "node:url";
 
 export const E2E_PORT = Number(process.env.E2E_PORT || 3100);
 export const E2E_DATABASE_URL =
@@ -32,3 +33,13 @@ export const LONG_PRODUCT_BARCODE = "6281000000024";
 
 /** A stock item seeded for tests/e2e/stock.spec.ts: batches with expiry dates, a piece and a carton of 12. */
 export const STOCK_ITEM = { nameAr: "حليب طويل الأجل ١ لتر", barcode: "6281000000031", piece: "علبة", carton: "كرتون", cartonFactor: 12 };
+
+/**
+ * R1b (tests/e2e/intake.spec.ts): an item known by a valid EAN-13 (the seeded SUGAR/STOCK_ITEM codes
+ * fail the retail checksum), sold by the piece, not batch-tracked, so a receipt draft posts as read.
+ */
+export const INTAKE_ITEM = { nameAr: "طحين صفر ١ كغم", barcode: "6291041500213", piece: "قطعة" };
+/** The seeded plan's monthly AI reads (the shop's quota is twice this in half units). */
+export const AI_MONTHLY = 20;
+/** The fake provider's scenario file for the e2e dev server (INTAKE_PROVIDER=fake reads it on every call). */
+export const INTAKE_FAKE_FILE = fileURLToPath(new URL("./intake-receipt.json", import.meta.url));
