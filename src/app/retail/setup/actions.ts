@@ -101,3 +101,22 @@ export async function removeTrialItems(key: string, business: string): Promise<T
     throw err;
   }
 }
+
+export type SkipState = { status: "skipped" } | { status: "failed"; code: ErrorCode | "INTERNAL" };
+
+/** Setup step 6 (opening stock) is optional: marks it skipped. It still completes once opening stock is posted. */
+export async function skipSetupStep(key: string, business: string, step: number): Promise<SkipState> {
+  const userId = await getSessionUserId(await headers());
+  if (!userId) return { status: "failed", code: "FORBIDDEN" };
+  if (!isId(business) || step !== 6) return { status: "failed", code: "INVALID_INPUT" };
+  try {
+    const result = await completeSetupStep({ step, data: { skip: true } }, { userId, businessId: business, idempotencyKey: key });
+    if (!result.ok) return { status: "failed", code: result.code };
+    revalidatePath("/retail/setup");
+    return { status: "skipped" };
+  } catch (err) {
+    if (err instanceof IdempotencyMismatchError) return { status: "failed", code: "IDEMPOTENCY_MISMATCH" };
+    if (err instanceof InternalActionError) return { status: "failed", code: "INTERNAL" };
+    throw err;
+  }
+}

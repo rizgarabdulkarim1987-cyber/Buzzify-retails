@@ -1955,3 +1955,214 @@ textarea.input {
 .stock-dialog .field-row {
   align-items: start;
 }
+
+/* Receiving and opening stock --------------------------------------------------------------------- */
+
+.receipt {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.receipt-head .field-row,
+.receipt-line-fields {
+  align-items: start;
+}
+
+.receipt-scan-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+}
+
+.receipt-scan-form .field {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+/* The button sits level with the input, below the label. */
+.receipt-scan-form > .btn {
+  margin-block-start: calc(var(--text-sm) * 1.5 + var(--space-1));
+}
+
+.receipt-hits {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.receipt-hit {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  inline-size: 100%;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.receipt-hit:hover,
+.receipt-hit:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.receipt-hit > :first-child {
+  min-width: 0;
+}
+
+.receipt-lines {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.receipt-line {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* A line with a field to fix takes a quiet full border in the danger tone. */
+.receipt-line:has([aria-invalid="true"]) {
+  border-color: var(--color-danger-line);
+}
+
+.receipt-line-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.receipt-line-no {
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.receipt-line-name {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.receipt-line-sku {
+  font-size: var(--text-xs);
+}
+
+.receipt-line-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  gap: var(--space-2) var(--space-3);
+}
+
+.receipt-line-wide {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.receipt-line-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.receipt-save {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.receipt-save[data-state="blocked"],
+.receipt-save[data-state="failed"],
+.receipt-save[data-state="offline"] {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.receipt-post {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.receipt-post .hint {
+  margin: 0;
+}
+
+.receipt-post-actions,
+.receipt-done-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.receipt-post .btn[aria-disabled="true"] {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.receipt-done {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.receipt-done h2:focus {
+  outline: none;
+}
+
+.receipt-done h3 {
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+.receipt-done-warnings {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+}
+
+.receipt-drafts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.receipt-draft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.opening-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.opening-progress {
+  inline-size: 100%;
+  accent-color: var(--color-accent);
+}

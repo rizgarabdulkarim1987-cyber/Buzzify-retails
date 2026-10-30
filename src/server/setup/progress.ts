@@ -13,9 +13,9 @@ import { updateVersioned } from "@/server/framework/versioned";
 
 /*
  * The setup wizard: nine steps a new business walks through. R0 implements steps 1, 2, 3 and 5,
- * R1 step 4 (the catalog); the others are shown as "soon", stay PENDING, and completeSetupStep
- * refuses them with STEP_NOT_AVAILABLE. Progress rows are created lazily: a business with no rows
- * reads as nine PENDING steps, and the first completed step inserts all nine.
+ * R1 step 4 (the catalog), R2 step 6 (opening stock); the others are shown as "soon", stay PENDING,
+ * and completeSetupStep refuses them with STEP_NOT_AVAILABLE. Progress rows are created lazily: a
+ * business with no rows reads as nine PENDING steps, and the first completed step inserts all nine.
  *
  * Step 4 follows the catalog itself (spec R1 7.15): it reads as DONE while the business has at least
  * one active product that is not a trial item (isTestData), or an import that is not a trial import
@@ -25,6 +25,13 @@ import { updateVersioned } from "@/server/framework/versioned";
  * step only when it was completed by products alone: once a non-trial import has committed a row,
  * the step stays DONE for good (a committed import row is never deleted, even if its products are
  * archived later or a trial product it updated is removed).
+ *
+ * Step 6 (opening stock, spec R2 6ب.7) is OPTIONAL: it is never a condition for finishing setup.
+ * It reads as DONE once the business has a POSTED OPENING document with a line of an item that is
+ * not a trial item (entered by hand or imported); a posted document is never deleted, so this never
+ * turns false. Until then it reads as its stored status: PENDING, or SKIPPED after
+ * completeSetupStep({ step: 6, data: { skip: true } }) (the only thing step 6 accepts: completing it
+ * is the posted opening itself). Trial items never complete it (they cannot hold stock anyway).
  *
  * Every step is an ordinary business action (permission staff.manage: OWNER and MANAGER), so it
  * is audited, idempotent by key, and refused while the business is READ_ONLY or CLOSED. Editing
@@ -36,9 +43,12 @@ type Tx = Prisma.TransactionClient;
 export const SETUP_STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 export type StepNumber = (typeof SETUP_STEPS)[number];
 /** The steps this release can complete. */
-export const AVAILABLE_STEPS = [1, 2, 3, 4, 5] as const;
-const SOON_STEPS = [6, 7, 8, 9] as const;
+export const AVAILABLE_STEPS = [1, 2, 3, 4, 5, 6] as const;
+/** Available steps that setup does not need: they can be skipped (SKIPPED) and never block finishing. */
+export const OPTIONAL_STEPS = [6] as const;
+const SOON_STEPS = [7, 8, 9] as const;
 const CATALOG_STEP = 4;
+const OPENING_STEP = 6;
 
 /** Stable keys (message keys in the UI). */
 export const STEP_KEYS = {
@@ -61,6 +71,8 @@ export type SetupStep = {
   status: SetupStatus;
   /** False for the "soon" steps (not implemented in this release). */
   available: boolean;
+  /** An optional step (OPTIONAL_STEPS): it can be skipped and is not needed to finish setup. */
+  optional: boolean;
   isTestData: boolean;
   completedAt: Date | null;
 };
@@ -147,6 +159,7 @@ const stepInput = z.discriminatedUnion("step", [
   z.object({ step: z.literal(3), data: activityData }).strict(),
   z.object({ step: z.literal(4), data: z.object({}).strict().default({}) }).strict(),
   z.object({ step: z.literal(5), data: staffData }).strict(),
+  z.object({ step: z.literal(6), data: z.object({ skip: z.literal(true) }).strict() }).strict(),
   z.object({ step: z.literal([...SOON_STEPS]), data: z.unknown() }).strict(),
 ]);
 type StepInput = z.infer<typeof stepInput>;
@@ -231,13 +244,27 @@ async function catalogReady(tx: Tx): Promise<boolean> {
   return imported !== null;
 }
 
-async function markDone(tx: Tx, actor: Actor, step: StepNumber) {
+/**
+ * When the opening stock completes step 6: the post time of the first POSTED OPENING document that
+ * holds a line of an item that is not a trial item; null while there is none.
+ */
+async function openingStockDoneAt(tx: Tx): Promise<Date | null> {
+  const doc = await tx.rtStockDocument.findFirst({
+    where: { kind: "OPENING", status: "POSTED", lines: { some: { variant: { is: { product: { is: { isTestData: false } } } } } } },
+    orderBy: [{ postedAt: "asc" }, { id: "asc" }],
+    select: { postedAt: true },
+  });
+  return doc ? (doc.postedAt ?? new Date(0)) : null;
+}
+
+async function markStep(tx: Tx, actor: Actor, step: StepNumber, status: "DONE" | "SKIPPED") {
   await tx.rtSetupProgress.createMany({
     data: SETUP_STEPS.map((s) => ({ businessId: actor.businessId, step: s })),
     skipDuplicates: true });
   await tx.rtSetupProgress.updateMany({
     where: { step },
-    data: { status: "DONE", completedAt: new Date(), version: { increment: 1 } },
+    // completedAt is set only for DONE (a check constraint): a skip is not a completion.
+    data: { status, completedAt: status === "DONE" ? new Date() : null, version: { increment: 1 } },
   });
 }
 
@@ -272,11 +299,15 @@ const completeStep = defineAction({
       case 5:
         await saveStaff(tx, actor, input.data);
         break;
+      case 6:
+        // Optional: the only thing to send is a skip; it is DONE by itself once an opening is posted.
+        await markStep(tx, actor, 6, "SKIPPED");
+        return null;
       default:
         // Unreachable: the precondition refused it. Kept so a future step is never marked DONE by accident.
         throw new RuleError("STEP_NOT_AVAILABLE");
     }
-    await markDone(tx, actor, input.step);
+    await markStep(tx, actor, input.step, "DONE");
     return null;
   },
   audit: (input) => ({ entity: "RtSetupProgress", entityId: String(input.step), changes: { step: input.step, data: auditData(input) } }),
@@ -291,7 +322,8 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
  * - 3: `{ activityType, capabilities, expectedVersion }` (the business's version; replaces the enabled set)
  * - 4: `{}` (checks the catalog: CATALOG_EMPTY until a real product or a real import exists)
  * - 5: `{ staff: [{ email, role, branchIds }] }` (adds existing accounts as staff; may be empty)
- * Steps 6, 7, 8 and 9 return STEP_NOT_AVAILABLE. On success the value is null.
+ * - 6: `{ skip: true }` (optional step: marks it SKIPPED; it becomes DONE by itself with the first posted opening)
+ * Steps 7, 8 and 9 return STEP_NOT_AVAILABLE. On success the value is null.
  */
 export async function completeSetupStep(raw: unknown, meta: ActionMeta): Promise<Result<null>> {
   // Step 5 names people by email; the user id is resolved here (tenant code cannot read the User
@@ -311,7 +343,10 @@ export async function completeSetupStep(raw: unknown, meta: ActionMeta): Promise
 // ---------------------------------------------------------------------------------------------
 // Reads
 
-/** The nine steps with their stored status (PENDING when no row exists yet); step 4 with the catalog's live status. */
+/**
+ * The nine steps with their stored status (PENDING when no row exists yet); step 4 with the
+ * catalog's live status, step 6 DONE once an opening is posted (else its stored PENDING / SKIPPED).
+ */
 export const getSetupProgress = defineAction({
   name: "setup.progress",
   permission: "staff.manage",
@@ -321,16 +356,27 @@ export const getSetupProgress = defineAction({
     const rows = await tx.rtSetupProgress.findMany({ select: { step: true, status: true, isTestData: true, completedAt: true } });
     const byStep = new Map(rows.map((r) => [r.step, r]));
     const catalogDone = await catalogReady(tx);
+    const openingAt = await openingStockDoneAt(tx);
     return SETUP_STEPS.map((step) => {
       const row = byStep.get(step);
       const stored: SetupStatus = row?.status ?? "PENDING";
+      let status = stored;
+      let completedAt = row?.completedAt ?? null;
+      if (step === CATALOG_STEP) {
+        status = catalogDone ? "DONE" : "PENDING";
+        if (!catalogDone) completedAt = null;
+      } else if (step === OPENING_STEP) {
+        status = openingAt ? "DONE" : stored === "SKIPPED" ? "SKIPPED" : "PENDING";
+        completedAt = openingAt;
+      }
       return {
         step,
         key: STEP_KEYS[step],
-        status: step === CATALOG_STEP ? (catalogDone ? "DONE" : "PENDING") : stored,
+        status,
         available: (AVAILABLE_STEPS as readonly number[]).includes(step),
+        optional: (OPTIONAL_STEPS as readonly number[]).includes(step),
         isTestData: row?.isTestData ?? false,
-        completedAt: step === CATALOG_STEP && !catalogDone ? null : (row?.completedAt ?? null),
+        completedAt,
       };
     });
   },

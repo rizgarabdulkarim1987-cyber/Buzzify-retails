@@ -37,6 +37,16 @@ export default async function StockPage({ searchParams }: { searchParams: Search
         <div className="title-row">
           <h1>{t.stock.title}</h1>
           <div className="title-actions">
+            {ctx.canReceive ? (
+              <>
+                <Link href="/retail/stock/receive" className="btn btn-primary" data-testid="stock-receive-link">
+                  {t.stock.list.receive}
+                </Link>
+                <Link href="/retail/stock/receive?kind=opening" className="btn btn-secondary" data-testid="stock-opening-link">
+                  {t.stock.list.opening}
+                </Link>
+              </>
+            ) : null}
             <Link href="/retail/stock/expiring" className="btn btn-secondary" data-testid="stock-expiring-link">
               {t.stock.list.expiringPage}
             </Link>

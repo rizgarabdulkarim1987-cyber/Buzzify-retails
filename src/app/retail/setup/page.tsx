@@ -22,6 +22,7 @@ import { getI18n } from "../../_lib/i18n";
 import { Notice, StateBlock } from "../../_ui/state";
 import { requireShell } from "../_shell";
 import { CatalogStep } from "./catalog-step";
+import { OpeningStep } from "./opening-step";
 import { StepForm } from "./step-form";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +69,8 @@ export default async function SetupPage() {
   const role = shell.options?.ok ? shell.options.value.role : null;
 
   const steps = progress.value;
-  const done = steps.filter((s) => s.available && s.status === "DONE").length;
+  // An optional step counts once it is done or skipped.
+  const done = steps.filter((s) => s.available && (s.status === "DONE" || (s.optional && s.status === "SKIPPED"))).length;
   const formT = { ...t.setup, errors: t.errors, internalError: t.internalError };
 
 
@@ -111,6 +113,11 @@ export default async function SetupPage() {
                 </span>
                 {t.setup.steps[s.key]}
               </h2>
+              {s.optional ? (
+                <span className="badge" data-testid={`setup-optional-${s.step}`}>
+                  {t.setup.optional}
+                </span>
+              ) : null}
               <StatusBadge step={s} t={t} />
             </div>
             {s.step === 4 ? (
@@ -122,6 +129,16 @@ export default async function SetupPage() {
                 canImport={role !== null && can(role, "catalog.import")}
                 canManage={role !== null && can(role, "catalog.manage")}
                 canRemoveTrial={role !== null && can(role, "catalog.manage") && can(role, "staff.manage")}
+                disabled={readOnly}
+                t={formT}
+              />
+            ) : s.step === 6 && s.available ? (
+              <OpeningStep
+                businessId={businessId}
+                status={s.status}
+                canReceive={role !== null && can(role, "stock.receive")}
+                canImport={role !== null && can(role, "stock.receive") && can(role, "catalog.import")}
+                canSkip
                 disabled={readOnly}
                 t={formT}
               />

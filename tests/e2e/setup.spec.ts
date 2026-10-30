@@ -18,7 +18,11 @@ test("the owner completes setup step 1 and sees it DONE after a reload", async (
   const step1 = page.getByTestId("setup-step-1");
   await expect(step1).toHaveAttribute("data-status", "PENDING");
   // The "soon" steps show no form.
-  await expect(page.getByTestId("setup-step-6")).toHaveAttribute("data-status", "SOON");
+  await expect(page.getByTestId("setup-step-7")).toHaveAttribute("data-status", "SOON");
+  await expect(page.getByTestId("setup-form-7")).toHaveCount(0);
+  // Step 6 (opening stock) is optional and has no form: links to enter or import stock, and a skip button.
+  await expect(page.getByTestId("setup-optional-6")).toBeVisible();
+  await expect(page.getByTestId("setup-step-6").getByTestId("setup-opening")).toBeVisible();
   await expect(page.getByTestId("setup-form-6")).toHaveCount(0);
   // Step 4 follows the catalog: the seeded (real) products already complete it; it has no form of its own.
   await expect(page.getByTestId("setup-step-4")).toHaveAttribute("data-status", "DONE");
@@ -32,7 +36,7 @@ test("the owner completes setup step 1 and sees it DONE after a reload", async (
   await page.reload();
   await expect(page.getByTestId("setup-step-1")).toHaveAttribute("data-status", "DONE");
   await expect(page.getByTestId("setup-status-1")).toHaveText(ar.setup.statusLabels.DONE);
-  await expect(page.getByTestId("setup-step-6")).toHaveAttribute("data-status", "SOON");
+  await expect(page.getByTestId("setup-step-7")).toHaveAttribute("data-status", "SOON");
 });
 
 test("a cashier gets the no-permission state on the setup page", async ({ page }) => {

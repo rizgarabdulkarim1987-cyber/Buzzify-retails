@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createProduct } from "@/server/catalog/products";
-import { AVAILABLE_STEPS, SETUP_STEPS, completeSetupStep, getSetupProgress, setupOverview } from "@/server/setup/progress";
+import { AVAILABLE_STEPS, OPTIONAL_STEPS, SETUP_STEPS, completeSetupStep, getSetupProgress, setupOverview } from "@/server/setup/progress";
 import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createPlan, createUser } from "../helpers/fixtures";
 
@@ -135,9 +135,9 @@ describe("setup progress", () => {
     expect(overview).toMatchObject({ ok: true, value: { business: { name: "متجر النور", version: v + 2 } } });
   });
 
-  it("refuses steps 6, 7, 8 and 9 with STEP_NOT_AVAILABLE and never marks them DONE", async () => {
+  it("refuses steps 7, 8 and 9 with STEP_NOT_AVAILABLE and never marks them DONE", async () => {
     const { a } = await world();
-    for (const step of [6, 7, 8, 9]) {
+    for (const step of [7, 8, 9]) {
       expect(await completeSetupStep({ step, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "STEP_NOT_AVAILABLE" });
     }
     expect(await completeSetupStep({ step: 10, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
@@ -250,5 +250,69 @@ describe("setup progress", () => {
     await db.rtProduct.update({ where: { id: real.value.productId }, data: { archivedAt: new Date() } });
     const after = await getSetupProgress({}, a.as("owner"));
     expect(after.ok && after.value.find((s) => s.step === 4)).toMatchObject({ status: "PENDING", completedAt: null });
+  });
+
+  it("step 6 completes after a posted opening for a real item, can be skipped, and is ignored for trial items", async () => {
+    const { a, b } = await world();
+    const step6 = async (who = a.as("owner")) => {
+      const r = await getSetupProgress({}, who);
+      return r.ok ? r.value.find((s) => s.step === 6) : undefined;
+    };
+    expect(await step6()).toMatchObject({ key: "openingStock", status: "PENDING", available: true, optional: true, completedAt: null });
+    expect(OPTIONAL_STEPS).toEqual([6]);
+    expect((await getSetupProgress({}, a.as("owner"))).ok && (await step6())?.optional).toBe(true);
+
+    // A product, its variant and base unit, and a posted OPENING document holding one line of it.
+    const location = await db.rtLocation.create({ data: { businessId: a.business.id, branchId: a.branches.A!.id, name: "المخزن" } });
+    const item = async (isTestData: boolean) => {
+      const product = await db.rtProduct.create({ data: { businessId: a.business.id, nameAr: isTestData ? "تجربة" : "رز", isTestData } });
+      const variant = await db.rtVariant.create({ data: { businessId: a.business.id, productId: product.id, sku: `S-${randomUUID().slice(0, 8)}` } });
+      const unit = await db.rtUnit.create({ data: { businessId: a.business.id, variantId: variant.id, name: "قطعة", factor: 1, isBase: true } });
+      return { variantId: variant.id, unitId: unit.id };
+    };
+    const opening = async (it: { variantId: string; unitId: string }, status: "DRAFT" | "POSTED", kind: "OPENING" | "RECEIPT" = "OPENING") => {
+      const doc = await db.rtStockDocument.create({
+        data: {
+          businessId: a.business.id,
+          branchId: a.branches.A!.id,
+          locationId: location.id,
+          kind,
+          status,
+          ...(status === "POSTED" ? { number: Math.floor(Math.random() * 1e6) + 1, postedAt: new Date() } : {}),
+        },
+      });
+      await db.rtStockLine.create({
+        data: { businessId: a.business.id, branchId: a.branches.A!.id, documentId: doc.id, lineNo: 1, variantId: it.variantId, unitId: it.unitId, quantity: 1000n, enteredQuantity: "1" },
+      });
+    };
+
+    // A posted opening of a trial item (written directly: the stock actions refuse trial items),
+    // a draft opening and a posted receipt of a real item: none completes the step.
+    await opening(await item(true), "POSTED");
+    const real = await item(false);
+    await opening(real, "DRAFT");
+    await opening(real, "POSTED", "RECEIPT");
+    expect(await step6()).toMatchObject({ status: "PENDING" });
+
+    // Skipping: stored as SKIPPED (audited); it counts for nothing else.
+    expect(await completeSetupStep({ step: 6, data: { skip: true } }, a.as("manager"))).toEqual({ ok: true, value: null });
+    expect(await step6()).toMatchObject({ status: "SKIPPED" });
+    expect(await db.rtSetupProgress.findFirst({ where: { businessId: a.business.id, step: 6 } })).toMatchObject({ status: "SKIPPED" });
+    expect(await db.rtAuditLog.count({ where: { businessId: a.business.id, action: "setup.step.complete" } })).toBe(1);
+    // Only skipping is a thing to send: completing is the posted opening itself.
+    expect(await completeSetupStep({ step: 6, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(await completeSetupStep({ step: 6, data: { skip: true } }, a.as("cashier"))).toMatchObject({ ok: false, code: "FORBIDDEN" });
+
+    // A posted opening of a real item completes it, even after a skip; another business stays PENDING.
+    await opening(real, "POSTED");
+    const done = await step6();
+    expect(done).toMatchObject({ status: "DONE" });
+    expect(done?.completedAt).toBeInstanceOf(Date);
+    const fromB = await getSetupProgress({}, b.as("owner"));
+    expect(fromB.ok && statusOf(fromB.value)[6]).toBe("PENDING");
+    // Steps 7, 8 and 9 are still "soon".
+    for (const step of [7, 8, 9]) {
+      expect(await completeSetupStep({ step, data: {} }, a.as("owner"))).toMatchObject({ ok: false, code: "STEP_NOT_AVAILABLE" });
+    }
   });
 });
