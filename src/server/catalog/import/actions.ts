@@ -63,6 +63,10 @@ import {
  *
  * Every step is audited with counts only (never cells or file bytes). Reads (list, get, the
  * rejected-rows file, presets) work in READ_ONLY; every write is refused there.
+ *
+ * Only batches of kind CATALOG exist for these actions (findBatch, the list, the same-file look-up):
+ * an OPENING_STOCK batch (src/server/stock/import.ts) is NOT_FOUND here, so it can never be
+ * validated or committed as catalog rows.
  */
 
 type Tx = Prisma.TransactionClient;
@@ -103,9 +107,13 @@ function chunks<T>(list: readonly T[], size = CHUNK): T[][] {
 
 const json = (v: unknown) => v as Prisma.InputJsonValue;
 
+/**
+ * A CATALOG batch of this business (NOT_FOUND otherwise). Every step and list of this file only
+ * sees CATALOG batches; the opening-stock import (src/server/stock/import.ts) only its own kind.
+ */
 async function findBatch(tx: Tx, batchId: string) {
   const batch = await tx.rtImportBatch.findFirst({
-    where: { id: batchId },
+    where: { id: batchId, kind: "CATALOG" },
     select: { id: true, status: true, fileName: true, fileHash: true, columns: true, mapping: true, stats: true, isTestData: true, version: true, createdAt: true, createdById: true },
   });
   if (!batch) throw new NotFoundError();
@@ -159,7 +167,7 @@ export const stageImport = defineAction({
     }
 
     const sameFile = await tx.rtImportBatch.findFirst({
-      where: { fileHash, status: "COMMITTED" },
+      where: { fileHash, status: "COMMITTED", kind: "CATALOG" },
       orderBy: { createdAt: "desc" },
       select: { id: true },
     });
@@ -436,7 +444,7 @@ export type SliceResult =
   | { done: true; stats: CommitStats; alreadyCommitted: boolean };
 
 /** Postgres deadlock / serialization failure, Prisma's write-conflict code, or a unique violation. */
-function isRetryable(err: unknown): boolean {
+export function isRetryable(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const e = err as { code?: unknown; message?: unknown; meta?: unknown; cause?: unknown };
   if (e.code === "P2002" || e.code === "P2034" || e.code === "40P01" || e.code === "40001") return true;
@@ -853,7 +861,8 @@ export function neutralizeCell(cell: string): string {
   return /^[\t\r]/.test(cell) || /^\s*[=+\-@＝＋－＠]/.test(cell) ? `'${cell}` : cell;
 }
 
-function csvCell(cell: string): string {
+/** One CSV cell, neutralized and quoted when needed (shared with the opening-stock import). */
+export function csvCell(cell: string): string {
   const safe = neutralizeCell(cell);
   return /[",\r\n]|^\s|\s$/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
@@ -896,6 +905,7 @@ export const listImportBatches = defineAction({
   input: z.object({ page: z.number().int().min(0).max(10_000).default(0) }).strict().default({ page: 0 }),
   async run({ tx, input }) {
     const batches = await tx.rtImportBatch.findMany({
+      where: { kind: "CATALOG" },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: input.page * PAGE_SIZE,
       take: PAGE_SIZE,
@@ -1044,7 +1054,8 @@ export const deleteMappingPreset = defineAction({
 export async function purgeStaleImportBatches(client: PrismaClient, now: Date = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - STALE_BATCH_DAYS * 86_400_000);
   const { count } = await client.rtImportBatch.deleteMany({
-    where: { status: { not: "COMMITTED" }, createdAt: { lt: cutoff }, rows: { none: { status: "COMMITTED" } } },
+    // Either kind of batch; one that has stock documents always has committed rows too (same transaction).
+    where: { status: { not: "COMMITTED" }, createdAt: { lt: cutoff }, rows: { none: { status: "COMMITTED" } }, stockDocuments: { none: {} } },
   });
   return count;
 }

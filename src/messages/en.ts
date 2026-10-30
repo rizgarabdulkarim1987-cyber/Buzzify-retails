@@ -580,6 +580,7 @@ export const en: Messages = {
     SERIAL_NOT_SUPPORTED: "Serial-number tracking is not supported in stock yet, so this item cannot be received or adjusted.",
     STOCK_RULE: "This stock entry is not valid: check the quantity, unit, batch, expiry date, cost and currency.",
     DOCUMENT_POSTED: "This document is posted, so it cannot be edited or deleted. To correct it, create a reversal.",
+    IMPORT_SAME_FILE: "Opening stock from this same file was already posted, so it is not imported again (the stock would double). To correct it, use an adjustment or a reversal.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

@@ -36,7 +36,8 @@ export type ErrorCode =
   | "TEST_ITEM"
   | "SERIAL_NOT_SUPPORTED"
   | "STOCK_RULE"
-  | "DOCUMENT_POSTED";
+  | "DOCUMENT_POSTED"
+  | "IMPORT_SAME_FILE";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -87,6 +88,7 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   SERIAL_NOT_SUPPORTED: "تتبّع الأرقام التسلسلية غير مدعوم في المخزون حالياً، فلا يمكن إدخال هذا الصنف أو تعديل رصيده.",
   STOCK_RULE: "بيانات المخزون غير مقبولة: تحقق من الكمية والوحدة والدفعة وتاريخ الانتهاء والتكلفة والعملة.",
   DOCUMENT_POSTED: "هذا المستند مُرحَّل، فلا يمكن تعديله أو حذفه. للتصحيح أنشئ مستنداً عكسياً.",
+  IMPORT_SAME_FILE: "رُحِّل رصيد افتتاحي من هذا الملف نفسه سابقاً، فلا يُستورد مرة ثانية حتى لا يتضاعف الرصيد. للتصحيح استعمل التعديل أو المستند العكسي.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

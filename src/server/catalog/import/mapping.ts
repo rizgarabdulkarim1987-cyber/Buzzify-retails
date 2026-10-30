@@ -23,7 +23,7 @@ export type Mapping = Record<KnownColumn, number | null>;
 export type MappingProblem = "MISSING_NAME" | "MISSING_IDENTIFIER" | "DUPLICATE_COLUMN";
 
 /** Header spelling used for matching: normalized Arabic/Kurdish letters, no punctuation, single spaces. */
-function headerKey(s: string): string {
+export function headerKey(s: string): string {
   return normalizeSearchText(s)
     .replace(/[_\-:*()[\]{}.،,;/\\|#]+/g, " ")
     .replace(/\s+/g, " ")
@@ -32,7 +32,7 @@ function headerKey(s: string): string {
 
 // Aliases per column: Arabic, Kurdish (Sorani) and English. They go through the same normalization
 // as the headers, so letter variants (ة/ه, أ/ا, ی/ي, ک/ك) and digits need no separate entry.
-const ALIASES: Record<KnownColumn, readonly string[]> = {
+export const ALIASES: Record<KnownColumn, readonly string[]> = {
   barcode: ["barcode", "bar code", "ean", "upc", "gtin", "الباركود", "باركود", "بار كود", "الرمز الشريطي", "رمز شريطي", "بارکۆد", "بارکۆدی کاڵا", "کۆدی بارکۆد"],
   name: ["name", "item", "item name", "product", "product name", "title", "اسم", "الاسم", "اسم المادة", "اسم الصنف", "اسم المنتج", "المادة", "الصنف", "المنتج", "ناو", "ناوی کاڵا", "ناوی ماددە", "کاڵا"],
   nameCkb: ["name ckb", "name kurdish", "kurdish name", "name ku", "الاسم الكردي", "اسم كردي", "الاسم بالكردي", "الاسم كردي", "ناوی کوردی", "ناو بە کوردی", "ناوی کوردی کاڵا"],
@@ -46,28 +46,33 @@ const ALIASES: Record<KnownColumn, readonly string[]> = {
   sku: ["sku", "item code", "product code", "item no", "رمز الصنف", "كود الصنف", "كود المادة", "رقم الصنف", "رمز المنتج", "کۆدی کاڵا"],
 };
 
-const BY_HEADER: ReadonlyMap<string, KnownColumn> = (() => {
-  const m = new Map<string, KnownColumn>();
-  for (const col of KNOWN_COLUMNS) {
-    for (const alias of ALIASES[col]) {
+/**
+ * A header matcher for a set of columns and their aliases (the catalog's here, the opening stock's
+ * in src/server/stock/import.ts): maps each column to the first header that names it; the rest of
+ * the headers are ignored. Throws at load when one alias names two columns.
+ */
+export function headerMatcher<C extends string>(columns: readonly C[], aliases: Record<C, readonly string[]>) {
+  const byHeader = new Map<string, C>();
+  for (const col of columns) {
+    for (const alias of aliases[col]) {
       const key = headerKey(alias);
-      const prev = m.get(key);
+      const prev = byHeader.get(key);
       if (prev !== undefined && prev !== col) throw new Error(`Import header alias "${alias}" belongs to ${prev} and ${col}`);
-      m.set(key, col);
+      byHeader.set(key, col);
     }
   }
-  return m;
-})();
+  return (headers: readonly string[]): Record<C, number | null> => {
+    const mapping = Object.fromEntries(columns.map((c) => [c, null])) as Record<C, number | null>;
+    headers.forEach((h, index) => {
+      const col = byHeader.get(headerKey(h));
+      if (col !== undefined && mapping[col] === null) mapping[col] = index;
+    });
+    return mapping;
+  };
+}
 
 /** Maps each known column to the first header that names it; the rest of the headers are ignored. */
-export function autoMapHeaders(headers: readonly string[]): Mapping {
-  const mapping = Object.fromEntries(KNOWN_COLUMNS.map((c) => [c, null])) as Mapping;
-  headers.forEach((h, index) => {
-    const col = BY_HEADER.get(headerKey(h));
-    if (col !== undefined && mapping[col] === null) mapping[col] = index;
-  });
-  return mapping;
-}
+export const autoMapHeaders: (headers: readonly string[]) => Mapping = headerMatcher(KNOWN_COLUMNS, ALIASES);
 
 /** name and (barcode or sku) must be mapped, and no file column may feed two targets. */
 export function validateMapping(mapping: Mapping): { ok: boolean; problems: MappingProblem[] } {

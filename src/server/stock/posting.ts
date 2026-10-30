@@ -251,7 +251,8 @@ async function nextDocumentNumber(tx: Tx, businessId: string, lockBusiness: Lock
   return row.nextNumber - 1;
 }
 
-const lockVariants = async (variantIds: string[], lockBusiness: LockBusiness) => {
+/** `stock:<variantId>` locks in ascending id order (re-entrant: taking one twice in a transaction is fine). */
+export const lockVariants = async (variantIds: string[], lockBusiness: LockBusiness) => {
   for (const v of [...new Set(variantIds)].sort()) await lockBusiness(`stock:${v}`);
 };
 
@@ -609,16 +610,26 @@ async function postReversalLines(tx: Tx, actor: Actor, doc: LockedDoc, lockBusin
  * would be applied in memory after reading every movement).
  */
 async function refuseOpeningAfterMovement(tx: Tx, locationId: string, groups: Group[]): Promise<void> {
-  const variantIds = [...new Set(groups.map((g) => g.first.variantId))];
+  const blocked = await movedOutsideOpening(tx, locationId, groups.map((g) => g.first.variantId));
+  if (blocked.size === 0) return;
+  const first = groups.find((g) => blocked.has(g.first.variantId));
+  if (first) refuse(first.first.lineNo, "OPENING_AFTER_MOVEMENT");
+}
+
+/**
+ * The variants (of `variantIds`) that have a movement of a non-OPENING document at the location:
+ * an OPENING is refused for them (OPENING_AFTER_MOVEMENT). Also used by the opening import to reject
+ * such rows one by one. Callers pass at most a few thousand ids per call.
+ */
+export async function movedOutsideOpening(tx: Tx, locationId: string, variantIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(variantIds)];
+  if (ids.length === 0) return new Set();
   const openings = await tx.rtStockDocument.findMany({ where: { locationId, kind: "OPENING", status: "POSTED" }, select: { id: true } });
   const moved = await tx.rtStockMovement.groupBy({
     by: ["variantId"],
-    where: { locationId, variantId: { in: variantIds }, documentId: { notIn: openings.map((o) => o.id) } },
+    where: { locationId, variantId: { in: ids }, documentId: { notIn: openings.map((o) => o.id) } },
   });
-  if (moved.length === 0) return;
-  const blocked = new Set(moved.map((m) => m.variantId));
-  const first = groups.find((g) => blocked.has(g.first.variantId));
-  if (first) refuse(first.first.lineNo, "OPENING_AFTER_MOVEMENT");
+  return new Set(moved.map((m) => m.variantId));
 }
 
 const batchKey = (variantId: string, code: string | null, expiry: Date | null) => JSON.stringify([variantId, code, isoDay(expiry)]);

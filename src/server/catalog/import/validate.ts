@@ -80,7 +80,8 @@ const CURRENCY_ALIASES: Record<string, Currency> = {
   usd: "USD", "us$": "USD", $: "USD", "دولار": "USD", "دولارامريكي": "USD", "دۆلار": "USD",
 };
 
-function currencyOf(text: string): Currency | null {
+/** A currency cell (code, symbol or name; Arabic or Kurdish) to its code, or null when unknown. */
+export function currencyOf(text: string): Currency | null {
   const key = normalizeSearchText(text).replace(/[.\s]/g, "");
   return CURRENCY_ALIASES[key] ?? null;
 }
@@ -115,6 +116,22 @@ function parsePrice(text: string, cur: string, biz: BusinessCurrencies) {
   }
   if (amountMinor > MAX_PRICE_MINOR) throw new Reject("PRICE_TOO_LARGE");
   return { currency, amountMinor };
+}
+
+/**
+ * A non-empty barcode cell to a normalized code, or the reason it is refused: a number cell (xlsx)
+ * that may have lost its leading zeros (NUMERIC_BARCODE_LOST_ZEROS) or text that is not a code
+ * (BAD_BARCODE). Shared with the opening-stock import.
+ */
+export function parseBarcodeCell(raw: string, numericCell: boolean): { code: string } | { reason: string } {
+  if (SCIENTIFIC.test(raw)) return { reason: "NUMERIC_BARCODE_LOST_ZEROS" };
+  // A number cell: zeros may be gone. A short one, or one with a fraction, is not a barcode we can trust.
+  if (numericCell && (!/^\d+$/.test(raw) || !NUMERIC_BARCODE_LENGTHS.has(raw.length))) return { reason: "NUMERIC_BARCODE_LOST_ZEROS" };
+  try {
+    return { code: normalizeBarcode(raw) };
+  } catch {
+    return { reason: "BAD_BARCODE" };
+  }
 }
 
 export function validateRows(
@@ -152,19 +169,10 @@ export function validateRows(
       const sku = get("sku");
       let barcode: string | null = null;
       if (rawBarcode !== "") {
-        if (SCIENTIFIC.test(rawBarcode)) throw new Reject("NUMERIC_BARCODE_LOST_ZEROS");
         const col = mapping.barcode;
-        if (col !== null && options.numericCells?.has(`${rowNumber}:${col}`)) {
-          // A number cell: zeros may be gone. A short one, or one with a fraction, is not a barcode we can trust.
-          if (!/^\d+$/.test(rawBarcode) || !NUMERIC_BARCODE_LENGTHS.has(rawBarcode.length)) {
-            throw new Reject("NUMERIC_BARCODE_LOST_ZEROS");
-          }
-        }
-        try {
-          barcode = normalizeBarcode(rawBarcode);
-        } catch {
-          throw new Reject("BAD_BARCODE");
-        }
+        const read = parseBarcodeCell(rawBarcode, col !== null && options.numericCells?.has(`${rowNumber}:${col}`) === true);
+        if ("reason" in read) throw new Reject(read.reason);
+        barcode = read.code;
       }
       if (barcode === null && sku === "") throw new Reject("MISSING_IDENTIFIER");
 

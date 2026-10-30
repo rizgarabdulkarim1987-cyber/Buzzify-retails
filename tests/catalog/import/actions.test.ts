@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 // Every real role that holds catalog.import also holds price.change, so the "without price.change"
@@ -18,6 +18,7 @@ import {
   deleteMappingPreset,
   downloadRejected,
   getImportBatch,
+  listChangedRows,
   listImportBatches,
   listMappingPresets,
   neutralizeCell,
@@ -767,6 +768,47 @@ describe("catalog import actions", () => {
     const across = await outcome(second, SLICE_SIZE - 1);
     expect(across).toEqual(inside);
   }, 60_000);
+
+  it("ignores opening-stock batches: not listed, NOT_FOUND for every step, never the same file", async () => {
+    const { a } = await world();
+    const text = csv([row({ barcode: "7001", name: "مادة" })]);
+    const fileHash = createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
+    const stock = await db.rtImportBatch.create({
+      data: {
+        businessId: a.business.id,
+        kind: "OPENING_STOCK",
+        status: "VALIDATED",
+        fileName: "stock.csv",
+        fileHash,
+        columns: HEADERS,
+        mapping: autoMapHeaders(HEADERS),
+        stats: { total: 1 },
+        createdById: a.staff.owner!.user.id,
+      },
+    });
+    await db.rtImportRow.create({
+      data: { businessId: a.business.id, batchId: stock.id, rowNumber: 1, raw: row({ barcode: "7001", name: "مادة" }), status: "OK" },
+    });
+    const mapping = autoMapHeaders(HEADERS);
+    const results = [
+      await validateImport({ batchId: stock.id, mapping }, a.as("owner")),
+      await commitImport({ batchId: stock.id, onChange: "UPDATE" }, a.as("owner")),
+      await downloadRejected({ batchId: stock.id }, a.as("owner")),
+      await getImportBatch({ batchId: stock.id }, a.as("owner")),
+      await listChangedRows({ batchId: stock.id }, a.as("owner")),
+      await deleteImportBatch({ batchId: stock.id }, a.as("owner")),
+    ];
+    for (const r of results) expect(r).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(value(await listImportBatches({}, a.as("owner")))).toHaveLength(0);
+    expect(await productCount(a)).toBe(0);
+    expect(await db.rtImportBatch.findUniqueOrThrow({ where: { id: stock.id } })).toMatchObject({ status: "VALIDATED" });
+    // A committed opening-stock batch of the same file is not "the same file" for the catalog.
+    await db.rtImportBatch.update({ where: { id: stock.id }, data: { status: "COMMITTED" } });
+    const staged = await stage(a, text);
+    expect(staged.sameFileBatchId).toBeNull();
+    expect(value(await listImportBatches({}, a.as("owner"))).map((b) => b.id)).toEqual([staged.batchId]);
+    expect(await db.rtImportBatch.findUniqueOrThrow({ where: { id: staged.batchId } })).toMatchObject({ kind: "CATALOG" });
+  });
 });
 
 /** Polls until at least `n` sessions wait for a lock (files run one at a time, so the count is ours). */
