@@ -720,6 +720,55 @@ textarea.input {
   }
 }
 
+/* Admin: the ai.intake switch per business (a table cell; a full row of its own on phones). */
+
+.ai-switch {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ai-switch-row,
+.ai-switch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ai-switch-form {
+  gap: var(--space-3);
+  max-inline-size: 36rem;
+}
+
+/* The reason form: a row of its own under the business, joined to it (no rule between them). */
+.data-table tr:has(+ .ai-form-row) > td {
+  border-block-end-color: transparent;
+}
+
+.data-table .ai-form-row,
+.data-table tbody .ai-form-row:hover {
+  background: var(--color-panel);
+}
+
+.data-table .ai-form-row > td {
+  padding-block: var(--space-3) var(--space-4);
+}
+
+@media (max-width: 40rem) {
+  .data-table td.ai-cell,
+  .data-table .ai-form-row > td {
+    grid-column: 1 / -1;
+  }
+
+  .data-table tr:has(+ .ai-form-row) {
+    border-block-end-color: transparent;
+  }
+
+  .data-table .ai-form-row > td {
+    padding: 0 var(--space-3);
+  }
+}
+
 /* Admin layout ---------------------------------------------------------------------------------- */
 
 .admin-grid {

@@ -2,9 +2,12 @@
 
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { overrideFeature } from "@/server/admin/lifecycle";
 import { provisionBusiness } from "@/server/admin/provision";
 import { getSessionUserId } from "@/server/auth/auth";
 import { IdempotencyMismatchError, InternalActionError, type ErrorCode } from "@/server/framework/errors";
+import { AI_INTAKE_FEATURE } from "@/server/framework/features";
+import type { AiSwitchResult } from "./ai-switch-rules";
 
 export type CreateBusinessState =
   | { status: "idle" }
@@ -49,4 +52,29 @@ export async function createBusiness(_prev: CreateBusinessState, formData: FormD
   }
   revalidatePath("/admin");
   return { status: "created", name: input.name.trim(), email: input.ownerEmail.trim().toLowerCase() };
+}
+
+/**
+ * The ai.intake master switch of one business (platform admin only; overrideFeature checks that,
+ * the reason and the business). The key comes from the browser and is kept while the same change
+ * is retried, so a retry after a lost answer records one change.
+ */
+export async function setAiIntake(input: { businessId: unknown; enabled: unknown; reason: unknown; key: unknown }): Promise<AiSwitchResult> {
+  const userId = await getSessionUserId(await headers());
+  if (!userId) return { ok: false, code: "FORBIDDEN" };
+  if (typeof input?.enabled !== "boolean") return { ok: false, code: "INVALID_INPUT" };
+  const enabled = input.enabled;
+  try {
+    const result = await overrideFeature(
+      { businessId: input.businessId, feature: AI_INTAKE_FEATURE, enabled, reason: input.reason },
+      { userId, idempotencyKey: typeof input.key === "string" ? input.key : "" },
+    );
+    if (!result.ok) return { ok: false, code: result.code };
+  } catch (err) {
+    if (err instanceof IdempotencyMismatchError) return { ok: false, code: "IDEMPOTENCY_MISMATCH" };
+    if (err instanceof InternalActionError) return { ok: false, code: "INTERNAL" };
+    throw err;
+  }
+  revalidatePath("/admin");
+  return { ok: true, enabled };
 }

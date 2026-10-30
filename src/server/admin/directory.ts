@@ -1,11 +1,12 @@
 import { z } from "zod";
 import type { RtActivityType, RtBusinessStatus, SubscriptionStatus } from "@/generated/prisma/client";
+import { AI_INTAKE_FEATURE, OVERRIDE_LATEST_FIRST } from "@/server/framework/features";
 import { definePlatformAction } from "@/server/framework/platform-action";
 
 /*
  * The platform admin's list of businesses and the active plans the create form offers. Only
  * platform-level facts (name, lifecycle status, activity type, creation date, subscription
- * status): no tenant operational data.
+ * status, the ai.intake switch): no tenant operational data.
  */
 
 export const DIRECTORY_LIMIT = 200;
@@ -18,6 +19,8 @@ export type DirectoryBusiness = {
   createdAt: Date;
   /** The latest subscription's status, or null when the business has none. */
   subscriptionStatus: SubscriptionStatus | null;
+  /** The ai.intake master switch: the latest override (as featureEnabled reads it), false when none. */
+  aiIntake: boolean;
 };
 
 export type DirectoryPlan = { code: string; name: string; maxBranches: number };
@@ -35,6 +38,12 @@ export const listBusinesses = definePlatformAction({
         activityType: true,
         createdAt: true,
         subscriptions: { select: { status: true }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1 },
+        featureOverrides: {
+          where: { feature: AI_INTAKE_FEATURE },
+          select: { enabled: true },
+          orderBy: [...OVERRIDE_LATEST_FIRST],
+          take: 1,
+        },
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: DIRECTORY_LIMIT,
@@ -45,7 +54,11 @@ export const listBusinesses = definePlatformAction({
       orderBy: [{ maxBranches: "asc" }, { code: "asc" }],
     });
     return {
-      businesses: rows.map(({ subscriptions, ...b }) => ({ ...b, subscriptionStatus: subscriptions[0]?.status ?? null })),
+      businesses: rows.map(({ subscriptions, featureOverrides, ...b }) => ({
+        ...b,
+        subscriptionStatus: subscriptions[0]?.status ?? null,
+        aiIntake: featureOverrides[0]?.enabled === true,
+      })),
       plans,
     };
   },

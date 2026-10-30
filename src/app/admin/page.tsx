@@ -10,9 +10,13 @@ import { SignOutIcon, UserIcon } from "../_ui/icons";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { StateBlock } from "../_ui/state";
 import { signOut } from "../session-actions";
+import { AiSwitchRow } from "./ai-switch";
 import { CreateBusinessForm } from "./create-form";
 
 export const dynamic = "force-dynamic";
+
+/** Columns of the business table (the ai.intake reason form spans them all). */
+const COLUMNS = 6;
 
 const STATUS_TONE = { SETUP: "warn", ACTIVE: "accent", SUSPENDED: "danger", ARCHIVED: undefined } as const;
 
@@ -118,11 +122,19 @@ function BusinessTable({ businesses, locale, t }: { businesses: DirectoryBusines
           <th scope="col">{t.admin.colActivity}</th>
           <th scope="col">{t.admin.colSubscription}</th>
           <th scope="col">{t.admin.colCreated}</th>
+          <th scope="col">{t.adminAi.column}</th>
         </tr>
       </thead>
       <tbody>
         {businesses.map((b) => (
-          <tr key={b.id}>
+          <AiSwitchRow
+            key={b.id}
+            businessId={b.id}
+            businessName={b.name}
+            enabled={b.aiIntake}
+            columns={COLUMNS}
+            t={{ adminAi: t.adminAi, errors: t.errors, internalError: t.internalError }}
+          >
             <td>
               <span className="truncate" title={b.name}>
                 {b.name}
@@ -138,7 +150,7 @@ function BusinessTable({ businesses, locale, t }: { businesses: DirectoryBusines
             <td data-secondary>
               <time dateTime={b.createdAt.toISOString()}>{formatDate(locale, b.createdAt)}</time>
             </td>
-          </tr>
+          </AiSwitchRow>
         ))}
       </tbody>
     </table>
