@@ -653,7 +653,7 @@ export const en: Messages = {
     },
     adjust: {
       title: "Adjust stock",
-      intro: "Every adjustment is saved as a posted document with its reason and is never deleted. To correct one, use a reversal.",
+      intro: "Every adjustment is saved as a posted document with its reason and is never deleted. To correct one, post another adjustment (or a write-off) for the difference.",
       loading: "Loading the item…",
       loadFailed: "The item could not be loaded.",
       mode: "Movement",
@@ -715,6 +715,8 @@ export const en: Messages = {
       KIND: "This document cannot be changed from the receiving screen.",
       EMPTY: "The document has no lines. Add at least one item.",
       COST_COLUMN_LOCKED: "The cost column is locked: your role cannot see costs, so it cannot be unmapped, moved or used for another field.",
+      REVERSAL_VALUE_MISMATCH: "The stock is there, but its value has changed since this document (stock went out at the average cost), so it cannot be reversed exactly. Correct it with an adjustment or a write-off.",
+      VALUE_TOO_LARGE: "The stock value of this item would become larger than the system can hold. Check the quantities and costs.",
     },
     receive: {
       titleRECEIPT: "Receive goods",
@@ -800,7 +802,7 @@ export const en: Messages = {
       tooManyLines: "A document holds at most 500 lines. Post this one and start a new document.",
       post: "Post document",
       posting: "Posting…",
-      postHint: "A posted document cannot be edited; a reversal corrects it.",
+      postHint: "A posted document cannot be edited; to correct it, post an adjustment (or a write-off) for the difference.",
       fixFirst: "Fix the marked lines before posting.",
       discard: "Delete draft",
       discardConfirm: "Delete this draft and all its lines? No stock changes.",
@@ -1010,8 +1012,8 @@ export const en: Messages = {
     TEST_ITEM: "Trial items cannot hold stock. Add the real item and try again.",
     SERIAL_NOT_SUPPORTED: "Serial-number tracking is not supported in stock yet, so this item cannot be received or adjusted.",
     STOCK_RULE: "This stock entry is not valid: check the quantity, unit, batch, expiry date, cost and currency.",
-    DOCUMENT_POSTED: "This document is posted, so it cannot be edited or deleted. To correct it, create a reversal.",
-    IMPORT_SAME_FILE: "Opening stock from this same file was already posted, so it is not imported again (the stock would double). To correct it, use an adjustment or a reversal.",
+    DOCUMENT_POSTED: "This document is posted, so it cannot be edited or deleted. To correct it, post an adjustment (or a write-off) for the difference.",
+    IMPORT_SAME_FILE: "Opening stock from this same file was already posted, so it is not imported again (the stock would double). To correct it, post an adjustment (or a write-off) for the difference.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

@@ -32,4 +32,18 @@ see the hand-written parts, so review them in the SQL.
 - `npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code`
   (a shadow database from `SHADOW_DATABASE_URL`) prints nothing and exits 0.
 - After deploying, `rebuildBalances(tx, businessId, { fix: false })` (src/server/stock/ledger.ts)
-  returns no mismatches for each business. It is read-only unless `fix: true`.
+  returns no mismatches for each business. It is read-only unless `fix: true`. It is a code-level
+  call only: no script or admin screen runs it yet. Call it from a one-off script or a REPL with a
+  transaction client of that business.
+
+## Security notes
+
+- The movement ledger's append-only trigger refuses UPDATE and DELETE, not TRUNCATE. TRUNCATE (and
+  dropping the trigger) is prevented only if the production application connects with a restricted
+  role that does not own the tables and has no TRUNCATE grant. Do not run the app as the table
+  owner or a superuser.
+- A support grant with the `STOCK_READ` scope lets platform support read the business's stock,
+  including its costs and values. Grant it knowing that.
+- In the opening-stock import, a role without `cost.view` (for example MANAGER) sees every column
+  the server recognizes as a cost column blanked. A cost column whose header is not recognized (not
+  auto-mapped, and never mapped as cost) is just another column, so its cells show in clear.

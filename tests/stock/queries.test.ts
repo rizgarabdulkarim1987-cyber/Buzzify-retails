@@ -137,16 +137,49 @@ describe("stock queries", () => {
     expect(byBarcode.rows.map((r) => r.variantId)).toEqual([milk.variantId]);
     expect(ok(await listStock({ query: "لا يوجد" }, s.as("owner"))).rows).toEqual([]);
 
-    // A variant without stock is listed with zero and no average.
+    // A variant without stock is listed with zero and no value or average.
     const empty = await s.item({ name: "ماء" });
     const all = ok(await listStock({}, s.as("owner")));
     expect(all.rows.map((r) => r.variantId).sort()).toEqual([milk.variantId, juice.variantId, empty.variantId].sort());
     const zero = all.rows.find((r) => r.variantId === empty.variantId)!;
-    expect(zero).toMatchObject({ qty: 0n, availableQty: 0n, breakdown: { parts: [], remainder: 0n }, valueMinor: 0n });
+    expect(zero).toMatchObject({ qty: 0n, availableQty: 0n, breakdown: { parts: [], remainder: 0n } });
+    expect("valueMinor" in zero).toBe(false);
     expect("avgUnitCostMinor" in zero).toBe(false);
 
     // A cashier reads quantities.
     expect(ok(await listStock({ query: "حليب" }, s.as("cashier"))).rows[0]).toMatchObject({ qty: 53n * U });
+  });
+
+  it("archived items still holding stock are listed and marked; without stock they are not", async () => {
+    const s = await shop();
+    const held = await s.item({ name: "زيت قديم" });
+    const sold = await s.item({ name: "زيت فارغ" });
+    const variantOnly = await s.item({ name: "زيت متغير" });
+    const live = await s.item({ name: "زيت جديد" });
+    await post(s, [line(held, "4", { cost: iqd("100") }), line(sold, "1", { cost: iqd("100") }), line(variantOnly, "2", { cost: iqd("50") })]);
+    await writeOffStock({ variantId: sold.variantId, unitId: sold.piece, quantity: "1", reason: "DAMAGED" }, s.as("owner"));
+    const at = new Date();
+    await db.rtProduct.updateMany({ where: { id: { in: [held.productId, sold.productId] } }, data: { archivedAt: at } });
+    await db.rtVariant.update({ where: { id: variantOnly.variantId }, data: { archivedAt: at } });
+
+    const page = ok(await listStock({ query: "زيت" }, s.as("owner")));
+    const ids = page.rows.map((r) => r.variantId).sort();
+    expect(ids).toEqual([held.variantId, variantOnly.variantId, live.variantId].sort());
+    expect(page.rows.find((r) => r.variantId === held.variantId)).toMatchObject({ archived: true, qty: 4n * U, valueMinor: 400n });
+    expect(page.rows.find((r) => r.variantId === variantOnly.variantId)).toMatchObject({ archived: true, qty: 2n * U });
+    expect("archived" in page.rows.find((r) => r.variantId === live.variantId)!).toBe(false);
+
+    // A small page still fills past the skipped archived item (no short page while hits remain).
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 10; i++) {
+      const p = ok(await listStock({ query: "زيت", limit: 1, ...(cursor ? { cursor } : {}) }, s.as("owner")));
+      seen.push(...p.rows.map((r) => r.variantId));
+      if (!p.nextCursor) break;
+      expect(p.rows).toHaveLength(1);
+      cursor = p.nextCursor;
+    }
+    expect(seen.sort()).toEqual(ids);
   });
 
   it("expired batches are not counted as available", async () => {

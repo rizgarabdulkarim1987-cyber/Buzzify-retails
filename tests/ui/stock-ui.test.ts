@@ -72,6 +72,9 @@ describe("stock list", () => {
     expect(expired).toContain("0.5");
     expect(expired).toContain('data-testid="stock-adjust"');
     expect(html(createElement(StockList, { ...props, canSeeCost: false, rows: [row({ status: "SOON" })] }))).toContain(ar.stock.badge.SOON);
+    // An archived item that still holds stock carries the catalog's "archived" badge.
+    expect(html(createElement(StockList, { ...props, canSeeCost: false, rows: [row({ archived: true })] }))).toContain('data-testid="stock-badge-archived"');
+    expect(html(createElement(StockList, { ...props, canSeeCost: false, rows: [row()] }))).not.toContain("stock-badge-archived");
   });
 
   it("names follow the interface language and fall back to Arabic", () => {

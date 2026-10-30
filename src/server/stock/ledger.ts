@@ -1,5 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
-import { MAX_BASE_QTY, reduceValue } from "@/server/domain/stock";
+import { MAX_BASE_QTY, MAX_VALUE_MINOR, reduceValue } from "@/server/domain/stock";
 import { RuleError } from "@/server/framework/errors";
 
 /*
@@ -19,10 +19,15 @@ import { RuleError } from "@/server/framework/errors";
  * - exactValues (a REVERSAL only, spec 6b.3; the document must be a REVERSAL, STOCK_RULE otherwise): every outflow carries its own valueDeltaMinor (<= 0)
  *   and an inflow may too (>= 0), so a reversal restores the original values exactly instead of
  *   taking the current average. It still refuses, with STOCK_NEGATIVE, a line that would take its
- *   (location, variant, batch) quantity below zero OR the variant's TOTAL value at the location
- *   below zero. One batch row's value is never checked alone: a batch can sit at qty 0 with an
- *   offsetting value after average-cost outflows. It may leave a variant at qty 0 with a value
- *   (the next outflow that empties it takes that value).
+ *   (location, variant, batch) quantity below zero. When the stock left is enough but its value
+ *   does not fit the original values (average-cost outflows since), it refuses with STOCK_RULE
+ *   {reason: REVERSAL_VALUE_MISMATCH}: the variant's TOTAL value at the location would go below
+ *   zero, or (checked after all lines) its total quantity would be 0 with a value left over, which
+ *   no later movement could ever clear. One batch row's value is never checked alone: a batch can
+ *   sit at qty 0 with an offsetting value after average-cost outflows.
+ * - A balance value (a row's or the variant's total at the location) above MAX_VALUE_MINOR, or
+ *   below its negative, is refused with STOCK_RULE {reason: VALUE_TOO_LARGE} before any write
+ *   (the int8 column would otherwise overflow into an internal error).
  * - No negative stock: the whole call is checked in memory (lines in order) BEFORE anything is
  *   written, so a refusal leaves nothing behind (the caller's transaction commits nothing). The
  *   balance CHECK (qty >= 0) is the backstop and is reported as STOCK_NEGATIVE too.
@@ -117,8 +122,9 @@ function assertLines(lines: LedgerLine[], exactValues: boolean): void {
 /**
  * Writes one movement per line at one location and updates the balances, all or nothing, and
  * returns the value written for each line. STOCK_NEGATIVE when an outflow exceeds its (location,
- * variant, batch) balance at that point of the call, or (exactValues) would take the variant's
- * total value below zero; INVALID_INPUT for a zero quantity, a quantity above MAX_BASE_QTY, a
+ * variant, batch) balance at that point of the call; STOCK_RULE {reason: REVERSAL_VALUE_MISMATCH}
+ * (exactValues) when the variant's total value would go below zero, or its quantity to 0 with a
+ * value left; STOCK_RULE {reason: VALUE_TOO_LARGE} for a balance value beyond MAX_VALUE_MINOR; INVALID_INPUT for a zero quantity, a quantity above MAX_BASE_QTY, a
  * negative inflow value, or a value on an outflow (missing or positive with exactValues);
  * STOCK_RULE {reason: EXACT_VALUES_NOT_REVERSAL} for exactValues on a document that is not a REVERSAL. Callers
  * validate their lines (variant, batch of that variant, line of that document and variant) before
@@ -162,15 +168,20 @@ export async function postMovements(
       if (row.qty + l.qtyDelta < 0n) throw new RuleError("STOCK_NEGATIVE");
       if (exactValues) {
         value = l.valueDeltaMinor!;
-        if (total.valueMinor + value < 0n) throw new RuleError("STOCK_NEGATIVE");
+        if (total.valueMinor + value < 0n) throw new RuleError("STOCK_RULE", { reason: "REVERSAL_VALUE_MISMATCH" });
       } else {
         value = -reduceValue(total.qty, total.valueMinor, -l.qtyDelta);
       }
     } else {
       value = l.valueDeltaMinor ?? 0n;
     }
-    rows.set(key, { qty: row.qty + l.qtyDelta, valueMinor: row.valueMinor + value });
-    totals.set(l.variantId, { qty: total.qty + l.qtyDelta, valueMinor: total.valueMinor + value });
+    const nextRow = { qty: row.qty + l.qtyDelta, valueMinor: row.valueMinor + value };
+    const nextTotal = { qty: total.qty + l.qtyDelta, valueMinor: total.valueMinor + value };
+    for (const v of [nextRow.valueMinor, nextTotal.valueMinor]) {
+      if (v > MAX_VALUE_MINOR || -v > MAX_VALUE_MINOR) throw new RuleError("STOCK_RULE", { reason: "VALUE_TOO_LARGE" });
+    }
+    rows.set(key, nextRow);
+    totals.set(l.variantId, nextTotal);
     const d = deltas.get(key) ?? { variantId: l.variantId, batchId: l.batchId, qty: 0n, valueMinor: 0n };
     deltas.set(key, { ...d, qty: d.qty + l.qtyDelta, valueMinor: d.valueMinor + value });
     return {
@@ -185,6 +196,14 @@ export async function postMovements(
       valueDeltaMinor: value,
     };
   });
+
+  // A reversal never leaves a variant empty with a value: nothing could take that value out again.
+  if (exactValues) {
+    for (const v of variantIds) {
+      const t = totals.get(v);
+      if (t && t.qty === 0n && t.valueMinor !== 0n) throw new RuleError("STOCK_RULE", { reason: "REVERSAL_VALUE_MISMATCH" });
+    }
+  }
 
   // The first movement of a variant marks it (R-Q), once: the catalog locks read this business-level
   // marker. Under the variant locks, so a catalog edit and a first posting serialize. No version bump.

@@ -24,6 +24,7 @@ export type StockRowDto = {
   breakdown: BreakdownDto;
   nearestExpiry: string | null;
   status: ExpiryState;
+  archived?: true;
   valueMinor?: string;
   avgUnitCostMinor?: string;
 };

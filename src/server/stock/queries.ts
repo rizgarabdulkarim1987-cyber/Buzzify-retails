@@ -112,11 +112,12 @@ function summarize(rows: BalanceRow[], batches: Map<string, BatchInfo>, alertDay
   return { qty, availableQty, valueMinor, nearestExpiry: nearest, status: expiryStatus(nearest, today, alertDays) };
 }
 
-/** The value keys, present only for a cost.view holder. */
-function valueKeys(s: Summary, baseFactor: number): { valueMinor: bigint; avgUnitCostMinor?: bigint } {
-  return s.qty > 0n
-    ? { valueMinor: s.valueMinor, avgUnitCostMinor: unitCostMinor(s.qty, s.valueMinor, baseFactor) }
-    : { valueMinor: s.valueMinor };
+/**
+ * The value keys, present only for a cost.view holder, and only while the variant holds stock: at
+ * qty 0 a leftover (rounding or reversal) value is not shown as if something were on hand.
+ */
+function valueKeys(s: Summary, baseFactor: number): { valueMinor?: bigint; avgUnitCostMinor?: bigint } {
+  return s.qty > 0n ? { valueMinor: s.valueMinor, avgUnitCostMinor: unitCostMinor(s.qty, s.valueMinor, baseFactor) } : {};
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -145,6 +146,8 @@ export type StockRow = {
   breakdown: Breakdown;
   nearestExpiry: Date | null;
   status: ExpiryState;
+  /** The product or variant is archived; listed only while it still holds stock. */
+  archived?: true;
   valueMinor?: bigint;
   avgUnitCostMinor?: bigint;
 };
@@ -155,7 +158,9 @@ export type StockRow = {
  * keeps only the variants holding SOON or EXPIRED stock and reads search pages until `limit` rows are
  * collected; nextCursor sits right after the last hit used. A page is shorter than `limit` only when
  * the search is exhausted (nextCursor null) or MAX_FILL_PAGES search pages were read (nextCursor
- * not null: keep paging).
+ * not null: keep paging). Archived items are listed (with `archived`) only while they hold stock
+ * (qty > 0), so stock is never hidden by archiving; an archived item without stock is skipped like
+ * a non-expiring one under expiringOnly.
  */
 export const listStock = defineAction({
   name: "stock.list",
@@ -167,14 +172,15 @@ export const listStock = defineAction({
     const today = await todayOf(tx);
     const withCost = showsCost(actor.role);
     const rows: StockRow[] = [];
-    // Without expiringOnly one search page is the page. With it, search pages (50 hits each) are
-    // read until `limit` rows are collected, the search ends or MAX_FILL_PAGES is hit.
+    // Search pages are read until `limit` rows are collected, the search ends or MAX_FILL_PAGES is
+    // hit: usually one page, more when hits are skipped (archived without stock; with expiringOnly,
+    // search pages of 50 hits and everything not expiring).
     const pageSize = input.expiringOnly ? MAX_SEARCH_LIMIT : input.limit;
     let cursor = input.cursor;
     let nextCursor: string | null = null;
 
-    for (let page = 0; page < (input.expiringOnly ? MAX_FILL_PAGES : 1); page++) {
-      const found = await searchInTx(tx, { query: input.query, categoryId: input.categoryId, includeArchived: false, cursor, limit: pageSize });
+    for (let page = 0; page < MAX_FILL_PAGES; page++) {
+      const found = await searchInTx(tx, { query: input.query, categoryId: input.categoryId, includeArchived: true, cursor, limit: pageSize });
       const facts = await loadFacts(tx, found.items.map((i) => i.variantId));
       let consumed = found.items.length; // hits of this page that are behind us once the page is full
       for (let i = 0; i < found.items.length; i++) {
@@ -182,6 +188,7 @@ export const listStock = defineAction({
         const info = facts.variants.get(hit.variantId);
         if (!info) continue;
         const s = summarize(facts.balances.get(hit.variantId) ?? [], facts.batches, info.alertDays, today);
+        if (hit.archived && s.qty <= 0n) continue;
         if (input.expiringOnly && !(s.qty > 0n && (s.status === "EXPIRED" || s.status === "SOON"))) continue;
         rows.push({
           productId: hit.productId,
@@ -195,6 +202,7 @@ export const listStock = defineAction({
           breakdown: splitIntoUnits(s.qty, info.units),
           nearestExpiry: s.nearestExpiry,
           status: s.status,
+          ...(hit.archived ? { archived: true as const } : {}),
           ...(withCost ? valueKeys(s, info.baseFactor) : {}),
         });
         if (rows.length === input.limit) {
@@ -205,7 +213,7 @@ export const listStock = defineAction({
       if (consumed < found.items.length) {
         // The page filled in the middle of a search page: the cursor goes right after the last
         // hit used, which the search itself gives for a page of exactly that many hits.
-        const upTo = await searchInTx(tx, { query: input.query, categoryId: input.categoryId, includeArchived: false, cursor, limit: consumed });
+        const upTo = await searchInTx(tx, { query: input.query, categoryId: input.categoryId, includeArchived: true, cursor, limit: consumed });
         nextCursor = upTo.nextCursor;
         break;
       }

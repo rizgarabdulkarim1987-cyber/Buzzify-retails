@@ -31,6 +31,7 @@ export function stockRowDto(r: StockRow): StockRowDto {
     breakdown: breakdownDto(r.breakdown),
     nearestExpiry: r.nearestExpiry ? r.nearestExpiry.toISOString() : null,
     status: r.status,
+    ...(r.archived ? { archived: true as const } : {}),
     ...(r.valueMinor !== undefined ? { valueMinor: r.valueMinor.toString() } : {}),
     ...(r.avgUnitCostMinor !== undefined ? { avgUnitCostMinor: r.avgUnitCostMinor.toString() } : {}),
   };

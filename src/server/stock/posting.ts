@@ -34,7 +34,8 @@ import { postMovements, variantAverage, type LedgerLine } from "./ledger";
  *   go OUT (its stock can still be written off) but not IN.
  * - REVERSAL (reversesDocumentId): lines already mirror the original; the movements are the exact
  *   negation of the original's movements (postMovements exactValues), so they are refused with
- *   STOCK_NEGATIVE when the stock (or its value) is no longer there. No catalog check: a reversal
+ *   STOCK_NEGATIVE when the stock is no longer there, STOCK_RULE {reason: REVERSAL_VALUE_MISMATCH}
+ *   when its value no longer fits the original values. No catalog check: a reversal
  *   corrects what was posted, whatever the item has become since.
  *
  * Nothing is committed before a refusal: every check runs before the first write, or a later

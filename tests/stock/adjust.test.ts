@@ -17,8 +17,8 @@ let skuSeq = 0;
 type ItemOpts = { trackingMode?: RtTrackingMode; tracksExpiry?: boolean; isTestData?: boolean };
 
 /**
- * An active business with branches Main and Second (one location each) and staff: owner and
- * manager (cost.view), a stock officer, a purchasing officer and a cashier limited to Main.
+ * An active business with branches Main and Second (one location each) and staff: an owner (cost.view),
+ * a manager (no cost.view), a stock officer, a purchasing officer and a cashier limited to Main.
  */
 async function shop() {
   if ((await db.rtPlan.count()) === 0) await createPlan(db, { maxBranches: 3 });
@@ -451,21 +451,40 @@ describe("stock adjustments, write-offs and reversals", () => {
     const next = await counter(s);
     expect(await reverse(s, rec.documentId)).toMatchObject({ ok: false, code: "STOCK_NEGATIVE" });
 
-    // Enough quantity, but the value left is below the original value: refused too (the total
-    // value would go below zero). 10 at 100 + 10 at 300, then 10 out at the average 200.
+    // Enough quantity, but the value left is below the original value: refused with its own reason
+    // (the total value would go below zero). 10 at 100 + 10 at 300, then 10 out at the average 200.
     const it2 = await s.item();
     await receive(s, [line(it2, "10", { cost: iqd("100") })]);
     const dear = await receive(s, [line(it2, "10", { cost: iqd("300") })]);
     await writeOffStock({ variantId: it2.variantId, unitId: it2.piece, quantity: "10", reason: "DAMAGED" }, s.as("owner"));
     const mid = await db.rtStockMovement.count();
     expect(await s.balance(it2.variantId)).toEqual({ qty: 10n * U, valueMinor: 2_000n });
-    expect(await reverse(s, dear.documentId)).toMatchObject({ ok: false, code: "STOCK_NEGATIVE" });
+    expect(await reverse(s, dear.documentId)).toMatchObject({ ok: false, code: "STOCK_RULE", details: { reason: "REVERSAL_VALUE_MISMATCH" } });
 
     expect(await db.rtStockMovement.count()).toBe(mid);
     expect(mid - before).toBe(3);
     expect(await db.rtStockDocument.count({ where: { kind: "REVERSAL" } })).toBe(0);
     expect(await counter(s)).toBe(next + 3);
     expect(await s.balance(it1.variantId)).toEqual({ qty: 6n * U, valueMinor: 600n });
+  });
+
+  it("a reversal that would leave quantity 0 with a value is refused and posts nothing", async () => {
+    const s = await shop();
+    const it1 = await s.item();
+    // A 10 at 300, B 10 at 100; 10 written off at the average 200; reversing B would take the last
+    // 10 out at 100 each, leaving 0 pieces worth 1000 that nothing could take out again.
+    await receive(s, [line(it1, "10", { cost: iqd("300") })]);
+    const b = await receive(s, [line(it1, "10", { cost: iqd("100") })]);
+    await writeOffStock({ variantId: it1.variantId, unitId: it1.piece, quantity: "10", reason: "DAMAGED" }, s.as("owner"));
+    const balance = await s.balance(it1.variantId);
+    expect(balance).toEqual({ qty: 10n * U, valueMinor: 2_000n });
+    const moves = await db.rtStockMovement.count();
+    const next = await counter(s);
+    expect(await reverse(s, b.documentId)).toMatchObject({ ok: false, code: "STOCK_RULE", details: { reason: "REVERSAL_VALUE_MISMATCH" } });
+    expect(await s.balance(it1.variantId)).toEqual(balance);
+    expect(await db.rtStockMovement.count()).toBe(moves);
+    expect(await db.rtStockDocument.count({ where: { kind: "REVERSAL" } })).toBe(0);
+    expect(await counter(s)).toBe(next);
   });
 
   it("a cashier cannot adjust, a manager and a stock officer can", async () => {

@@ -13,8 +13,11 @@ export type StockReason = (typeof STOCK_REASONS)[number];
 const RATE_SCALE = 1_000_000n;
 const MAX_RATE_INT_DIGITS = 9;
 const MAX_QTY_INT_DIGITS = 13;
-/** Same cap as the catalog price limit (10^18 minor units); local so the domain stays layer-free. */
-const MAX_VALUE_MINOR = 10n ** 18n;
+/**
+ * Same cap as the catalog price limit (10^18 minor units, under the int8 maximum ~9.22 x 10^18);
+ * local so the domain stays layer-free. Also the bound of a stock balance's value (ledger).
+ */
+export const MAX_VALUE_MINOR = 10n ** 18n;
 
 type QtyUnit = { factor: number; quantityScale: number };
 

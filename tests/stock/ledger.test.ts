@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { MAX_BASE_QTY, convertMinor, lineValueMinor, parseRate } from "@/server/domain/stock";
+import { MAX_BASE_QTY, MAX_VALUE_MINOR, convertMinor, lineValueMinor, parseRate } from "@/server/domain/stock";
 import { defineAction } from "@/server/framework/action";
 import { scopedDb } from "@/server/framework/scoped-db";
 import { isNegativeBalance, postMovements, rebuildBalances, variantAverage } from "@/server/stock/ledger";
@@ -481,10 +481,12 @@ describe("stock ledger", () => {
     await postOk(w, [{ variantId: v, batchId: a.id, qtyDelta: -10n * U }]);
     expect(await balance(w, v, a.id)).toEqual({ qty: 0n, valueMinor: -1000n });
     const before = await db.rtStockMovement.count();
-    // B's own row holds 3000, but the variant's total would drop to -1000: refused, nothing written.
+    // B's own row holds 3000, but the variant's total would drop to -1000: refused (the value no
+    // longer matches, the quantity is there), nothing written.
     expect(await exact([{ variantId: v, batchId: b.id, qtyDelta: -10n * U, valueDeltaMinor: -3000n }])).toMatchObject({
       ok: false,
-      code: "STOCK_NEGATIVE",
+      code: "STOCK_RULE",
+      details: { reason: "REVERSAL_VALUE_MISMATCH" },
     });
     // The second line fails ONLY on the variant's total value (B keeps 9 of 10, then 8): the first
     // takes it to 500, the second to -100. Nothing of the call is written.
@@ -494,7 +496,7 @@ describe("stock ledger", () => {
         { variantId: v, batchId: b.id, qtyDelta: -1n * U, valueDeltaMinor: -1500n },
         { variantId: v, batchId: b.id, qtyDelta: -1n * U, valueDeltaMinor: -600n },
       ]),
-    ).toMatchObject({ ok: false, code: "STOCK_NEGATIVE" });
+    ).toMatchObject({ ok: false, code: "STOCK_RULE", details: { reason: "REVERSAL_VALUE_MISMATCH" } });
     expect(await db.rtStockMovement.count()).toBe(before);
     expect(await db.rtStockBalance.findMany({ orderBy: { id: "asc" } })).toEqual(balancesBefore);
     // exactValues on a document that is not a REVERSAL (here the RECEIPT) is refused, nothing written.
@@ -512,6 +514,14 @@ describe("stock ledger", () => {
       ]),
     ).toMatchObject({ ok: false, code: "STOCK_NEGATIVE" });
     expect(await db.rtStockMovement.count()).toBe(before);
+    // Emptying the variant with a value left over (10 out at 1500 of 2000) would strand 500 that no
+    // movement could take out again: refused, nothing written.
+    expect(await exact([{ variantId: v, batchId: b.id, qtyDelta: -10n * U, valueDeltaMinor: -1500n }])).toMatchObject({
+      ok: false,
+      code: "STOCK_RULE",
+      details: { reason: "REVERSAL_VALUE_MISMATCH" },
+    });
+    expect(await db.rtStockMovement.count()).toBe(before);
     // Within the total, the caller's values are written as given.
     expect(await exact([{ variantId: v, batchId: b.id, qtyDelta: -10n * U, valueDeltaMinor: -2000n }])).toMatchObject({ ok: true });
     expect((await movementValues(w)).at(-1)).toEqual([-10n * U, -2000n]);
@@ -522,6 +532,27 @@ describe("stock ledger", () => {
       value: { qty: 5n * U, valueMinor: 777n },
     });
     expect((await rebuild(w, false)).mismatches).toEqual([]);
+  });
+
+  it("a balance value beyond the int8-safe bound is a STOCK_RULE refusal, not an internal error", async () => {
+    const w = await world();
+    const v = w.variants[0]!;
+    await postOk(w, [{ variantId: v, qtyDelta: U, valueDeltaMinor: MAX_VALUE_MINOR }]);
+    const before = await db.rtStockMovement.count();
+    expect(await postAt(w, [{ variantId: v, qtyDelta: U, valueDeltaMinor: 1n }])).toMatchObject({
+      ok: false,
+      code: "STOCK_RULE",
+      details: { reason: "VALUE_TOO_LARGE" },
+    });
+    // Several lines of one call add up before the check, too.
+    expect(
+      await postAt(w, [
+        { variantId: v, qtyDelta: U, valueDeltaMinor: 0n },
+        { variantId: v, qtyDelta: U, valueDeltaMinor: 1n },
+      ]),
+    ).toMatchObject({ ok: false, code: "STOCK_RULE", details: { reason: "VALUE_TOO_LARGE" } });
+    expect(await db.rtStockMovement.count()).toBe(before);
+    expect(await balance(w, v, null)).toEqual({ qty: U, valueMinor: MAX_VALUE_MINOR });
   });
 
   it("isNegativeBalance never throws on an error whose meta JSON cannot carry", () => {

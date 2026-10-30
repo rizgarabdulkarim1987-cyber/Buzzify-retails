@@ -49,7 +49,9 @@ import {
  * the unique reversesDocumentId is the backstop), at expectedVersion (VERSION_CONFLICT). The
  * reversal is in the original's branch and location, carries its reason and note, mirrors its lines
  * (same numbers, units, quantities, batches, costs and values) and negates its movements exactly;
- * STOCK_NEGATIVE when the stock, or its value, is no longer there.
+ * STOCK_NEGATIVE when the stock is no longer there; STOCK_RULE {reason: REVERSAL_VALUE_MISMATCH}
+ * when the stock is there but its value no longer fits the original values (average-cost outflows
+ * since), including a reversal that would leave the item at quantity 0 with a value.
  *
  * Locks: idempotency -> (reversal: `stock-doc:<originalId>`, so two reversals of one document
  * serialize) -> `stock-doc:<newId>` -> `stock:<variantId>` ascending -> `stock-doc-number`.

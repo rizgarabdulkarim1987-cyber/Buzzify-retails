@@ -67,6 +67,11 @@ export function StockList({ locale, t, rows, currency, canSeeCost, canAdjust, ad
                 <span dir="ltr" className="catalog-sku">
                   {l.sku} {r.sku}
                 </span>
+                {r.archived ? (
+                  <span className="badge" data-tone="danger" data-testid="stock-badge-archived">
+                    {t.catalog.list.archived}
+                  </span>
+                ) : null}
                 <ExpiryBadge t={t} status={r.status} />
                 {r.nearestExpiry && (r.status === "SOON" || r.status === "EXPIRED") ? (
                   <span>{fill(l.nearestExpiry, { date: formatDay(locale, new Date(r.nearestExpiry)) })}</span>
