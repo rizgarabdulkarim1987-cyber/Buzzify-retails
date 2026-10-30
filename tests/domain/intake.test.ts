@@ -61,6 +61,9 @@ describe("barcode checksum", () => {
   it("passes other lengths unchecked", () => {
     expect(barcodeCheck("12345")).toEqual({ ok: true, checked: false });
     expect(barcodeCheck("ABC-123")).toEqual({ ok: true, checked: false });
+    for (const c of ["ABCD1234", "ABCDEFGH1234", "ABCDEFGHIJ123"]) {
+      expect(barcodeCheck(c)).toEqual({ ok: true, checked: false });
+    }
     expect(isValidBarcodeChecksum("12345")).toBe(false);
   });
 });
@@ -87,6 +90,11 @@ describe("matchUnitText", () => {
     expect(matchUnitText("carton", dup)).toBeNull();
     expect(matchUnitText("  ", units)).toBeNull();
   });
+  it("matches Kurdish synonyms", () => {
+    expect(matchUnitText("كارتۆن", units)).toBe("u1");
+    expect(matchUnitText("دانە", units)).toBe("u2");
+    expect(matchUnitText("دوزینە", [...units, { id: "u3", name: "dozen" }])).toBe("u3");
+  });
 });
 
 describe("checkLineArithmetic", () => {
@@ -109,9 +117,29 @@ describe("checkLineArithmetic", () => {
     expect(checkLineArithmetic({ quantity: "3", unitPrice: "1.10", lineTotal: "3.31" }, "USD").ok).toBe(false);
     expect(checkLineArithmetic({ quantity: "0.5", unitPrice: "0.01", lineTotal: "0.01" }, "USD").ok).toBe(true);
   });
-  it("is ok without a line total, fails on unreadable numbers", () => {
+  it("is ok without a line total when quantity and price are readable", () => {
     expect(checkLineArithmetic({ quantity: "3", unitPrice: "1500" }, "IQD")).toEqual({ ok: true });
-    expect(checkLineArithmetic({ quantity: "x", unitPrice: "1500", lineTotal: "1" }, "IQD").ok).toBe(false);
+  });
+  it("flags unreadable input as UNREADABLE, even without a line total", () => {
+    const bad = { ok: false, reason: "UNREADABLE" };
+    expect(checkLineArithmetic({ quantity: "x", unitPrice: "1500", lineTotal: "1" }, "IQD")).toEqual(bad);
+    expect(checkLineArithmetic({ quantity: "x", unitPrice: "1500" }, "IQD")).toEqual(bad);
+    expect(checkLineArithmetic({ quantity: "0", unitPrice: "1500" }, "IQD")).toEqual(bad);
+    expect(checkLineArithmetic({ quantity: "-2", unitPrice: "1500" }, "IQD")).toEqual(bad);
+    expect(checkLineArithmetic({ quantity: "2", unitPrice: "-1500" }, "IQD")).toEqual(bad);
+    expect(checkLineArithmetic({ quantity: "2", unitPrice: "1500", lineTotal: "abc" }, "IQD")).toEqual(bad);
+  });
+  it("treats a decimal comma as unreadable, never 25", () => {
+    const bad = { ok: false, reason: "UNREADABLE" };
+    expect(checkLineArithmetic({ quantity: "2,5", unitPrice: "100", lineTotal: "2500" }, "IQD")).toEqual(bad);
+    expect(checkLineArithmetic({ quantity: "1,5", unitPrice: "100" }, "IQD")).toEqual(bad);
+    expect(checkLineArithmetic({ quantity: "1,000", unitPrice: "2", lineTotal: "2000" }, "IQD").ok).toBe(true);
+  });
+  it("rejects huge strings", () => {
+    expect(checkLineArithmetic({ quantity: "1".repeat(40), unitPrice: "1" }, "IQD").reason).toBe("UNREADABLE");
+  });
+  it("IQD price with a fraction like 1.500 is unreadable", () => {
+    expect(checkLineArithmetic({ quantity: "1", unitPrice: "1.500" }, "IQD").reason).toBe("UNREADABLE");
   });
 });
 
@@ -123,6 +151,11 @@ describe("checkReceiptTotal", () => {
   it("compares the sum to the receipt total", () => {
     expect(checkReceiptTotal(lines, "5000", "IQD")).toEqual({ ok: true });
     expect(checkReceiptTotal(lines, "5100", "IQD")).toEqual({ ok: false });
+  });
+  it("tolerance boundary: one dinar per line", () => {
+    expect(checkReceiptTotal(lines, "5002", "IQD").ok).toBe(true);
+    expect(checkReceiptTotal(lines, "4998", "IQD").ok).toBe(true);
+    expect(checkReceiptTotal(lines, "5003", "IQD").ok).toBe(false);
   });
   it("is ok when no total was read", () => {
     expect(checkReceiptTotal(lines, undefined, "IQD")).toEqual({ ok: true });
@@ -152,7 +185,12 @@ describe("intakeFileHash", () => {
   it("is a stable sha256 hex of the ordered concatenation", () => {
     const h = intakeFileHash([Buffer.from("ab"), Buffer.from("c")]);
     expect(h).toMatch(/^[0-9a-f]{64}$/);
-    expect(h).toBe(intakeFileHash([Buffer.from("abc")]));
+    expect(h).toBe(intakeFileHash([Buffer.from("ab"), Buffer.from("c")]));
     expect(h).not.toBe(intakeFileHash([Buffer.from("c"), Buffer.from("ab")]));
+  });
+  it("does not collide across part boundaries", () => {
+    expect(intakeFileHash([Buffer.from("A"), Buffer.from("BC")])).not.toBe(
+      intakeFileHash([Buffer.from("AB"), Buffer.from("C")]),
+    );
   });
 });

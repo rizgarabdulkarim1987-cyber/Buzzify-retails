@@ -18,8 +18,8 @@ const CHECKED_LENGTHS = new Set([8, 12, 13]);
 
 export function barcodeCheck(code: string): { ok: boolean; checked: boolean } {
   const v = toAsciiDigits(code).trim();
-  if (!CHECKED_LENGTHS.has(v.length)) return { ok: true, checked: false };
-  if (!/^\d+$/.test(v)) return { ok: false, checked: true };
+  // Only all-digit codes of a retail length are checked; anything else is not a retail barcode.
+  if (!CHECKED_LENGTHS.has(v.length) || !/^\d+$/.test(v)) return { ok: true, checked: false };
   let sum = 0;
   for (let i = 0; i < v.length - 1; i++) {
     const fromRight = v.length - 1 - i; // 1 = digit next to the check digit
@@ -35,8 +35,9 @@ export function isValidBarcodeChecksum(code: string): boolean {
 }
 
 // Unit synonym groups (Arabic, Kurdish Sorani, English), already in normalizeSearchText form.
+// TODO: native Kurdish review of the ckb spellings below.
 const UNIT_GROUPS: string[][] = [
-  ["كرتون", "كارتون", "كرتونه", "carton", "ctn", "cartons", "كارتۆن", "كارتون"],
+  ["كرتون", "كارتون", "كرتونه", "carton", "ctn", "cartons", "كارتۆن"],
   ["علبه", "علبة", "box", "boxes", "قوتو", "قوتوو"],
   ["قطعه", "حبه", "pcs", "pc", "piece", "pieces", "دانه", "دانە", "عدد"],
   ["دزينه", "دزينة", "دستة", "dozen", "doz", "dz", "دوزينه", "دوزینە", "دەرزەن"],
@@ -59,7 +60,7 @@ export function matchUnitText(
   if (exact.length > 1) return null;
   const concept = conceptOf(t);
   if (concept < 0) return null;
-  const byConcept = names.filter((u) => u.names.some((n) => n === t || conceptOf(n) === concept));
+  const byConcept = names.filter((u) => u.names.some((n) => conceptOf(n) === concept));
   return byConcept.length === 1 ? byConcept[0].id : null;
 }
 
@@ -67,14 +68,21 @@ function abs(n: bigint): bigint {
   return n < 0n ? -n : n;
 }
 
+const MAX_TEXT_LENGTH = 32;
+
+/** Positive decimal; a comma is accepted only as a well-formed thousands separator ("2,5" is unreadable). */
 function parseQuantity(text: string): { int: bigint; den: bigint } | null {
-  const m = /^(\d+)(?:\.(\d+))?$/.exec(normalizeDigits(text).trim().replace(/,/g, ""));
+  if (text.length > MAX_TEXT_LENGTH) return null;
+  const m = /^((?:\d{1,3}(?:,\d{3})+)|\d+)(?:\.(\d+))?$/.exec(normalizeDigits(text).trim());
   if (!m) return null;
   const frac = m[2] ?? "";
-  return { int: BigInt(m[1] + frac), den: 10n ** BigInt(frac.length) };
+  const int = BigInt(m[1].replace(/,/g, "") + frac);
+  if (int <= 0n) return null;
+  return { int, den: 10n ** BigInt(frac.length) };
 }
 
 function parseMoney(text: string, currency: Currency): bigint | null {
+  if (text.length > MAX_TEXT_LENGTH) return null;
   try {
     return parseMoneyText(text, currency);
   } catch {
@@ -99,11 +107,12 @@ function exactLine(line: { quantity: string; unitPrice: string }, currency: Curr
 export function checkLineArithmetic(
   line: { quantity: string; unitPrice: string; lineTotal?: string },
   currency: Currency,
-): { ok: boolean; reason?: "TOTAL_MISMATCH" } {
-  if (line.lineTotal === undefined) return { ok: true };
+): { ok: boolean; reason?: "TOTAL_MISMATCH" | "UNREADABLE" } {
   const exact = exactLine(line, currency);
+  if (!exact) return { ok: false, reason: "UNREADABLE" };
+  if (line.lineTotal === undefined) return { ok: true };
   const total = parseMoney(line.lineTotal, currency);
-  if (!exact || total === null) return { ok: false, reason: "TOTAL_MISMATCH" };
+  if (total === null) return { ok: false, reason: "UNREADABLE" };
   const diff = abs(total * exact.den - exact.num);
   return withinTolerance(diff, exact.den, currency) ? { ok: true } : { ok: false, reason: "TOTAL_MISMATCH" };
 }
@@ -150,9 +159,9 @@ export function classifyLine(input: {
   return input.match === "barcode-exact" ? "MATCHED" : "SUGGESTED";
 }
 
-/** sha256 (hex) over the parts concatenated in the order given. */
+/** sha256 (hex) over the per-part sha256 digests in the order given (no boundary collisions). */
 export function intakeFileHash(parts: Buffer[]): string {
-  const h = createHash("sha256");
-  for (const p of parts) h.update(p);
-  return h.digest("hex");
+  const outer = createHash("sha256");
+  for (const p of parts) outer.update(createHash("sha256").update(p).digest());
+  return outer.digest("hex");
 }
