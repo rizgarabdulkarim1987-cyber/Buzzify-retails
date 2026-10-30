@@ -779,6 +779,7 @@ export const en: Messages = {
         EXPIRY_REQUIRED: "This item has an expiry date, so enter it.",
         EXPIRED: "The expiry date has passed, and expired goods cannot be received.",
       },
+      lineInvalid: "A value in this line is not valid (quantity, cost, exchange rate or date). Correct it and try again.",
       warnings: {
         COST_MISSING: "No cost: valued at zero.",
         EXPIRED: "Expired: it goes into stock but never counts as available to sell.",

@@ -12,7 +12,9 @@ import {
   blockedReason,
   draftPayload,
   firstUnpostable,
+  failedLine,
   firstUnsavable,
+  formGate,
   hasHiddenCosts,
   isSaveBlocking,
   lineIssues,
@@ -90,10 +92,12 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
   const [hits, setHits] = useState<ReceiveHit[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [checkRun, setCheckRun] = useState(0);
+  const [focusLine, setFocusLine] = useState<{ n: number; run: number } | null>(null);
 
   // A draft whose costs this role cannot see is never saved from here (a save replaces every line).
   const hidden = hasHiddenCosts(lines);
   const locked = readOnly || hidden || conflict || done !== null;
+  const gate = formGate({ hydrated, readOnly, hiddenCosts: hidden, conflict, done: done !== null, posting });
 
   // What is on screen, for the save and post handlers (which run after the render that drew it).
   const latest = useRef({ kind, supplier, note, lines });
@@ -107,6 +111,8 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
   });
   const saveAttempt = useRef<{ payload: string; key: string } | null>(null);
   const postAttempt = useRef<{ payload: string; key: string } | null>(null);
+  const discardAttempt = useRef<{ payload: string; key: string } | null>(null);
+  const postingRef = useRef(false);
   const saving = useRef<Promise<boolean> | null>(null);
   const flight = useRef(new SingleFlight());
   const scans = useRef<Promise<void>>(Promise.resolve());
@@ -114,6 +120,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
   const scanRef = useRef<HTMLInputElement>(null);
   const linesRef = useRef<HTMLOListElement>(null);
   const doneRef = useRef<HTMLHeadingElement>(null);
+  const reloadRef = useRef<HTMLButtonElement>(null);
 
   /** A change to save: the save state says so at once, the save itself follows a moment later. */
   const touch = useCallback(() => {
@@ -188,12 +195,27 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
     }
   }, [query, settings, today]);
 
-  // A moment after each change, save the draft (one timer; a newer change restarts it).
+  // A moment after each change, save the draft (one timer; a newer change restarts it). Never while
+  // a post is on its way: the post saves first itself, and a timer armed then is dropped.
+  const canAutosave = gate.canAutosave;
   useEffect(() => {
-    if (rev === 0 || locked) return;
+    if (rev === 0 || !canAutosave) return;
     const timer = setTimeout(() => void saveNow(), SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [rev, locked, saveNow]);
+  }, [rev, canAutosave, saveNow]);
+
+  // A conflict disables the form: focus moves to "load the latest version" (never the body).
+  useEffect(() => {
+    if (conflict) reloadRef.current?.focus();
+  }, [conflict]);
+
+  // A refusal that names a line: focus that line's first field (or its remove button).
+  useEffect(() => {
+    if (!focusLine) return;
+    const li = linesRef.current?.querySelector<HTMLElement>(`[data-line="${focusLine.n}"]`);
+    const target = li?.querySelector<HTMLElement>('[aria-invalid="true"]:not(:disabled)') ?? li?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled), button:not(:disabled)");
+    target?.focus();
+  }, [focusLine]);
 
   // After a refused post, take the user to the first field to fix.
   useEffect(() => {
@@ -209,6 +231,8 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
   // Adding items
 
   async function addHit(hit: ReceiveHit) {
+    // A scan queued before a post started is not added: it would not be in the posted document.
+    if (postingRef.current || stopped.current) return;
     const name = pickName(locale, hit);
     if (latest.current.lines.length >= MAX_LINES) return setAnnounce(r.tooManyLines);
     const read = await receiveItemAction({ productId: hit.productId, variantId: hit.variantId });
@@ -216,6 +240,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
     const item = read.value;
     const blocked = blockedReason(item);
     if (blocked) return setAnnounce(fill(r.blocked[blocked], { name }));
+    if (postingRef.current || stopped.current) return;
     const result = addScanned(latest.current.lines, item, scanUnit(item, hit.unitId), settings, newKey());
     latest.current = { ...latest.current, lines: result.lines };
     edit(() => result.lines);
@@ -258,12 +283,13 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
   const onScan = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = search.trim();
-    if (text === "" || locked) return;
+    if (text === "" || !gate.canScan || postingRef.current) return;
     setSearch("");
     enqueue(() => lookUp(text));
   };
 
   const pickHit = (hit: ReceiveHit) => {
+    if (!gate.canScan || postingRef.current) return;
     setHits(null);
     setSearch("");
     enqueue(() => addHit(hit));
@@ -299,6 +325,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
   // Post and delete
 
   async function post() {
+    if (!gate.canPost) return;
     await flight.current.run(async () => {
       setFailure(null);
       const st = latest.current;
@@ -313,6 +340,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
         return;
       }
       setPosting(true);
+      postingRef.current = true;
       try {
         if (!hasHiddenCosts(st.lines) && !(await saveNow())) return;
         const { documentId: id, version } = saved.current;
@@ -337,12 +365,17 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
           stopped.current = true;
           setConflict(true);
         }
-        if (res.details?.lineNo) setShowAll(true);
         setFailure(res);
+        const line = failedLine(res);
+        if (line !== null && res.code !== "VERSION_CONFLICT") {
+          setShowAll(true);
+          setFocusLine((f) => ({ n: line, run: (f?.run ?? 0) + 1 }));
+        }
       } catch {
         // No answer: the key is kept, so posting again replays instead of posting twice.
         setFailure({ code: "INTERNAL" });
       } finally {
+        postingRef.current = false;
         setPosting(false);
       }
     });
@@ -355,7 +388,11 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
     setFailure(null);
     try {
       while (saving.current) await saving.current;
-      const res = await discardReceiptAction(newKey(), { documentId: id, expectedVersion: saved.current.version ?? version });
+      const expectedVersion = saved.current.version ?? version;
+      // The same delete sent again (after no answer) keeps its key.
+      discardAttempt.current = nextAttempt(discardAttempt.current, `${id}:${expectedVersion}`, newKey);
+      const res = await discardReceiptAction(discardAttempt.current.key, { documentId: id, expectedVersion });
+      discardAttempt.current = null;
       if (!res.ok) {
         if (res.code === "VERSION_CONFLICT") setConflict(true);
         setFailure(res);
@@ -398,7 +435,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
 
   const issues = lines.map((l) => lineIssues(l, kind, settings, today));
   const blockedPost = issues.some((i) => i.problems.length > 0);
-  const inert = !hydrated || locked || posting;
+  const inert = !gate.canEdit;
 
   return (
     <div className="receipt" data-testid="receipt-form" data-kind={kind}>
@@ -410,7 +447,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
         <div className="section product-note" data-testid="receipt-conflict">
           <Notice tone="danger">{r.conflict}</Notice>
           <div>
-            <button type="button" className="btn btn-secondary" onClick={() => router.refresh()}>
+            <button ref={reloadRef} type="button" className="btn btn-secondary" onClick={() => router.refresh()} data-testid="receipt-reload">
               {r.reload}
             </button>
           </div>
@@ -484,6 +521,8 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
               placeholder={r.scanPlaceholder}
               value={search}
               disabled={!hydrated || locked}
+              readOnly={posting}
+              aria-disabled={posting || undefined}
               onChange={(e) => setSearch(e.target.value)}
               aria-describedby={`${uid}-scan-hint`}
               data-testid="receipt-scan"
@@ -492,7 +531,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
               {r.scanHint}
             </span>
           </label>
-          <button type="submit" className="btn btn-secondary" disabled={!hydrated || locked} aria-busy={searching || undefined} data-testid="receipt-scan-submit">
+          <button type="submit" className="btn btn-secondary" disabled={!hydrated || locked} aria-disabled={posting || undefined} aria-busy={searching || undefined} data-testid="receipt-scan-submit">
             {searching ? r.searching : r.add}
           </button>
         </form>
@@ -500,7 +539,7 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
           <ul className="receipt-hits" aria-label={r.results} data-testid="receipt-hits">
             {hits.map((h) => (
               <li key={`${h.variantId}:${h.unitId ?? ""}`}>
-                <button type="button" className="receipt-hit" onClick={() => pickHit(h)} data-testid="receipt-hit">
+                <button type="button" className="receipt-hit" onClick={() => pickHit(h)} aria-disabled={posting || undefined} data-testid="receipt-hit">
                   <span className="truncate" dir="auto">
                     {pickName(locale, h)}
                     {h.matchedUnitName ? ` · ${h.matchedUnitName}` : ""}
@@ -585,7 +624,8 @@ export function ReceiptForm({ locale, t, settings, today, readOnly, kind: initia
             posting={posting}
             blocked={showAll && blockedPost}
             canDiscard={documentId !== null}
-            disabled={!hydrated || readOnly || conflict}
+            disabled={!hydrated || readOnly}
+            unavailable={conflict}
             onPost={() => void post()}
             onDiscard={() => setConfirmDiscard(true)}
           />

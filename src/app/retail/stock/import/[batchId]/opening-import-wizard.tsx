@@ -62,6 +62,30 @@ const DONE_FILTERS: Filter[] = ["ALL", "COMMITTED", "SKIPPED", "REJECTED"];
 const COLUMN_MAX = 200;
 
 /**
+ * The batch whose preview heading takes focus when the wizard mounts again: a validation ends with
+ * router.refresh(), which remounts the wizard (new version), so the clicked button is gone.
+ */
+const FOCUS_PREVIEW = "opening-import-focus-preview";
+
+function markFocusPreview(batchId: string) {
+  try {
+    sessionStorage.setItem(FOCUS_PREVIEW, batchId);
+  } catch {
+    // Storage blocked: focus then stays where the browser leaves it.
+  }
+}
+
+function takeFocusPreview(batchId: string): boolean {
+  try {
+    if (sessionStorage.getItem(FOCUS_PREVIEW) !== batchId) return false;
+    sessionStorage.removeItem(FOCUS_PREVIEW);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The wizard of one opening-stock file. STAGED -> column mapping; VALIDATED -> preview, the
  * "items with stock" choice and posting (one slice of up to 500 rows per call, with progress; a
  * stop leaves the posted slices posted and "continue" posts the rest); COMMITTED -> summary and the
@@ -96,11 +120,18 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
   const posted = batch.postedRows > 0;
   const canRemap = status !== "COMMITTED" && !posted;
   const working = busy !== null && busy !== "rows";
-  const inert = !hydrated || working || readOnly;
+  // Controls are disabled only when they cannot be used at all; the one clicked keeps focus while
+  // its work runs (aria-disabled, and the handlers ignore it while busy).
+  const inert = !hydrated || readOnly;
 
   useEffect(() => {
     if (note?.tone === "danger") noteRef.current?.scrollIntoView({ block: "nearest" });
   }, [note]);
+
+  // After a validation (which remounted the wizard), focus the preview's heading, never the body.
+  useEffect(() => {
+    if (takeFocusPreview(batch.id)) doneRef.current?.focus();
+  }, [batch.id]);
 
   useEffect(() => {
     if (result) doneRef.current?.focus();
@@ -147,6 +178,7 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
   const problems = mappingProblems(mapping);
 
   async function preview() {
+    if (working) return;
     if (problems.length > 0) return setNote({ tone: "danger", text: problems.map((p) => ti.problems[p]).join(" ") });
     const payload = JSON.stringify(mapping);
     if (validateKey.current?.payload !== payload) validateKey.current = { payload, key: newKey() };
@@ -157,6 +189,7 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
       const r = await validateOpeningAction(key, { batchId: batch.id, mapping });
       validateKey.current = null;
       if (!r.ok) return showFailure(r);
+      markFocusPreview(batch.id);
       router.refresh();
     } catch {
       setNote({ tone: "danger", text: t.internalError });
@@ -207,6 +240,7 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
   }
 
   async function download() {
+    if (working) return;
     setBusy("download");
     setNote(null);
     try {
@@ -264,7 +298,7 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
               noValidate
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!inert) void preview();
+                if (!inert && !working) void preview();
               }}
             >
               <p className="muted">{ti.mappingIntro}</p>
@@ -278,7 +312,7 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
                       <select
                         className="input"
                         value={mapping[f] === null ? "" : String(mapping[f])}
-                        disabled={inert || lockedField}
+                        disabled={inert || working || lockedField}
                         onChange={(e) =>
                           setMapping((m) => lockedMapping({ ...m, [f]: e.target.value === "" ? null : Number(e.target.value) }, batch.mapping, canSeeCost, batch.costColumns))
                         }
@@ -306,7 +340,14 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
                 </ul>
               ) : null}
               <div className="import-actions">
-                <button type="submit" className="btn btn-primary" disabled={inert} aria-busy={busy === "validate" || undefined} data-testid="opening-validate">
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={inert}
+                  aria-disabled={working || undefined}
+                  aria-busy={busy === "validate" || undefined}
+                  data-testid="opening-validate"
+                >
                   {busy === "validate" ? ti.validating : ti.validate}
                 </button>
               </div>
@@ -491,7 +532,7 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
               <legend>{ti.hasStockTitle}</legend>
               <p>{fill(ti.hasStockBody, { count: n(batch.summary.hasStock) })}</p>
               <label className="check">
-                <input type="checkbox" checked={includeHasStock} onChange={(e) => setIncludeHasStock(e.target.checked)} disabled={inert} data-testid="opening-include-has-stock" />
+                <input type="checkbox" checked={includeHasStock} onChange={(e) => setIncludeHasStock(e.target.checked)} disabled={inert || working} data-testid="opening-include-has-stock" />
                 {ti.includeHasStock}
               </label>
               {!includeHasStock ? <span className="hint">{ti.hasStockSkipped}</span> : null}
@@ -503,8 +544,8 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
               type="button"
               className="btn btn-primary"
               onClick={() => void commit()}
-              disabled={!hydrated || readOnly || (working && busy !== "commit")}
-              aria-disabled={busy === "commit" || undefined}
+              disabled={inert}
+              aria-disabled={working || undefined}
               aria-busy={busy === "commit" || undefined}
               data-testid="opening-commit"
             >
@@ -526,7 +567,17 @@ export function OpeningImportWizard({ locale, t, currency, canSeeCost, readOnly,
           {stats.rejected > 0 ? <p className="muted">{ti.downloadHint}</p> : null}
           <div className="import-actions">
             {stats.rejected > 0 ? (
-              <button type="button" className="btn btn-primary" onClick={() => void download()} disabled={inert} aria-busy={busy === "download" || undefined} data-testid="opening-download-rejected">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  if (!working) void download();
+                }}
+                disabled={inert}
+                aria-disabled={working || undefined}
+                aria-busy={busy === "download" || undefined}
+                data-testid="opening-download-rejected"
+              >
                 {ti.downloadRejected}
               </button>
             ) : null}

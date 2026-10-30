@@ -13,6 +13,7 @@ import {
   draftPayload,
   firstUnpostable,
   firstUnsavable,
+  formGate,
   hasHiddenCosts,
   lineIssues,
   newLine,
@@ -131,6 +132,26 @@ describe("receiving rules", () => {
     const a = nextAttempt(null, "doc:1", makeKey);
     expect(nextAttempt(a, "doc:1", makeKey)).toBe(a);
     expect(nextAttempt(a, "doc:2", makeKey).key).not.toBe(a.key);
+  });
+
+  it("scanning, editing and autosave stop while a post is in flight", () => {
+    const base = { hydrated: true, readOnly: false, hiddenCosts: false, conflict: false, done: false, posting: false };
+    expect(formGate(base)).toEqual({ canEdit: true, canScan: true, canAutosave: true, canPost: true });
+    // During a post nothing may add or change a line, and no draft save may race the post.
+    expect(formGate({ ...base, posting: true })).toEqual({ canEdit: false, canScan: false, canAutosave: false, canPost: false });
+    // A save conflict stops everything until the latest draft is loaded; the post button stays
+    // focusable (PostBar draws it aria-disabled), so focus never falls to the body.
+    expect(formGate({ ...base, conflict: true })).toEqual({ canEdit: false, canScan: false, canAutosave: false, canPost: false });
+    const conflicted = html(createElement(PostBar, { t: ar, posting: false, blocked: false, canDiscard: true, unavailable: true, onPost: () => {}, onDiscard: () => {} }));
+    expect(conflicted).toMatch(/<button[^>]*aria-disabled="true"[^>]*data-testid="receipt-post"/);
+    expect(conflicted).not.toMatch(/<button[^>]*disabled=""[^>]*data-testid="receipt-post"/);
+    // Read-only, posted, or before hydration: nothing at all.
+    for (const s of [{ readOnly: true }, { done: true }, { hydrated: false }]) {
+      const g = formGate({ ...base, ...s });
+      expect([g.canEdit, g.canScan, g.canPost]).toEqual([false, false, false]);
+    }
+    // Hidden costs: the draft opens read-only for lines, but it is not posted from here either.
+    expect(formGate({ ...base, hiddenCosts: true }).canScan).toBe(false);
   });
 
   it("the rate field appears only for a foreign currency and defaults to the last rate", () => {
@@ -288,6 +309,9 @@ describe("receiving and import messages", () => {
         expect(text).toContain(t === en ? "Line 2" : t.stock.receive.doneWarning.split("{")[0]!.trim());
       }
       expect(receiptFailureMessage(t, { code: "VERSION_CONFLICT" })).toBe(t.errors.VERSION_CONFLICT);
+      // An invalid line is named without guessing the field (not always the quantity).
+      const invalid = receiptFailureMessage(t, { code: "INVALID_INPUT", details: { lineNo: "3" } });
+      expect(invalid).toContain(t.stock.receive.lineInvalid);
       expect(receiptFailureMessage(t, { code: "TEST_ITEM", details: { lineNo: "1" } })).not.toContain("TEST_ITEM");
     }
 

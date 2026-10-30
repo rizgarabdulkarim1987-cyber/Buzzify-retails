@@ -358,6 +358,23 @@ export function receiveHref(target: { draft: string } | { kind: ReceiptKind }, e
 }
 
 // ---------------------------------------------------------------------------------------------
+// What the form allows now
+
+export type FormState = { hydrated: boolean; readOnly: boolean; hiddenCosts: boolean; conflict: boolean; done: boolean; posting: boolean };
+
+/**
+ * What the form accepts in its state: nothing is edited, scanned or saved while a post is on its
+ * way (a line added then would not be in the posted document, and a save would race the post), and
+ * nothing at all after a conflict, after posting, in a read-only business, or for a draft whose
+ * costs this role cannot see (posting and deleting it stay possible).
+ */
+export function formGate(s: FormState): { canEdit: boolean; canScan: boolean; canAutosave: boolean; canPost: boolean } {
+  const closed = !s.hydrated || s.readOnly || s.conflict || s.done;
+  const editable = !closed && !s.hiddenCosts && !s.posting;
+  return { canEdit: editable, canScan: editable, canAutosave: !s.readOnly && !s.conflict && !s.done && !s.hiddenCosts && !s.posting, canPost: !closed && !s.posting };
+}
+
+// ---------------------------------------------------------------------------------------------
 // Sending once
 
 /**
@@ -399,7 +416,8 @@ export function failedLine(f: StockFailure): number | null {
 
 /** A refusal in the interface language; with "Line n:" (in the interface digits) in front when the server named the line. */
 export function receiptFailureMessage(t: Messages, f: StockFailure, locale: Locale = "en"): string {
-  const text = f.code === "INVALID_INPUT" && failedLine(f) !== null ? t.stock.receive.problems.BAD_QUANTITY : stockFailureMessage(t, f);
+  // The server names only the line of an INVALID_INPUT (a quantity, cost, rate or value it could not take).
+  const text = f.code === "INVALID_INPUT" && failedLine(f) !== null ? t.stock.receive.lineInvalid : stockFailureMessage(t, f);
   const n = failedLine(f);
   return n === null ? text : fill(t.stock.receive.doneWarning, { n: formatNumber(locale, n), text });
 }

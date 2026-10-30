@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { can } from "@/server/domain/permissions";
+import { businessToday } from "@/server/domain/stock";
+import type { ActionMeta } from "@/server/framework/action";
+import { DEFAULT_TIMEZONE } from "@/server/setup/progress";
 import { listStockDocuments } from "@/server/stock/documents";
 import { getI18n } from "../../../_lib/i18n";
 import { isId } from "../../../_lib/workplace";
@@ -9,6 +12,7 @@ import { loadStockAccess } from "../_lib/access";
 import { loadReceiptDraft } from "../_lib/receipt-load";
 import { rateText, receiptFailureMessage, receiveHref, type ReceiptKind, type ReceiptSettings } from "../_lib/receipt-rules";
 import { DraftList, ReceiptDone, type DraftRowDto } from "../_lib/receipt-views";
+import { businessTimezone } from "../_lib/stock-reads";
 import { ReadOnlyBanner } from "../_lib/views";
 import { postedSummaryAction } from "./actions";
 import { ReceiptForm } from "./receipt-form";
@@ -18,10 +22,20 @@ export const dynamic = "force-dynamic";
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : "");
 
-/** The business's day for the screen's expiry hints (the server decides when posting). */
-function todayText(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Baghdad", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+/** The business's day (its own time zone) for the screen's expiry hints; the server decides when posting. */
+async function todayText(meta: ActionMeta): Promise<string> {
+  const tz = await businessTimezone({}, meta);
+  try {
+    return businessToday(new Date(), tz.ok ? tz.value : DEFAULT_TIMEZONE).toISOString().slice(0, 10);
+  } catch {
+    return businessToday(new Date(), DEFAULT_TIMEZONE).toISOString().slice(0, 10);
+  }
 }
+
+/** Open drafts are found by paging the newest documents of each kind, a bounded number of pages. */
+const DRAFT_PAGE = 50;
+const DRAFT_PAGES = 4;
+const DRAFTS_SHOWN = 10;
 
 /**
  * Receiving goods (RECEIPT) or entering opening stock (OPENING, ?kind=opening). ?draft=id reopens a
@@ -108,13 +122,21 @@ export default async function ReceivePage({ searchParams }: { searchParams: Sear
   let drafts: DraftRowDto[] = [];
   if (!initial) {
     for (const k of ["RECEIPT", "OPENING"] as const) {
-      const list = await listStockDocuments({ kind: k, limit: 20 }, access.meta);
-      if (!list.ok) continue;
-      for (const d of list.value.rows) {
-        if (d.status === "DRAFT") drafts.push({ id: d.id, kind: k, lineCount: d.lineCount, createdAt: d.createdAt.toISOString() });
+      let cursor: string | undefined;
+      let found = 0;
+      for (let p = 0; p < DRAFT_PAGES && found < DRAFTS_SHOWN; p += 1) {
+        const list = await listStockDocuments({ kind: k, limit: DRAFT_PAGE, ...(cursor ? { cursor } : {}) }, access.meta);
+        if (!list.ok) break;
+        for (const d of list.value.rows) {
+          if (d.status !== "DRAFT") continue;
+          found += 1;
+          drafts.push({ id: d.id, kind: k, lineCount: d.lineCount, createdAt: d.createdAt.toISOString() });
+        }
+        if (!list.value.nextCursor) break;
+        cursor = list.value.nextCursor;
       }
     }
-    drafts = drafts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
+    drafts = drafts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, DRAFTS_SHOWN);
   }
 
   return (
@@ -140,7 +162,7 @@ export default async function ReceivePage({ searchParams }: { searchParams: Sear
         locale={locale}
         t={t}
         settings={settings}
-        today={todayText()}
+        today={await todayText(access.meta)}
         readOnly={access.readOnly}
         kind={kind}
         initial={initial?.ok ? initial.value : null}

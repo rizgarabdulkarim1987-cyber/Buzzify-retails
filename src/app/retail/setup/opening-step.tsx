@@ -32,21 +32,28 @@ export function OpeningStep({ businessId, status, canReceive, canImport, canSkip
   const [pending, startTransition] = useTransition();
   const key = useRef(newKey());
   const enterRef = useRef<HTMLAnchorElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
-  // The skip button goes away once skipped: focus moves to the step's first link, never the body.
+  // The skip button goes away once skipped: focus moves to the step's first link (or, without one,
+  // the step itself), never the body.
   useEffect(() => {
-    if (state?.status === "skipped") enterRef.current?.focus();
+    if (state?.status === "skipped") (enterRef.current ?? boxRef.current)?.focus();
   }, [state]);
 
   const skip = () =>
     startTransition(async () => {
-      const r = await skipSetupStep(key.current, businessId, 6);
-      setState(r);
-      key.current = newKey();
+      // A thrown action (network, server) is a notice here, not the error boundary.
+      try {
+        const r = await skipSetupStep(key.current, businessId, 6);
+        setState(r);
+        key.current = newKey();
+      } catch {
+        setState({ status: "failed", code: "INTERNAL" });
+      }
     });
 
   return (
-    <div className="setup-catalog" data-testid="setup-opening">
+    <div ref={boxRef} tabIndex={-1} className="setup-catalog" data-testid="setup-opening">
       <p className="muted">{o.intro}</p>
       {status === "SKIPPED" ? <p data-testid="setup-opening-skipped">{o.skipped}</p> : null}
       {canReceive ? (

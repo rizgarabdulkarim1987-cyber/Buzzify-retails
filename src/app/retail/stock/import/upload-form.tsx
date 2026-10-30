@@ -100,7 +100,14 @@ export function OpeningUploadForm({ t, fromSetup }: { t: Messages; fromSetup: bo
         {error ? <Notice tone="danger">{error}</Notice> : null}
       </div>
       <div className="import-actions">
-        <button type="submit" className="btn btn-primary" disabled={!hydrated || busy} aria-busy={busy || undefined} data-testid="opening-upload-submit">
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={!hydrated}
+          aria-disabled={busy || undefined}
+          aria-busy={busy || undefined}
+          data-testid="opening-upload-submit"
+        >
           {busy ? ti.uploading : ti.upload}
         </button>
       </div>

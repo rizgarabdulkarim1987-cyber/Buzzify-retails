@@ -8,6 +8,7 @@ import { RefusedPage } from "../../../catalog/_lib/state-pages";
 import { loadStockAccess } from "../../_lib/access";
 import { OPENING_FIELDS, rowDto, type OpeningMappingDto, type OpeningStatsDto, type OpeningSummaryDto } from "../../_lib/opening-import";
 import { receiptFailureMessage } from "../../_lib/receipt-rules";
+import { openingCostColumns } from "../../_lib/stock-reads";
 import { ReadOnlyBanner } from "../../_lib/views";
 import { OpeningImportWizard } from "./opening-import-wizard";
 
@@ -60,8 +61,12 @@ export default async function OpeningImportBatchPage({ params, searchParams }: {
   const mapping: OpeningMappingDto = b.mapping
     ? (Object.fromEntries(OPENING_FIELDS.map((f) => [f, b.mapping![f] !== null && b.mapping![f]! < b.headers.length ? b.mapping![f] : null])) as OpeningMappingDto)
     : auto;
-  // The columns that hold costs: locked for a role without cost.view (the server refuses a change).
-  const costColumns = [...new Set([auto.cost, b.mapping?.cost ?? null].filter((c): c is number => c !== null))];
+  // The columns that hold costs, as the server counts them (every column ever mapped as cost): locked
+  // for a role without cost.view (the server refuses a change). Indexes only.
+  const costRead = access.context.canSeeCost ? null : await openingCostColumns({ batchId }, access.meta);
+  const costColumns = [
+    ...new Set([auto.cost, b.mapping?.cost ?? null, ...(costRead?.ok ? costRead.value : [])].filter((c): c is number => c !== null && c < b.headers.length)),
+  ];
   const stats = (b.stats ?? {}) as Record<string, unknown>;
   const status = b.status === "STAGED" || b.status === "VALIDATED" || b.status === "COMMITTED" ? b.status : "FAILED";
   const summary: OpeningSummaryDto = {

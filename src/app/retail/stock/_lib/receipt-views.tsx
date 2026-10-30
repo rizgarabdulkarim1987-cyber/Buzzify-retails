@@ -231,6 +231,8 @@ type PostBarProps = {
   canDiscard: boolean;
   /** Writing is impossible here (a read-only business): both buttons are disabled. */
   disabled?: boolean;
+  /** Posting is not possible now (a conflict to resolve first): the button keeps focus, aria-disabled. */
+  unavailable?: boolean;
   onPost: () => void;
   onDiscard: () => void;
 };
@@ -239,7 +241,7 @@ type PostBarProps = {
  * Post and delete. While a post is on its way the post button is aria-disabled (it keeps focus, so
  * the answer is announced where the user is) and the click does nothing; delete is disabled.
  */
-export function PostBar({ t, posting, blocked, canDiscard, disabled = false, onPost, onDiscard }: PostBarProps) {
+export function PostBar({ t, posting, blocked, canDiscard, disabled = false, unavailable = false, onPost, onDiscard }: PostBarProps) {
   const r = t.stock.receive;
   return (
     <div className="receipt-post">
@@ -251,18 +253,27 @@ export function PostBar({ t, posting, blocked, canDiscard, disabled = false, onP
           type="button"
           className="btn btn-primary"
           disabled={disabled || undefined}
-          aria-disabled={posting || undefined}
+          aria-disabled={posting || unavailable || undefined}
           aria-busy={posting || undefined}
           aria-describedby="receipt-post-hint"
           onClick={() => {
-            if (!posting) onPost();
+            if (!posting && !unavailable) onPost();
           }}
           data-testid="receipt-post"
         >
           {posting ? r.posting : r.post}
         </button>
         {canDiscard ? (
-          <button type="button" className="btn btn-danger" disabled={disabled || posting} onClick={onDiscard} data-testid="receipt-discard">
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={disabled || posting}
+            aria-disabled={unavailable || undefined}
+            onClick={() => {
+              if (!unavailable) onDiscard();
+            }}
+            data-testid="receipt-discard"
+          >
             {r.discard}
           </button>
         ) : null}
