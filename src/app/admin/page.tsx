@@ -133,12 +133,20 @@ function BusinessTable({ businesses, locale, t }: { businesses: DirectoryBusines
             businessName={b.name}
             enabled={b.aiIntake}
             columns={COLUMNS}
-            t={{ adminAi: t.adminAi, errors: t.errors, internalError: t.internalError }}
+            coreLinked={b.coreLinked}
+            t={{ adminAi: t.adminAi, adminCore: t.adminCore, errors: t.errors, internalError: t.internalError }}
           >
             <td>
-              <span className="truncate" title={b.name}>
-                {b.name}
-              </span>
+              <div className="name-cell">
+                <span className="truncate" title={b.name}>
+                  {b.name}
+                </span>
+                {b.coreLinked ? (
+                  <span className="badge" data-testid="core-linked-badge">
+                    {t.adminCore.badge}
+                  </span>
+                ) : null}
+              </div>
             </td>
             <td>
               <span className="badge" data-tone={STATUS_TONE[b.status]}>

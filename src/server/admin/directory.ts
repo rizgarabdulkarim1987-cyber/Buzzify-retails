@@ -21,6 +21,8 @@ export type DirectoryBusiness = {
   subscriptionStatus: SubscriptionStatus | null;
   /** The ai.intake master switch: the latest override (as featureEnabled reads it), false when none. */
   aiIntake: boolean;
+  /** Linked to Studio (coreBusinessId set): Studio is the source of truth for plan, subscription, status and the AI switch. */
+  coreLinked: boolean;
 };
 
 export type DirectoryPlan = { code: string; name: string; maxBranches: number };
@@ -37,6 +39,7 @@ export const listBusinesses = definePlatformAction({
         status: true,
         activityType: true,
         createdAt: true,
+        coreBusinessId: true,
         subscriptions: { select: { status: true }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1 },
         featureOverrides: {
           where: { feature: AI_INTAKE_FEATURE },
@@ -54,8 +57,9 @@ export const listBusinesses = definePlatformAction({
       orderBy: [{ maxBranches: "asc" }, { code: "asc" }],
     });
     return {
-      businesses: rows.map(({ subscriptions, featureOverrides, ...b }) => ({
+      businesses: rows.map(({ subscriptions, featureOverrides, coreBusinessId, ...b }) => ({
         ...b,
+        coreLinked: coreBusinessId !== null,
         subscriptionStatus: subscriptions[0]?.status ?? null,
         aiIntake: featureOverrides[0]?.enabled === true,
       })),

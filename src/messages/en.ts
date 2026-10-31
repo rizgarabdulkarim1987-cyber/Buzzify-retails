@@ -143,6 +143,11 @@ export const en: Messages = {
     created: "The business was created and the owner invitation was sent.",
     alreadySubmitted: "This form was already submitted. Refresh the page before creating another business.",
   },
+  adminCore: {
+    badge: "Linked to Studio",
+    notice: "Linked to Studio — Studio is the source of truth. Local changes to the subscription, plan, status or AI switch are overwritten at the next sync.",
+    locked: "Local editing is disabled: change it in Studio.",
+  },
   adminAi: {
     column: "AI reading",
     on: "On",

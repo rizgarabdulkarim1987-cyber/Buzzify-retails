@@ -14,7 +14,9 @@ type Props = {
   businessName: string;
   /** The current state as the page read it (the latest ai.intake override; none: off). */
   enabled: boolean;
-  t: Pick<Messages, "adminAi" | "errors" | "internalError">;
+  t: Pick<Messages, "adminAi" | "adminCore" | "errors" | "internalError">;
+  /** Linked to Studio: the switch is shown but cannot be changed here (Studio overwrites it). */
+  coreLinked?: boolean;
   /** The row's other cells (rendered by the page); the switch is the last cell. */
   children?: ReactNode;
   /** How many columns the table has (the reason form spans them in a row of its own). */
@@ -28,7 +30,7 @@ type Props = {
  * a lost answer. Focus goes to the reason when the form opens and back to the button when it
  * closes (never to the page).
  */
-export function AiSwitchRow({ businessId, businessName, enabled, t, children, columns }: Props) {
+export function AiSwitchRow({ businessId, businessName, enabled, t, children, columns, coreLinked = false }: Props) {
   const a = t.adminAi;
   const formId = `ai-${businessId}`;
   /** The state the open form moves to (fixed when it opens), or null while closed. */
@@ -52,7 +54,7 @@ export function AiSwitchRow({ businessId, businessName, enabled, t, children, co
   const focus = (target: "toggle" | "reason") => setFocusRun((f) => ({ target, n: (f?.n ?? 0) + 1 }));
 
   const open = () => {
-    if (busy.current) return;
+    if (busy.current || coreLinked) return;
     if (next !== null) {
       close();
       return;
@@ -123,12 +125,18 @@ export function AiSwitchRow({ businessId, businessName, enabled, t, children, co
                 aria-expanded={next !== null}
                 aria-controls={next !== null ? formId : undefined}
                 aria-label={fill(enabled ? a.disableFor : a.enableFor, { name: businessName })}
-                aria-disabled={sending || undefined}
+                aria-disabled={sending || coreLinked || undefined}
+                aria-describedby={coreLinked ? `${formId}-core` : undefined}
                 data-testid="ai-switch-toggle"
               >
                 {enabled ? a.disable : a.enable}
               </button>
             </div>
+            {coreLinked ? (
+              <p id={`${formId}-core`} className="hint" data-testid="core-linked-notice">
+                {t.adminCore.locked} {t.adminCore.notice}
+              </p>
+            ) : null}
             {done && next === null ? <Notice tone="success">{done}</Notice> : null}
           </div>
         </td>
