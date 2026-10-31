@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ACTIVITY_TYPES, CAPABILITIES } from "@/server/domain/profiles";
-import { applyCoreState, CORE_SYNC_ACTOR, coreStateSchema, upsertCorePlan } from "@/server/core/state";
+import { applyCoreState, CORE_SYNC_ACTOR, corePlanCode, coreStateSchema, upsertCorePlan } from "@/server/core/state";
 import { db } from "@/server/db";
 import { provisionInTx, MAX_BRANCHES } from "./provision";
 
@@ -61,7 +61,7 @@ export async function provisionFromCore(input: CoreProvisionInput): Promise<{ bu
           capabilities: input.capabilities,
           branches: input.branches,
           currencies: input.currencies,
-          planCode: input.state.plan.code,
+          planCode: corePlanCode(input.state.plan.code),
           trialDays: 1, // placeholder trial row; the snapshot below replaces it
         },
         { actorId: CORE_SYNC_ACTOR },
@@ -80,7 +80,7 @@ export async function provisionFromCore(input: CoreProvisionInput): Promise<{ bu
             name: input.name,
             branches: input.branches.map((b) => b.name),
             currencies: input.currencies,
-            planCode: input.state.plan.code,
+            planCode: corePlanCode(input.state.plan.code),
             version: input.state.version,
           },
         },

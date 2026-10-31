@@ -100,11 +100,11 @@ describe("POST /api/core/v1/provision", () => {
     const caps = (await db.rtCapability.findMany({ where: { businessId: json.businessId } })).map((c) => c.capability);
     expect(caps).toContain("CREDIT");
 
-    const plan = await db.rtPlan.findUniqueOrThrow({ where: { code: "retail-pro" } });
+    const plan = await db.rtPlan.findUniqueOrThrow({ where: { code: "core:retail-pro" } });
     expect(plan).toMatchObject({ maxBranches: 3, maxTerminals: 4, maxUsers: 9, storageMb: 2048, aiMonthly: 50, name: "Retail Pro" });
     const subs = await db.rtSubscription.findMany({ where: { businessId: json.businessId } });
     expect(subs).toHaveLength(1);
-    expect(subs[0]).toMatchObject({ status: "ACTIVE", planCode: "retail-pro", graceDays: 5, trialEndsAt: null });
+    expect(subs[0]).toMatchObject({ status: "ACTIVE", planCode: "core:retail-pro", graceDays: 5, trialEndsAt: null });
     expect(subs[0]!.currentPeriodEnd.toISOString()).toBe("2026-12-01T00:00:00.000Z");
 
     const overrides = await db.rtFeatureOverride.findMany({ where: { businessId: json.businessId } });
@@ -155,11 +155,27 @@ describe("POST /api/core/v1/provision", () => {
     expect(await counts()).toEqual(NOTHING);
   });
 
-  it("an existing plan code is updated from the snapshot, not duplicated", async () => {
+  it("a local plan with the same code is left untouched; the core plan is a separate core: row", async () => {
     await createPlan(db, { code: "retail-pro", maxBranches: 1 });
     expect((await POST(signed(body()))).status).toBe(200);
-    expect(await db.rtPlan.count()).toBe(1);
-    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "retail-pro" } })).maxBranches).toBe(3);
+    expect(await db.rtPlan.count()).toBe(2);
+    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "retail-pro" } })).maxBranches).toBe(1);
+    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "core:retail-pro" } })).maxBranches).toBe(3);
+  });
+
+  it("a deactivated core plan is re-activated and does not block provisioning", async () => {
+    await db.rtPlan.create({ data: { code: "core:retail-pro", name: "old", maxBranches: 1, maxTerminals: 1, maxUsers: 1, storageMb: 1, aiMonthly: 0, active: false } });
+    expect((await POST(signed(body()))).status).toBe(200);
+    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "core:retail-pro" } })).active).toBe(true);
+  });
+
+  it("rejects a TRIAL snapshot without trialEndsAt and a period that ends before it starts (400, nothing written)", async () => {
+    const sub = state().subscription;
+    expect((await POST(signed(body({}, { subscription: { ...sub, status: "TRIAL", trialEndsAt: null } })))).status).toBe(400);
+    expect((await POST(signed(body({}, { subscription: { ...sub, currentPeriodEnd: sub.currentPeriodStart } })))).status).toBe(400);
+    expect((await POST(signed(body({}, { subscription: { ...sub, currentPeriodEnd: "2026-10-01T00:00:00.000Z" } })))).status).toBe(400);
+    expect(await counts()).toEqual(NOTHING);
+    expect(coreStateSchema.safeParse(state({ subscription: { ...sub, status: "TRIAL", trialEndsAt: "2026-11-10T00:00:00.000Z" } })).success).toBe(true);
   });
 });
 
@@ -180,6 +196,16 @@ describe("applyCoreState", () => {
     expect(await apply(id, { version: 6, status: "ACTIVE" })).toEqual({ applied: false });
     const biz = await db.rtBusiness.findUniqueOrThrow({ where: { id } });
     expect(biz).toMatchObject({ status: "SUSPENDED", coreStateVersion: 6 });
+  });
+
+  it("ARCHIVED is terminal: a later ACTIVE snapshot is recorded but not applied", async () => {
+    const id = await provisioned();
+    await apply(id, { version: 2, status: "ARCHIVED" });
+    const events = await db.rtSubscriptionEvent.count({ where: { businessId: id } });
+    await apply(id, { version: 3, status: "ACTIVE", aiIntake: false });
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "ARCHIVED", coreStateVersion: 3 });
+    expect(await db.rtSubscriptionEvent.count({ where: { businessId: id } })).toBe(events);
+    expect(await apply(id, { version: 3, status: "ACTIVE" })).toEqual({ applied: false });
   });
 
   it("appends an ai.intake override only when the value changes", async () => {

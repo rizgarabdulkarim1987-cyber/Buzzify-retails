@@ -15,6 +15,9 @@ import { AI_INTAKE_FEATURE, featureEnabled } from "@/server/framework/features";
 
 export const CORE_SYNC_ACTOR = "core-sync";
 
+/** Core plans live under their own prefix so a snapshot never rewrites a locally managed plan row. */
+export const corePlanCode = (code: string) => `core:${code}`;
+
 const SUBSCRIPTION_STATUSES = ["TRIAL", "ACTIVE", "GRACE", "EXPIRED", "CANCELLED"] as const satisfies readonly SubscriptionStatus[];
 const BUSINESS_STATUSES = ["ACTIVE", "SUSPENDED", "ARCHIVED"] as const satisfies readonly RtBusinessStatus[];
 const LIVE_STATUSES: SubscriptionStatus[] = ["TRIAL", "ACTIVE", "GRACE"];
@@ -52,13 +55,19 @@ export const coreStateSchema: ZodType<CoreState> = z.object({
     storageMb: limit,
     aiMonthly: limit,
   }),
-  subscription: z.object({
-    status: z.enum(SUBSCRIPTION_STATUSES),
-    trialEndsAt: isoDate.nullable(),
-    currentPeriodStart: isoDate,
-    currentPeriodEnd: isoDate,
-    graceDays: z.number().int().min(0).max(365),
-  }),
+  subscription: z
+    .object({
+      status: z.enum(SUBSCRIPTION_STATUSES),
+      trialEndsAt: isoDate.nullable(),
+      currentPeriodStart: isoDate,
+      currentPeriodEnd: isoDate,
+      graceDays: z.number().int().min(0).max(365),
+    })
+    .refine((v) => v.status !== "TRIAL" || v.trialEndsAt !== null, { message: "TRIAL requires trialEndsAt", path: ["trialEndsAt"] })
+    .refine((v) => v.currentPeriodEnd.getTime() > v.currentPeriodStart.getTime(), {
+      message: "currentPeriodEnd must be after currentPeriodStart",
+      path: ["currentPeriodEnd"],
+    }),
   aiIntake: z.boolean(),
   owner: z.object({
     coreUserId: id,
@@ -68,9 +77,11 @@ export const coreStateSchema: ZodType<CoreState> = z.object({
   }),
 });
 
-/** Creates the plan or overwrites its name and limits with the snapshot's (Studio is the source). */
+/** Creates the "core:"-prefixed plan or overwrites its name and limits with the snapshot's; re-activates it. */
 export async function upsertCorePlan(tx: Prisma.TransactionClient, plan: CoreState["plan"]): Promise<void> {
-  const { code, ...fields } = plan;
+  const { code: studioCode, ...limits } = plan;
+  const code = corePlanCode(studioCode);
+  const fields = { ...limits, active: true };
   await tx.rtPlan.upsert({ where: { code }, create: { code, ...fields }, update: fields });
 }
 
@@ -80,13 +91,23 @@ export async function upsertCorePlan(tx: Prisma.TransactionClient, plan: CoreSta
  */
 export async function applyCoreState(tx: Prisma.TransactionClient, businessId: string, state: CoreState): Promise<{ applied: boolean }> {
   // Row lock: concurrent snapshots for this business queue here and re-read the version after.
-  const locked = await tx.$queryRaw<{ coreStateVersion: number | null }[]>`
-    SELECT "coreStateVersion" FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
+  const locked = await tx.$queryRaw<{ coreStateVersion: number | null; status: RtBusinessStatus }[]>`
+    SELECT "coreStateVersion", "status" FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
   if (locked.length === 0) throw new Error("applyCoreState: unknown business");
   if (state.version <= (locked[0]!.coreStateVersion ?? 0)) return { applied: false };
 
+  // ARCHIVED is terminal: keep it, but record the version (and owner) so stale snapshots stay ignored.
+  if (locked[0]!.status === "ARCHIVED") {
+    await tx.rtBusiness.update({
+      where: { id: businessId },
+      data: { coreOwnerUserId: state.owner.coreUserId, coreStateVersion: state.version, version: { increment: 1 } },
+    });
+    return { applied: false };
+  }
+
   await upsertCorePlan(tx, state.plan);
 
+  // Snapshots are state, not transitions: a first snapshot may take SETUP straight to SUSPENDED or ARCHIVED.
   // SETUP becomes ACTIVE with the first ACTIVE snapshot; afterwards Studio's status is taken as is.
   await tx.rtBusiness.update({
     where: { id: businessId },
@@ -95,7 +116,7 @@ export async function applyCoreState(tx: Prisma.TransactionClient, businessId: s
 
   const sub = state.subscription;
   const subData = {
-    planCode: state.plan.code,
+    planCode: corePlanCode(state.plan.code),
     status: sub.status,
     trialEndsAt: sub.trialEndsAt,
     currentPeriodStart: sub.currentPeriodStart,
@@ -149,7 +170,7 @@ function subscriptionEvent(
       fromStatus: from,
       toStatus: to,
       actorId: CORE_SYNC_ACTOR,
-      data: { planCode: state.plan.code, version: state.version },
+      data: { planCode: corePlanCode(state.plan.code), version: state.version },
     },
   });
 }
