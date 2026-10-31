@@ -46,7 +46,10 @@ export type ErrorCode =
   | "AI_BAD_OUTPUT"
   | "INTAKE_NOT_READABLE"
   | "INTAKE_UNRESOLVED"
-  | "DUPLICATE_RECEIPT";
+  | "DUPLICATE_RECEIPT"
+  // Retails <-> Studio link.
+  | "CORE_UNAVAILABLE"
+  | "IDENTITY_CONFLICT";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -105,6 +108,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   AI_BAD_OUTPUT: "تعذّر فهم نتيجة القراءة، ولم تُحسب هذه المحاولة من حصتك. أعد المحاولة أو أدخل البيانات يدوياً.",
   INTAKE_NOT_READABLE: "تعذّرت قراءة الصورة كوصل شراء. صوّر الوصل كاملاً بإضاءة جيدة ثم أعد المحاولة، أو أدخله يدوياً.",
   INTAKE_UNRESOLVED: "في الوصل أسطر لم تُحسم بعد (غير معروفة أو مشكوك فيها). احسم كل سطر أو احذفه، ثم أنشئ المسودة.",
+  CORE_UNAVAILABLE: "تعذّر الاتصال بخدمة Buzzify Studio الآن، ولم تتم إضافة الموظف. أعد المحاولة بعد قليل.",
+  IDENTITY_CONFLICT: "حساب هذا الموظف مرتبط بهوية مختلفة في Buzzify Studio، فلا يمكن إضافته. تواصل مع فريق الدعم.",
   DUPLICATE_RECEIPT: "يبدو أن هذا الوصل قُرئ سابقاً. راجع المستند السابق قبل المتابعة حتى لا يُستلم مرتين.",
 });
 

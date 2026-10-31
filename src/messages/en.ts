@@ -1367,6 +1367,8 @@ export const en: Messages = {
     AI_BAD_OUTPUT: "The reading result could not be understood, and this attempt was not counted against your quota. Try again or enter the details by hand.",
     INTAKE_NOT_READABLE: "The image could not be read as a purchase receipt. Photograph the whole receipt in good light and try again, or enter it by hand.",
     INTAKE_UNRESOLVED: "Some receipt lines are not resolved yet (unknown or doubtful). Resolve or remove every line, then create the draft.",
+    CORE_UNAVAILABLE: "Buzzify Studio cannot be reached right now, so the employee was not added. Try again in a moment.",
+    IDENTITY_CONFLICT: "This employee's account is linked to a different identity in Buzzify Studio, so they cannot be added. Contact support.",
     DUPLICATE_RECEIPT: "This receipt seems to have been read before. Check the earlier document before continuing so it is not received twice.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",

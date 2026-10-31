@@ -13,6 +13,7 @@
 // - stop_reason "refusal" (safety classifier) and "max_tokens" are AI_BAD_OUTPUT; the refusal's
 //   stop_details are never logged or kept.
 import { z } from "zod";
+import { resolveAnthropicKey } from "@/server/core/client";
 import {
   abortReason,
   AiBadOutputError,
@@ -162,10 +163,14 @@ type Call = {
 };
 
 async function callTool(call: Call, opts: ClaudeIntakeOptions): Promise<unknown> {
-  // Read at call time so a missing key is a per-call AI_UNAVAILABLE, not an import-time crash.
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new AiUnavailableError("config");
-  const model = process.env.INTAKE_MODEL || INTAKE_DEFAULT_MODEL;
+  // Resolved at call time (Studio's key, else the environment's) so a missing key is a per-call
+  // AI_UNAVAILABLE, not an import-time crash.
+  const resolved = await resolveAnthropicKey();
+  if (!resolved) throw new AiUnavailableError("config");
+  // The key lookup may have taken a Studio round trip: honour an abort that arrived meanwhile.
+  if (call.signal.aborted) throw new AiUnavailableError(abortReason(call.signal));
+  const { apiKey } = resolved;
+  const model = resolved.model || process.env.INTAKE_MODEL || INTAKE_DEFAULT_MODEL;
   const content = [...call.images.map(contentBlock), { type: "text", text: call.prompt }];
 
   const timeout = AbortSignal.timeout(configuredTimeout(opts, call.timeoutMs));

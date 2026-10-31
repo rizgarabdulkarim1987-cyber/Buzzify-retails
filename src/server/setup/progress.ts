@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Prisma, RtRole } from "@/generated/prisma/client";
+import { ensureStaffIdentities } from "@/server/admin/core-identity";
 import { emailSchema } from "@/server/admin/invitations";
 import { DEFAULT_LOCATION_NAME, MAX_BRANCHES } from "@/server/admin/provision";
 import { findUserIdsByEmail } from "@/server/auth/users";
@@ -279,8 +280,11 @@ const completeStep = defineAction({
   permission: "staff.manage",
   input: stepInput,
   writes: true,
-  async precondition({ input }) {
+  async precondition({ actor, input }) {
     if ((SOON_STEPS as readonly number[]).includes(input.step)) throw new RuleError("STEP_NOT_AVAILABLE");
+    // Linked (Studio) businesses: ensure a Studio identity for each staff email and link it to the
+    // local account before it is added. Runs after the permission check; a standalone business skips it.
+    if (input.step === 5) await ensureStaffIdentities(actor.businessId, input.data.staff.map((s) => s.email));
   },
   async run({ actor, tx, input }): Promise<null> {
     switch (input.step) {
