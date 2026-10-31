@@ -140,6 +140,58 @@ body; accepted skew 120 s) and has a 5 s timeout. Studio verifies with the match
 - Studio must rate-limit `identities`: it creates accounts or invitations for arbitrary emails.
 - Error bodies are never read or logged by Retails; only the status code is kept.
 
+## Studio link (Part A)
+
+Environment (see `.env.example`). The three secrets must be at least 16 characters, should differ from
+each other, and be set as environment variables only (never committed or logged).
+
+| Variable | Meaning |
+| --- | --- |
+| `CORE_BASE_URL` | Studio's base URL, no trailing slash. **https is required in production** (a plain-http URL is refused in production). Unset: standalone mode, no Studio button, no key pull. |
+| `CORE_SYNC_SECRET` | Verifies Studio -> Retails signed requests (`POST /api/core/v1/provision`, `POST` and `GET /api/core/v1/state`). |
+| `CORE_SYNC_SECRET_PREVIOUS` | Optional. The previous sync secret, also accepted during a rotation. |
+| `CORE_OUT_SECRET` | Signs Retails -> Studio requests (key pull, identities). Studio holds the same value. |
+| `CORE_HANDOFF_SECRET` | Verifies the sign-in handoff token signed by Studio. |
+| `CORE_HANDOFF_SECRET_PREVIOUS` | Optional. The previous handoff secret, also accepted during a rotation. |
+
+`APP_URL` must be the public https origin: it builds the callback URL sent to Studio.
+
+**Rotating a secret** (`CORE_SYNC_SECRET` or `CORE_HANDOFF_SECRET`; no downtime):
+1. Set `*_PREVIOUS` to the current value and `*` to the new one in Retails; redeploy. Both are accepted.
+2. Switch Studio's signer to the new value.
+3. After the longest in-flight window (a few minutes for sync, 60 s for a handoff token), clear `*_PREVIOUS`.
+
+`CORE_OUT_SECRET` has no overlap: change it in Studio and Retails together; calls in between fail
+(a key pull falls back to the cached key, a staff add fails with the retryable `CORE_UNAVAILABLE`).
+
+**AI key.** In production the Anthropic key comes only from Studio. `ANTHROPIC_API_KEY` is no longer
+used in production (a fallback outside production only), so the old variable can be removed.
+
+**Sessions and sign-out.** Logout is one-way and declared as such: signing out of Retails does not
+sign out of Studio, and Studio signing out, suspending or removing a user does not end an existing
+Retails session. Every session ends at the latest 12 hours after sign-in (no sliding refresh). Local
+email and password sign-in stays available for development and emergencies; Studio sign-in is
+additional to it.
+
+**Suspend and archive.** A Studio snapshot is state, not an order: SUSPENDED makes the shop read-only,
+ARCHIVED closes it, and ARCHIVED is final (a later ACTIVE snapshot does not reopen it). The effect is
+not instant: it applies when the snapshot is delivered (push, or reconcile below) and the gate is
+read on the next request; a signed-in user keeps reading until then. For a linked shop the admin page
+shows "Linked to Studio" and disables the local AI switch; local edits of plan, subscription,
+status or the AI switch are overwritten by the next snapshot.
+
+**Reconcile.** `GET /api/core/v1/state?coreBusinessId=` (signed with the sync secret, empty body)
+returns the state Retails holds and its version, for Studio to compare with its own and re-push when
+they differ. `GET /api/core/v1/health` is an unauthenticated liveness check. Snapshots with an older
+or equal version are ignored, and one for a shop not provisioned yet is a retryable 404.
+
+**When Studio is down.** Sign-in by handoff fails (the user sees one generic message; local sign-in
+still works). Shops keep running on the last snapshot. Keys already pulled are served from memory
+(60 s cache, up to 1 h stale while Studio fails, Studio is skipped for 15 s after a failure); after
+that, in production, AI reads fail as `AI_UNAVAILABLE` and the quota half unit is refunded. Adding
+staff to a linked shop fails with the retryable `CORE_UNAVAILABLE` until Studio answers. Snapshots
+that Studio could not deliver are re-sent by Studio or picked up by its reconcile.
+
 ## Checks before and after deploying
 
 - `npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code`
