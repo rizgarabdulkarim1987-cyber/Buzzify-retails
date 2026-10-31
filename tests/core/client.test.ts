@@ -48,10 +48,10 @@ describe("http core client", () => {
   });
 
   it("signs POST identities over the raw body", async () => {
-    const fetchMock = vi.fn(async () => json({ coreUserId: "cu_1", created: true }));
+    const fetchMock = vi.fn(async () => json({ coreUserId: "cu_1", created: true, emailVerified: true }));
     vi.stubGlobal("fetch", fetchMock);
     const out = await createHttpCoreClient().ensureIdentity("a@b.co", "Ann");
-    expect(out).toEqual({ coreUserId: "cu_1", created: true });
+    expect(out).toEqual({ coreUserId: "cu_1", created: true, emailVerified: true });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://studio.example/api/retail/v1/identities");
     expect(init.method).toBe("POST");
@@ -90,7 +90,7 @@ describe("http core client", () => {
     const bad = await createHttpCoreClient().getAiConfig().catch((e: unknown) => e);
     expect((bad as CoreClientError).kind).toBe("schema");
 
-    vi.stubGlobal("fetch", vi.fn(async () => json({ coreUserId: "", created: true })));
+    vi.stubGlobal("fetch", vi.fn(async () => json({ coreUserId: "", created: true, emailVerified: true })));
     expect(((await createHttpCoreClient().ensureIdentity("a@b.co").catch((e: unknown) => e)) as CoreClientError).kind).toBe("schema");
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response(`leaked ${KEY}`, { status: 503 })));
@@ -100,6 +100,37 @@ describe("http core client", () => {
     expect(JSON.stringify(http)).not.toContain(KEY);
     expect(http.message).not.toContain(KEY);
     expect(http.message).not.toContain("studio.example");
+  });
+
+  it("an identity reply without emailVerified is malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ coreUserId: "cu_1", created: true })));
+    expect(((await createHttpCoreClient().ensureIdentity("a@b.co").catch((e: unknown) => e)) as CoreClientError).kind).toBe("schema");
+  });
+
+  it("does not follow redirects", async () => {
+    const fetchMock = vi.fn(async () => json({ apiKey: KEY, model: null }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createHttpCoreClient().getAiConfig();
+    expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].redirect).toBe("error");
+  });
+
+  it("HTTP 404 and apiKey null are the definitive no-key reply", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 404 })));
+    expect(await createHttpCoreClient().getAiConfig()).toEqual({ apiKey: null, model: null });
+    vi.stubGlobal("fetch", vi.fn(async () => json({ apiKey: null, model: null })));
+    expect(await createHttpCoreClient().getAiConfig()).toEqual({ apiKey: null, model: null });
+  });
+
+  it("requires https for CORE_BASE_URL in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.CORE_BASE_URL = "http://studio.example";
+    const fetchMock = vi.fn(async () => json({ apiKey: KEY, model: null }));
+    vi.stubGlobal("fetch", fetchMock);
+    const err = (await createHttpCoreClient().getAiConfig().catch((e: unknown) => e)) as CoreClientError;
+    expect(err.kind).toBe("config");
+    expect(fetchMock).not.toHaveBeenCalled();
+    process.env.CORE_BASE_URL = "https://studio.example";
+    expect((await createHttpCoreClient().getAiConfig()).apiKey).toBe(KEY);
   });
 
   it("network failure is typed and does not leak the URL", async () => {
@@ -206,5 +237,94 @@ describe("resolveAnthropicKey", () => {
     expect(err.message).not.toContain(KEY);
     expect(JSON.stringify(err)).not.toContain(KEY);
     for (const s of spies) expect(JSON.stringify(s.mock.calls)).not.toContain(KEY);
+  });
+  it("negative cache: after a failure Studio is skipped for 15 s and the stale value served", async () => {
+    vi.useFakeTimers();
+    let fail = false;
+    const getAiConfig = vi.fn(async () => {
+      if (fail) throw new CoreClientError("network");
+      return { apiKey: KEY, model: "m" };
+    });
+    setCoreClientFake({ ...createFakeCoreClient(), getAiConfig });
+    await resolveAnthropicKey();
+    await vi.advanceTimersByTimeAsync(61_000);
+    fail = true;
+    expect((await resolveAnthropicKey())?.apiKey).toBe(KEY);
+    expect(getAiConfig).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(14_000);
+    await resolveAnthropicKey();
+    expect(getAiConfig).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await resolveAnthropicKey();
+    expect(getAiConfig).toHaveBeenCalledTimes(3);
+  });
+
+  it("negative cache with no value: null in production for 15 s, env key outside it", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => new Response("", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("NODE_ENV", "production"); // the real client: the fake is ignored in production
+    expect(await resolveAnthropicKey()).toBeNull();
+    expect(await resolveAnthropicKey()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(await resolveAnthropicKey()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("staleness is capped at 1 h: older than that is null in production, env outside", async () => {
+    vi.useFakeTimers();
+    let fail = false;
+    setCoreClientFake({
+      ...createFakeCoreClient(),
+      getAiConfig: async () => {
+        if (fail) throw new CoreClientError("network");
+        return { apiKey: KEY, model: "m" };
+      },
+    });
+    await resolveAnthropicKey();
+    fail = true;
+    await vi.advanceTimersByTimeAsync(59 * 60_000);
+    expect((await resolveAnthropicKey())?.apiKey).toBe(KEY);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    process.env.ANTHROPIC_API_KEY = "env-key";
+    expect((await resolveAnthropicKey())?.apiKey).toBe("env-key");
+    vi.stubEnv("NODE_ENV", "production");
+    expect(await resolveAnthropicKey()).toBeNull();
+  });
+
+  it("a definitive no-key reply clears the cache and returns null", async () => {
+    vi.useFakeTimers();
+    let none = false;
+    setCoreClientFake({
+      ...createFakeCoreClient(),
+      getAiConfig: async () => (none ? { apiKey: null, model: null } : { apiKey: KEY, model: "m" }),
+    });
+    process.env.ANTHROPIC_API_KEY = "env-key";
+    await resolveAnthropicKey();
+    none = true;
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(await resolveAnthropicKey()).toBeNull();
+    // and it stays cleared: a later Studio failure does not resurrect the old key
+    none = false;
+    setCoreClientFake({ ...createFakeCoreClient(), getAiConfig: failing("network") });
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect((await resolveAnthropicKey())?.apiKey).toBe("env-key");
+  });
+
+  it("a client that throws synchronously does not wedge the in-flight slot", async () => {
+    let calls = 0;
+    setCoreClientFake({
+      ...createFakeCoreClient(),
+      getAiConfig: (() => {
+        calls++;
+        if (calls === 1) throw new Error("sync boom");
+        return Promise.resolve({ apiKey: KEY, model: null });
+      }) as never,
+    });
+    process.env.ANTHROPIC_API_KEY = "env-key";
+    expect((await resolveAnthropicKey())?.apiKey).toBe("env-key");
+    vi.useFakeTimers({ now: Date.now() + 16_000 });
+    expect((await resolveAnthropicKey())?.apiKey).toBe(KEY);
   });
 });

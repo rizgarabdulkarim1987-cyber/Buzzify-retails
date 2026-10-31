@@ -12,7 +12,7 @@ export function createFakeCoreClient(): CoreClient {
       return { apiKey: "fake-studio-key-0000", model: null };
     },
     async ensureIdentity(email) {
-      return { coreUserId: `fake_${email.trim().toLowerCase()}`, created: false };
+      return { coreUserId: `fake_${email.trim().toLowerCase()}`, created: false, emailVerified: true };
     },
   };
 }

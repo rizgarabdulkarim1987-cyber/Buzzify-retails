@@ -37,7 +37,7 @@ describe("staff add with a Studio identity", () => {
   it("linked business: ensures the identity and links it to the existing local user", async () => {
     const { w, meta } = await business(true);
     const user = await createUser(db, { email: "Cash.Ier@Example.test" });
-    const ensureIdentity = vi.fn(async () => ({ coreUserId: "cu_cash", created: false }));
+    const ensureIdentity = vi.fn(async () => ({ coreUserId: "cu_cash", created: false, emailVerified: true }));
     setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity });
     const r = await addStaff(meta, "cash.ier@example.test", w.branches.A!.id);
     expect(r.ok).toBe(true);
@@ -46,31 +46,46 @@ describe("staff add with a Studio identity", () => {
     expect(await db.rtStaff.count({ where: { userId: user.id } })).toBe(1);
   });
 
-  it("an already linked user with the same id passes; a different id is refused and nothing is added", async () => {
+  it("already linked user: Studio is not called at all (also on a replay while Studio is down), the add proceeds", async () => {
     const { w, meta } = await business(true);
-    const same = await createUser(db, { coreUserId: "cu_same" });
-    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_same", created: false }) });
-    expect((await addStaff(meta, same.email, w.branches.A!.id)).ok).toBe(true);
+    const user = await createUser(db, { coreUserId: "cu_same" });
+    const ensureIdentity = vi.fn(async () => {
+      throw new CoreClientError("network");
+    });
+    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity });
+    expect((await addStaff(meta, user.email, w.branches.A!.id)).ok).toBe(true);
+    expect(ensureIdentity).not.toHaveBeenCalled();
+    expect((await db.user.findUniqueOrThrow({ where: { id: user.id } })).coreUserId).toBe("cu_same");
+  });
 
-    const other = await createUser(db, { coreUserId: "cu_old" });
-    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_new", created: false }) });
-    const r = await addStaff(meta, other.email, w.branches.A!.id);
-    expect(r).toMatchObject({ ok: false, code: "IDENTITY_CONFLICT" });
-    expect((await db.user.findUniqueOrThrow({ where: { id: other.id } })).coreUserId).toBe("cu_old");
-    expect(await db.rtStaff.count({ where: { userId: other.id } })).toBe(0);
+  it("unverified Studio email: not linked, the staff add proceeds as today", async () => {
+    const { w, meta } = await business(true);
+    const user = await createUser(db);
+    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_u", created: true, emailVerified: false }) });
+    expect((await addStaff(meta, user.email, w.branches.A!.id)).ok).toBe(true);
+    expect((await db.user.findUniqueOrThrow({ where: { id: user.id } })).coreUserId).toBeNull();
+  });
+
+  it("platform admin is never linked", async () => {
+    const { w, meta } = await business(true);
+    const admin = await createUser(db);
+    await db.rtPlatformAdmin.create({ data: { userId: admin.id } });
+    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_admin", created: false, emailVerified: true }) });
+    expect((await addStaff(meta, admin.email, w.branches.A!.id)).ok).toBe(true);
+    expect((await db.user.findUniqueOrThrow({ where: { id: admin.id } })).coreUserId).toBeNull();
   });
 
   it("refuses when the Studio id already belongs to another local user", async () => {
     const { w, meta } = await business(true);
     await createUser(db, { coreUserId: "cu_taken" });
     const user = await createUser(db);
-    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_taken", created: false }) });
+    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_taken", created: false, emailVerified: true }) });
     expect(await addStaff(meta, user.email, w.branches.A!.id)).toMatchObject({ ok: false, code: "IDENTITY_CONFLICT" });
   });
 
   it("no local user: Studio is still asked, nothing is stored, and the existing USER_NOT_FOUND path stays", async () => {
     const { w, meta } = await business(true);
-    const ensureIdentity = vi.fn(async () => ({ coreUserId: "cu_x", created: true }));
+    const ensureIdentity = vi.fn(async () => ({ coreUserId: "cu_x", created: true, emailVerified: true }));
     setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity });
     const users = await db.user.count();
     expect(await addStaff(meta, "nobody@example.test", w.branches.A!.id)).toMatchObject({ ok: false, code: "USER_NOT_FOUND" });
@@ -95,7 +110,7 @@ describe("staff add with a Studio identity", () => {
   it("standalone business: Studio is never called and the flow is unchanged", async () => {
     const { w, meta } = await business(false);
     const user = await createUser(db);
-    const ensureIdentity = vi.fn(async () => ({ coreUserId: "cu_x", created: false }));
+    const ensureIdentity = vi.fn(async () => ({ coreUserId: "cu_x", created: false, emailVerified: true }));
     setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity });
     expect((await addStaff(meta, user.email, w.branches.A!.id)).ok).toBe(true);
     expect(ensureIdentity).not.toHaveBeenCalled();

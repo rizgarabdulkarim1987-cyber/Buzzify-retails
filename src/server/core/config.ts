@@ -41,7 +41,10 @@ export function coreConfig() {
   return {
     /** Studio (core) base URL, no trailing slash. */
     get baseUrl(): string {
-      return required("CORE_BASE_URL", false).replace(/\/+$/, "");
+      const url = required("CORE_BASE_URL", false).replace(/\/+$/, "");
+      // The signed requests carry the Anthropic key back: never over plain http in production.
+      if (process.env.NODE_ENV === "production" && !url.toLowerCase().startsWith("https://")) throw new CoreConfigError("CORE_BASE_URL");
+      return url;
     },
     /** Secrets accepted on inbound signed requests (Studio -> Retails). */
     get syncSecrets(): string[] {

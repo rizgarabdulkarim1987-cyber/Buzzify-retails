@@ -115,6 +115,31 @@ that migration.
   deactivated (audit `core.owner.demote`); the new owner gets OWNER at their next Studio sign-in.
 - Sessions last 12 hours at most (no sliding refresh), password sign-in included.
 
+## Studio contract (Part B must implement)
+
+Retails -> Studio calls. Base URL is `CORE_BASE_URL` (https required in production; redirects are
+refused). Every request is signed with the `CORE_OUT_SECRET` headers (`x-bz-timestamp`,
+`x-bz-signature`: HMAC-SHA256 over METHOD, pathname plus raw query, timestamp and SHA-256 of the raw
+body; accepted skew 120 s) and has a 5 s timeout. Studio verifies with the matching secret.
+
+- `GET /api/retail/v1/ai-config` -> `200 {"apiKey": string | null, "model": string | null}`.
+  `apiKey: null`, or HTTP `404`, is the definitive "no key": Retails clears its cache and AI is
+  unavailable. Any other status, a timeout, a network error or a malformed body is a failure:
+  Retails skips Studio for 15 s, serves the last key for at most 1 h, then (production) AI is
+  unavailable (`AI_UNAVAILABLE`) or (non-production) uses `ANTHROPIC_API_KEY`. Retails caches a
+  key for 60 s per server process.
+- `POST /api/retail/v1/identities` with `{"email": string, "name"?: string}` ->
+  `200 {"coreUserId": string, "created": boolean, "emailVerified": boolean}`. `emailVerified` must be
+  true only when Studio has verified ownership of that email. Retails links a local user to
+  `coreUserId` only when it is true, the user is not a platform admin and has no `coreUserId` yet;
+  otherwise the staff add proceeds and the verified sign-in handoff links later. Any non-2xx status,
+  timeout, or malformed body makes the staff add fail with the retryable `CORE_UNAVAILABLE`
+  (nothing is added, no fallback). Retails does not call this for users that already have a
+  `coreUserId`.
+- Handoff: the `nonce` echo rules above (section "sign-in handoff") apply unchanged.
+- Studio must rate-limit `identities`: it creates accounts or invitations for arbitrary emails.
+- Error bodies are never read or logged by Retails; only the status code is kept.
+
 ## Checks before and after deploying
 
 - `npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code`
