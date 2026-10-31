@@ -102,6 +102,19 @@ that migration.
   ("0" + 12 digits) are different codes today, both for lookup and for uniqueness, so a shop can
   create a duplicate item for one product. Fix this before real use.
 
+## Studio (core) link: sign-in handoff
+
+- Contract for Studio's `GET /api/retail/v1/handoff`: Retails sends `return`, `state` and
+  `nonce` (= base64url(sha256(state))). Studio must copy that `nonce` query value unchanged into
+  the token's `nonce` claim. Retails refuses a token whose nonce is not the hash of the state in the
+  browser's cookie, so a token minted for one browser cannot be redeemed in another.
+- Studio must set `emailVerified` truthfully. Retails links by `coreUserId` first; without that link
+  it accepts only a verified email (an unverified one is refused, no user is created), never links
+  by email to a platform admin, and refuses when several local users share the email ignoring case.
+- When a snapshot changes the owner, the previous owner's active OWNER row in that business is
+  deactivated (audit `core.owner.demote`); the new owner gets OWNER at their next Studio sign-in.
+- Sessions last 12 hours at most (no sliding refresh), password sign-in included.
+
 ## Checks before and after deploying
 
 - `npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code`

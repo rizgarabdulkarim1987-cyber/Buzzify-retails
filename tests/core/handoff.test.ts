@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET as callbackGET } from "@/app/api/core/v1/handoff/callback/route";
 import { GET as startGET } from "@/app/api/core/v1/handoff/start/route";
@@ -30,6 +30,8 @@ afterEach(() => {
 });
 
 const HOUR = 3_600_000;
+/** What Studio must put in the token's nonce: base64url(sha256(state)). */
+const nonceFor = (state: string) => createHash("sha256").update(state, "utf8").digest("base64url");
 const nowS = () => Math.floor(Date.now() / 1000);
 
 function claims(over: Partial<HandoffClaims> = {}): HandoffClaims {
@@ -82,10 +84,14 @@ async function callback(token: string, state: string, cookie: string | null) {
   );
 }
 
-/** Full round trip: start, then callback with the start cookie and state. */
-async function signIn(c: HandoffClaims, returnTo?: string) {
+/** A token bound to this start's state (the nonce Studio echoes). */
+const tokenFor = (s: { state: string }, over: Partial<HandoffClaims> = {}) =>
+  signHandoffForTests(claims({ nonce: nonceFor(s.state), ...over }), SECRET);
+
+/** Full round trip: start, then callback with the start cookie, state and a token bound to it. */
+async function signIn(over: Partial<HandoffClaims> = {}, returnTo?: string) {
   const s = await start(returnTo);
-  return callback(signHandoffForTests(c, SECRET), s.state, s.cookie);
+  return callback(tokenFor(s, over), s.state, s.cookie);
 }
 
 const isLoginError = (res: Response) => res.headers.get("location") === "/login?error=core";
@@ -98,6 +104,7 @@ describe("GET /api/core/v1/handoff/start", () => {
     expect(location.origin + location.pathname).toBe(`${STUDIO}/api/retail/v1/handoff`);
     expect(location.searchParams.get("return")).toBe(`${APP}/api/core/v1/handoff/callback`);
     expect(state).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+    expect(location.searchParams.get("nonce")).toBe(nonceFor(state));
 
     const cookies = setCookies(res);
     expect(cookies).toHaveLength(1);
@@ -119,7 +126,7 @@ describe("GET /api/core/v1/handoff/start", () => {
 describe("GET /api/core/v1/handoff/callback", () => {
   it("an owner token creates the user, links coreUserId, ensures RtStaff OWNER and opens a 12 h session", async () => {
     const { business } = await linkedBusiness();
-    const res = await signIn(claims(), "/retail/catalog");
+    const res = await signIn({}, "/retail/catalog");
     expect(res.headers.get("location")).toBe("/retail/catalog");
 
     const user = await db.user.findUniqueOrThrow({ where: { coreUserId: "core-user-1" } });
@@ -148,11 +155,11 @@ describe("GET /api/core/v1/handoff/callback", () => {
 
   it("a second owner sign-in is idempotent: same user, one OWNER row, a deactivated OWNER is reactivated", async () => {
     const { business } = await linkedBusiness();
-    expect(isLoginError(await signIn(claims()))).toBe(false);
+    expect(isLoginError(await signIn())).toBe(false);
     const user = await db.user.findUniqueOrThrow({ where: { coreUserId: "core-user-1" } });
     await db.rtStaff.update({ where: { businessId_userId: { businessId: business.id, userId: user.id } }, data: { deactivatedAt: new Date() } });
 
-    expect(isLoginError(await signIn(claims()))).toBe(false);
+    expect(isLoginError(await signIn())).toBe(false);
     expect(await db.user.count()).toBe(1);
     const rows = await db.rtStaff.findMany({ where: { businessId: business.id, userId: user.id } });
     expect(rows).toHaveLength(1);
@@ -161,21 +168,36 @@ describe("GET /api/core/v1/handoff/callback", () => {
 
   it("the same token twice: the second is rejected (jti)", async () => {
     await linkedBusiness();
-    const token = signHandoffForTests(claims(), SECRET);
     const a = await start();
+    const token = tokenFor(a);
     expect(isLoginError(await callback(token, a.state, a.cookie))).toBe(false);
-    const b = await start();
-    const second = await callback(token, b.state, b.cookie);
+    const second = await callback(token, a.state, a.cookie);
     expect(isLoginError(second)).toBe(true);
     expect(sessionCookieOf(second)).toBeUndefined();
     expect(await db.session.count()).toBe(1);
   });
 
+  it("a valid token redeemed with another browser's state/cookie pair is refused (nonce binding)", async () => {
+    await linkedBusiness();
+    const victim = await start();
+    const attacker = await start();
+    const token = tokenFor(attacker); // issued for the attacker's state
+    const res = await callback(token, victim.state, victim.cookie);
+    expect(isLoginError(res)).toBe(true);
+    expect(sessionCookieOf(res)).toBeUndefined();
+    expect(await db.session.count()).toBe(0);
+    expect(await db.user.count()).toBe(0);
+    // A token with an unrelated nonce, or the hash of another state, is refused too.
+    expect(isLoginError(await callback(signHandoffForTests(claims(), SECRET), victim.state, victim.cookie))).toBe(true);
+    expect(isLoginError(await callback(tokenFor({ state: `${victim.state}x` }), victim.state, victim.cookie))).toBe(true);
+    // The matching pair still works.
+    expect(isLoginError(await callback(token, attacker.state, attacker.cookie))).toBe(false);
+  });
+
   it("state mismatch or a missing state cookie is rejected with no session and no nonce spent", async () => {
     await linkedBusiness();
-    const c = claims();
-    const token = signHandoffForTests(c, SECRET);
     const s = await start();
+    const token = tokenFor(s);
 
     const mismatch = await callback(token, `${s.state}x`, s.cookie);
     expect(isLoginError(mismatch)).toBe(true);
@@ -196,13 +218,14 @@ describe("GET /api/core/v1/handoff/callback", () => {
     await linkedBusiness();
     const iat = nowS() - 120;
     const bad = [
-      signHandoffForTests(claims({ iat, exp: iat + 60 }), SECRET),
-      signHandoffForTests({ ...claims(), aud: "menu" as "retail" }, SECRET),
-      signHandoffForTests(claims(), "another-secret-0123456789"),
-      "not-a-token",
+      (n: string) => signHandoffForTests(claims({ nonce: n, iat, exp: iat + 60 }), SECRET),
+      (n: string) => signHandoffForTests({ ...claims({ nonce: n }), aud: "menu" as "retail" }, SECRET),
+      (n: string) => signHandoffForTests(claims({ nonce: n }), "another-secret-0123456789"),
+      () => "not-a-token",
     ];
-    for (const token of bad) {
+    for (const make of bad) {
       const s = await start();
+      const token = make(nonceFor(s.state));
       expect(isLoginError(await callback(token, s.state, s.cookie)), token).toBe(true);
     }
     expect(await db.session.count()).toBe(0);
@@ -212,7 +235,7 @@ describe("GET /api/core/v1/handoff/callback", () => {
   it("unverified email + an existing local user with that email: no link, no session", async () => {
     await linkedBusiness();
     const local = await createUser(db, { email: "owner@example.test" });
-    const res = await signIn(claims({ emailVerified: false }));
+    const res = await signIn({ emailVerified: false });
     expect(isLoginError(res)).toBe(true);
     expect(sessionCookieOf(res)).toBeUndefined();
     expect((await db.user.findUniqueOrThrow({ where: { id: local.id } })).coreUserId).toBeNull();
@@ -224,7 +247,7 @@ describe("GET /api/core/v1/handoff/callback", () => {
   it("verified email + an existing local user (any case): linked, no second user", async () => {
     const { business } = await linkedBusiness();
     const local = await createUser(db, { email: "owner@example.test" });
-    const res = await signIn(claims({ email: "Owner@Example.test" }));
+    const res = await signIn({ email: "Owner@Example.test" });
     expect(isLoginError(res)).toBe(false);
     expect((await db.user.findUniqueOrThrow({ where: { id: local.id } })).coreUserId).toBe("core-user-1");
     expect(await db.user.count()).toBe(1);
@@ -234,23 +257,73 @@ describe("GET /api/core/v1/handoff/callback", () => {
   it("verified email whose local user is linked to another coreUserId: rejected, never relinked", async () => {
     await linkedBusiness();
     const local = await createUser(db, { email: "owner@example.test", coreUserId: "core-user-OTHER" });
-    const res = await signIn(claims());
+    const res = await signIn();
     expect(isLoginError(res)).toBe(true);
     expect((await db.user.findUniqueOrThrow({ where: { id: local.id } })).coreUserId).toBe("core-user-OTHER");
     expect(await db.user.count()).toBe(1);
     expect(await db.session.count()).toBe(0);
   });
 
-  it("an unverified email with no local user creates the user unverified", async () => {
+  it("an unverified email with no link is refused even when no local user holds it (no squatting)", async () => {
     await linkedBusiness();
-    expect(isLoginError(await signIn(claims({ emailVerified: false })))).toBe(false);
-    expect((await db.user.findUniqueOrThrow({ where: { coreUserId: "core-user-1" } })).emailVerified).toBe(false);
+    const res = await signIn({ emailVerified: false });
+    expect(isLoginError(res)).toBe(true);
+    expect(await db.user.count()).toBe(0);
+    expect(await db.session.count()).toBe(0);
+    expect(await db.rtStaff.count()).toBe(0);
+  });
+
+  it("a new user is stored with the lowercased email", async () => {
+    await linkedBusiness();
+    expect(isLoginError(await signIn({ email: "  New.Owner@Example.TEST " }))).toBe(false);
+    expect((await db.user.findUniqueOrThrow({ where: { coreUserId: "core-user-1" } })).email).toBe("new.owner@example.test");
+  });
+
+  it("email lookup ignores case: stored Owner@Shop.com, verified token owner@shop.com links it", async () => {
+    await linkedBusiness();
+    const local = await createUser(db, { email: "Owner@Shop.com" });
+    expect(isLoginError(await signIn({ email: "owner@shop.com" }))).toBe(false);
+    expect((await db.user.findUniqueOrThrow({ where: { id: local.id } })).coreUserId).toBe("core-user-1");
+    expect(await db.user.count()).toBe(1);
+  });
+
+  it("email lookup ignores case: stored Owner@Shop.com, unverified token owner@shop.com is refused", async () => {
+    await linkedBusiness();
+    const local = await createUser(db, { email: "Owner@Shop.com" });
+    expect(isLoginError(await signIn({ email: "owner@shop.com", emailVerified: false }))).toBe(true);
+    expect((await db.user.findUniqueOrThrow({ where: { id: local.id } })).coreUserId).toBeNull();
+    expect(await db.user.count()).toBe(1);
+    expect(await db.session.count()).toBe(0);
+  });
+
+  it("two local users differing only in email case: refused, neither linked", async () => {
+    await linkedBusiness();
+    await createUser(db, { email: "Owner@Shop.com" });
+    await createUser(db, { email: "owner@shop.com" });
+    expect(isLoginError(await signIn({ email: "owner@shop.com" }))).toBe(true);
+    expect(await db.user.count({ where: { coreUserId: { not: null } } })).toBe(0);
+    expect(await db.user.count()).toBe(2);
+    expect(await db.session.count()).toBe(0);
+  });
+
+  it("never links a platform admin by email, even verified; an admin already linked by coreUserId signs in", async () => {
+    await linkedBusiness();
+    const admin = await createUser(db, { email: "owner@example.test" });
+    await db.rtPlatformAdmin.create({ data: { userId: admin.id } });
+    expect(isLoginError(await signIn())).toBe(true);
+    expect((await db.user.findUniqueOrThrow({ where: { id: admin.id } })).coreUserId).toBeNull();
+    expect(await db.user.count()).toBe(1);
+    expect(await db.session.count()).toBe(0);
+
+    await db.user.update({ where: { id: admin.id }, data: { coreUserId: "core-user-1" } });
+    expect(isLoginError(await signIn())).toBe(false);
+    expect(await db.session.count({ where: { userId: admin.id } })).toBe(1);
   });
 
   it("a coreUserId already linked under a different email resolves to the same user", async () => {
     await linkedBusiness();
     const local = await createUser(db, { email: "old@example.test", coreUserId: "core-user-1" });
-    const res = await signIn(claims({ email: "new@example.test", emailVerified: false }));
+    const res = await signIn({ email: "new@example.test", emailVerified: false });
     expect(isLoginError(res)).toBe(false);
     expect(await db.user.count()).toBe(1);
     const sessions = await db.session.findMany();
@@ -259,7 +332,7 @@ describe("GET /api/core/v1/handoff/callback", () => {
 
   it("a non-owner signs in but gets no staff row", async () => {
     const { business } = await linkedBusiness();
-    const res = await signIn(claims({ coreUserId: "core-user-2", email: "member@example.test" }));
+    const res = await signIn({ coreUserId: "core-user-2", email: "member@example.test" });
     expect(isLoginError(res)).toBe(false);
     const user = await db.user.findUniqueOrThrow({ where: { coreUserId: "core-user-2" } });
     expect(await db.rtStaff.count({ where: { userId: user.id } })).toBe(0);
@@ -270,14 +343,14 @@ describe("GET /api/core/v1/handoff/callback", () => {
   it("a non-owner who is already staff keeps their own role", async () => {
     const { business, staff } = await linkedBusiness({ staff: [{ key: "cashier", role: "CASHIER" }] });
     await db.user.update({ where: { id: staff.cashier!.user.id }, data: { coreUserId: "core-user-3" } });
-    expect(isLoginError(await signIn(claims({ coreUserId: "core-user-3", email: "x@example.test" })))).toBe(false);
+    expect(isLoginError(await signIn({ coreUserId: "core-user-3", email: "x@example.test" }))).toBe(false);
     const rows = await db.rtStaff.findMany({ where: { businessId: business.id } });
     expect(rows.map((r) => r.role)).toEqual(["CASHIER"]);
   });
 
   it("an unknown coreBusinessId is rejected, nothing created", async () => {
     await linkedBusiness();
-    const res = await signIn(claims({ coreBusinessId: "core-biz-unknown" }));
+    const res = await signIn({ coreBusinessId: "core-biz-unknown" });
     expect(isLoginError(res)).toBe(true);
     expect(await db.user.count()).toBe(0);
     expect(await db.session.count()).toBe(0);
@@ -287,7 +360,7 @@ describe("GET /api/core/v1/handoff/callback", () => {
     "returnTo %j falls back to /retail/home",
     async (returnTo) => {
       await linkedBusiness();
-      const res = await signIn(claims(), returnTo);
+      const res = await signIn({}, returnTo);
       expect(res.headers.get("location")).toBe("/retail/home");
     },
   );
@@ -307,9 +380,9 @@ describe("GET /api/core/v1/handoff/callback", () => {
 
   it("a spent jti is kept about two minutes", async () => {
     await linkedBusiness();
-    const c = claims();
-    await signIn(c);
-    const n = await db.rtCoreNonce.findUniqueOrThrow({ where: { jti: c.jti } });
+    const jti = randomUUID();
+    await signIn({ jti });
+    const n = await db.rtCoreNonce.findUniqueOrThrow({ where: { jti } });
     const left = n.expiresAt.getTime() - Date.now();
     expect(left).toBeGreaterThan(100_000);
     expect(left).toBeLessThanOrEqual(121_000);

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { auth } from "@/server/auth/auth";
 import { openSession } from "@/server/auth/session-cookie";
-import { checkState, verifyHandoff, type HandoffClaims } from "@/server/core/handoff";
+import { checkState, nonceMatches, verifyHandoff, type HandoffClaims } from "@/server/core/handoff";
 import { db } from "@/server/db";
 
 /*
@@ -9,7 +9,9 @@ import { db } from "@/server/db";
  * rest of this folder: no business is chosen yet, so it runs on the base client. Order:
  *   1. expired RtCoreNonce rows are deleted (every call, whatever happens next);
  *   2. the query state must equal the state cookie (constant time), else nothing is spent;
- *   3. the token is verified (signature, aud, 60 s lifetime);
+ *   3. the token is verified (signature, aud, 60 s lifetime) and must be bound to this browser:
+ *      its nonce must be base64url(sha256(state)), which /start sent to Studio and Studio echoes
+ *      into the token (contract for Studio, see startHandoff); a mismatch spends nothing;
  *   4. its jti is consumed by inserting RtCoreNonce (kept ~2 minutes); a duplicate is a replay;
  *   5. in one transaction: the business by coreBusinessId (unknown -> refuse), the local user
  *      (see resolveUser), and for Studio's owner of that business an active RtStaff OWNER row;
@@ -17,7 +19,7 @@ import { db } from "@/server/db";
  * Failures carry a reason for tests and logs; the route never shows it to the browser.
  */
 
-export type HandoffFailure = "STATE" | "TOKEN" | "REPLAY" | "BUSINESS" | "ACCOUNT_CONFLICT";
+export type HandoffFailure = "STATE" | "TOKEN" | "NONCE" | "REPLAY" | "BUSINESS" | "ACCOUNT_CONFLICT";
 
 export type HandoffOutcome =
   | { ok: true; userId: string; businessId: string; returnTo: string; setCookie: string }
@@ -46,6 +48,7 @@ export async function completeHandoff(
   const verified = verifyHandoff(input.token ?? "", now);
   if (!verified.ok) return { ok: false, reason: "TOKEN" };
   const claims = verified.claims;
+  if (!nonceMatches(claims.nonce, input.state ?? "")) return { ok: false, reason: "NONCE" };
 
   const { count } = await db.rtCoreNonce.createMany({
     data: [{ jti: claims.jti, expiresAt: new Date(now.getTime() + NONCE_TTL_MS) }],
@@ -80,33 +83,44 @@ export async function completeHandoff(
 
 /**
  * The local user for this Studio identity, never taking over an account:
- *   - the user already linked to claims.coreUserId (whatever its email now is);
- *   - else, only when Studio says the email is verified, the local user with that email, provided
- *     it is not linked to another Studio user (a linked user is never relinked);
- *   - else a new user (no Account row, so no password) linked to coreUserId. An unverified email
- *     that a local user already holds is refused: no link, and no second user with that email.
+ *   - the user already linked to claims.coreUserId (whatever its email now is) — the only way in
+ *     for a platform admin;
+ *   - otherwise Studio must say the email is verified, else the handoff is refused outright (no
+ *     user is created either, so an unverified address cannot be squatted ahead of its owner);
+ *   - with a verified email, the local users whose email matches ignoring case: more than one is
+ *     refused (ambiguous); exactly one is linked unless it is linked to another Studio user (never
+ *     relinked) or is a platform admin (never linked by email);
+ *   - none: a new user (lowercased email, no Account row, so no password) linked to coreUserId.
  */
 async function resolveUser(tx: Tx, claims: HandoffClaims, businessId: string): Promise<string> {
   const byCore = await tx.user.findUnique({ where: { coreUserId: claims.coreUserId }, select: { id: true } });
   if (byCore) return byCore.id;
 
+  if (!claims.emailVerified) throw new Refused("ACCOUNT_CONFLICT");
   const email = claims.email.trim().toLowerCase();
   if (email === "" || email.length > 254) throw new Refused("ACCOUNT_CONFLICT");
-  const byEmail = await tx.user.findUnique({ where: { email }, select: { id: true, coreUserId: true } });
 
-  if (byEmail) {
-    if (!claims.emailVerified || byEmail.coreUserId !== null) throw new Refused("ACCOUNT_CONFLICT");
-    await tx.user.update({ where: { id: byEmail.id }, data: { coreUserId: claims.coreUserId, emailVerified: true } });
+  const matches = await tx.user.findMany({
+    where: { email: { equals: email, mode: "insensitive" } },
+    select: { id: true, coreUserId: true, platformAdmin: { select: { userId: true } } },
+    take: 2,
+  });
+  if (matches.length > 1) throw new Refused("ACCOUNT_CONFLICT");
+
+  const existing = matches[0];
+  if (existing) {
+    if (existing.coreUserId !== null || existing.platformAdmin !== null) throw new Refused("ACCOUNT_CONFLICT");
+    await tx.user.update({ where: { id: existing.id }, data: { coreUserId: claims.coreUserId, emailVerified: true } });
     await tx.rtAuditLog.create({
-      data: { businessId, actorId: byEmail.id, action: "core.handoff.link", entity: "User", entityId: byEmail.id, changes: { by: "verified-email" } },
+      data: { businessId, actorId: existing.id, action: "core.handoff.link", entity: "User", entityId: existing.id, changes: { by: "verified-email" } },
     });
-    return byEmail.id;
+    return existing.id;
   }
 
   const ctx = await auth.$context;
   const id = ctx.generateId({ model: "user" }) || randomUUID();
   const name = claims.name.trim().slice(0, 120) || email;
-  await tx.user.create({ data: { id, email, name, emailVerified: claims.emailVerified, coreUserId: claims.coreUserId } });
+  await tx.user.create({ data: { id, email, name, emailVerified: true, coreUserId: claims.coreUserId } });
   await tx.rtAuditLog.create({
     data: { businessId, actorId: id, action: "core.handoff.link", entity: "User", entityId: id, changes: { by: "created" } },
   });

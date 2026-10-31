@@ -91,10 +91,11 @@ export async function upsertCorePlan(tx: Prisma.TransactionClient, plan: CoreSta
  */
 export async function applyCoreState(tx: Prisma.TransactionClient, businessId: string, state: CoreState): Promise<{ applied: boolean }> {
   // Row lock: concurrent snapshots for this business queue here and re-read the version after.
-  const locked = await tx.$queryRaw<{ coreStateVersion: number | null; status: RtBusinessStatus }[]>`
-    SELECT "coreStateVersion", "status" FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
+  const locked = await tx.$queryRaw<{ coreStateVersion: number | null; status: RtBusinessStatus; coreOwnerUserId: string | null }[]>`
+    SELECT "coreStateVersion", "status", "coreOwnerUserId" FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
   if (locked.length === 0) throw new Error("applyCoreState: unknown business");
   if (state.version <= (locked[0]!.coreStateVersion ?? 0)) return { applied: false };
+  await demotePreviousOwner(tx, businessId, locked[0]!.coreOwnerUserId, state);
 
   // ARCHIVED is terminal: keep it, but record the version (and owner) so stale snapshots stay ignored.
   if (locked[0]!.status === "ARCHIVED") {
@@ -152,6 +153,34 @@ export async function applyCoreState(tx: Prisma.TransactionClient, businessId: s
     });
   }
   return { applied: true };
+}
+
+/**
+ * Studio moved ownership away from `previous`: the local user linked to that Studio id loses its
+ * active OWNER row in this business (deactivatedAt = now, the row is kept for history), with an
+ * audit row. The new owner is not touched here: the handoff gives them their OWNER row when they
+ * sign in. Other roles of the previous owner, and OWNER rows granted to anyone else, are left alone.
+ */
+async function demotePreviousOwner(tx: Prisma.TransactionClient, businessId: string, previous: string | null, state: CoreState) {
+  if (previous === null || previous === state.owner.coreUserId) return;
+  const user = await tx.user.findUnique({ where: { coreUserId: previous }, select: { id: true } });
+  if (!user) return;
+  const row = await tx.rtStaff.findFirst({
+    where: { businessId, userId: user.id, role: "OWNER", deactivatedAt: null },
+    select: { id: true },
+  });
+  if (!row) return;
+  await tx.rtStaff.update({ where: { id: row.id }, data: { deactivatedAt: new Date(), version: { increment: 1 } } });
+  await tx.rtAuditLog.create({
+    data: {
+      businessId,
+      actorId: CORE_SYNC_ACTOR,
+      action: "core.owner.demote",
+      entity: "RtStaff",
+      entityId: row.id,
+      changes: { fromCoreUserId: previous, toCoreUserId: state.owner.coreUserId, version: state.version },
+    },
+  });
 }
 
 function subscriptionEvent(

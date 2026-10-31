@@ -130,6 +130,12 @@ export function clearStateCookie(secure: boolean): string {
 /**
  * Starts a handoff: a fresh state, the Set-Cookie header holding it with returnTo, and the Studio
  * URL to redirect to. Throws CoreConfigError when CORE_BASE_URL or APP_URL is missing.
+ *
+ * Binding the token to this browser: besides `state`, Studio receives `nonce` =
+ * base64url(sha256(state)). CONTRACT FOR STUDIO (part B): /api/retail/v1/handoff must copy that
+ * `nonce` query value unchanged into the token's `nonce` claim. The callback refuses a token whose
+ * nonce is not the hash of the state in this browser's cookie, so a token minted for one browser's
+ * handoff cannot be redeemed with another browser's state/cookie pair (login CSRF, token injection).
  */
 export function startHandoff(returnTo: string | null | undefined, opts: { secure: boolean }): { redirectTo: string; stateCookie: string } {
   const studio = coreConfig().baseUrl;
@@ -141,10 +147,21 @@ export function startHandoff(returnTo: string | null | undefined, opts: { secure
   const target = new URL(`${studio}/api/retail/v1/handoff`);
   target.searchParams.set("return", `${app}${HANDOFF_CALLBACK_PATH}`);
   target.searchParams.set("state", state);
+  target.searchParams.set("nonce", handoffNonce(state));
   return { redirectTo: target.toString(), stateCookie: stateCookieHeader(value, HANDOFF_STATE_MAX_AGE_SECONDS, opts.secure) };
 }
 
 const digest = (s: string) => createHash("sha256").update(s, "utf8").digest();
+
+/** The nonce Studio must echo into the token for this state: base64url(sha256(state)). */
+export function handoffNonce(state: string): string {
+  return digest(state).toString("base64url");
+}
+
+/** True when the token's nonce is handoffNonce(state); compared in constant time. */
+export function nonceMatches(nonce: string, state: string): boolean {
+  return timingSafeEqual(digest(nonce), digest(handoffNonce(state)));
+}
 
 /**
  * Checks the state from the query against the state cookie (constant time). Returns the stored

@@ -8,6 +8,7 @@ import { signRequest } from "@/server/core/signing";
 import { featureEnabled } from "@/server/framework/features";
 import { gateOf } from "@/server/framework/gate";
 import { useTestDb } from "../helpers/db";
+import { createUser } from "../helpers/fixtures";
 
 const { db } = useTestDb();
 
@@ -237,5 +238,58 @@ describe("GET /api/core/v1/health", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("owner change in Studio", () => {
+  const ownerB = { coreUserId: "core-user-2", email: "b@example.test", emailVerified: true, name: "B" };
+
+  /** A provisioned business whose Studio owner A (core-user-1) holds the local OWNER row, and B a CASHIER row. */
+  async function withOwners() {
+    const id = await provisioned();
+    const a = await createUser(db, { coreUserId: "core-user-1" });
+    const b = await createUser(db, { coreUserId: "core-user-2" });
+    await db.rtStaff.create({ data: { businessId: id, userId: a.id, role: "OWNER" } });
+    await db.rtStaff.create({ data: { businessId: id, userId: b.id, role: "CASHIER" } });
+    return { id, a, b };
+  }
+  const row = (businessId: string, userId: string) =>
+    db.rtStaff.findUniqueOrThrow({ where: { businessId_userId: { businessId, userId } } });
+
+  it("owner A -> owner B deactivates A's OWNER row with an audit row; B is left to the handoff", async () => {
+    const { id, a, b } = await withOwners();
+    const res = await POST(post(state({ version: 2, owner: ownerB })));
+    expect(await res.json()).toEqual({ applied: true, version: 2 });
+
+    const rowA = await row(id, a.id);
+    expect(rowA.role).toBe("OWNER");
+    expect(rowA.deactivatedAt).not.toBeNull();
+    expect(await row(id, b.id)).toMatchObject({ role: "CASHIER", deactivatedAt: null });
+    expect((await db.rtBusiness.findUniqueOrThrow({ where: { id } })).coreOwnerUserId).toBe("core-user-2");
+
+    const audit = await db.rtAuditLog.findMany({ where: { businessId: id, action: "core.owner.demote" } });
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ actorId: "core-sync", entity: "RtStaff", entityId: rowA.id });
+  });
+
+  it("the same owner again changes no staff row", async () => {
+    const { id, a } = await withOwners();
+    await POST(post(state({ version: 2 })));
+    expect(await row(id, a.id)).toMatchObject({ role: "OWNER", deactivatedAt: null });
+    expect(await db.rtAuditLog.count({ where: { action: "core.owner.demote" } })).toBe(0);
+  });
+
+  it("a stale snapshot with another owner is ignored and demotes nobody", async () => {
+    const { id, a } = await withOwners();
+    await POST(post(state({ version: 3 })));
+    await POST(post(state({ version: 2, owner: ownerB })));
+    expect(await row(id, a.id)).toMatchObject({ deactivatedAt: null });
+  });
+
+  it("an owner change when the previous owner never signed in here is fine", async () => {
+    const id = await provisioned();
+    const res = await POST(post(state({ version: 2, owner: ownerB })));
+    expect(await res.json()).toEqual({ applied: true, version: 2 });
+    expect((await db.rtBusiness.findUniqueOrThrow({ where: { id } })).coreOwnerUserId).toBe("core-user-2");
   });
 });
