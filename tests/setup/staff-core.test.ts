@@ -83,16 +83,6 @@ describe("staff add with a Studio identity", () => {
     expect(await addStaff(meta, user.email, w.branches.A!.id)).toMatchObject({ ok: false, code: "IDENTITY_CONFLICT" });
   });
 
-  it("no local user: Studio is still asked, nothing is stored, and the existing USER_NOT_FOUND path stays", async () => {
-    const { w, meta } = await business(true);
-    const ensureIdentity = vi.fn(async () => ({ coreUserId: "cu_x", created: true, emailVerified: true }));
-    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity });
-    const users = await db.user.count();
-    expect(await addStaff(meta, "nobody@example.test", w.branches.A!.id)).toMatchObject({ ok: false, code: "USER_NOT_FOUND" });
-    expect(ensureIdentity).toHaveBeenCalledTimes(1);
-    expect(await db.user.count()).toBe(users);
-  });
-
   it("Studio unreachable: a retryable CORE_UNAVAILABLE and no staff row, no silent fallback", async () => {
     const { w, meta } = await business(true);
     const user = await createUser(db);
@@ -115,5 +105,32 @@ describe("staff add with a Studio identity", () => {
     expect((await addStaff(meta, user.email, w.branches.A!.id)).ok).toBe(true);
     expect(ensureIdentity).not.toHaveBeenCalled();
     expect((await db.user.findUniqueOrThrow({ where: { id: user.id } })).coreUserId).toBeNull();
+  });
+
+  it("two local users whose emails differ only by case: nothing is linked (ambiguous), Studio is asked, the add of the first spelling proceeds", async () => {
+    const { w, meta } = await business(true);
+    const a = await createUser(db, { email: "Dup.User@Example.test" });
+    const b = await createUser(db, { email: "dup.user@example.test" });
+    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_dup", created: false, emailVerified: true }) });
+    await addStaff(meta, "dup.user@example.test", w.branches.A!.id);
+    expect((await db.user.findUniqueOrThrow({ where: { id: a.id } })).coreUserId).toBeNull();
+    expect((await db.user.findUniqueOrThrow({ where: { id: b.id } })).coreUserId).toBeNull();
+  });
+
+  it("Studio-verified email with no local account: the account is created (no password) and the staff add succeeds", async () => {
+    const { w, meta } = await business(true);
+    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_new", created: true, emailVerified: true }) });
+    expect((await addStaff(meta, "New.Person@Example.test", w.branches.A!.id)).ok).toBe(true);
+    const user = await db.user.findUniqueOrThrow({ where: { email: "new.person@example.test" } });
+    expect(user).toMatchObject({ coreUserId: "cu_new", emailVerified: true, name: "new.person" });
+    expect(await db.account.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.rtStaff.count({ where: { businessId: w.business.id, userId: user.id } })).toBe(1);
+  });
+
+  it("unverified Studio email with no local account: nothing is created, USER_NOT_FOUND stands", async () => {
+    const { w, meta } = await business(true);
+    setCoreClientFake({ ...createFakeCoreClient(), ensureIdentity: async () => ({ coreUserId: "cu_unv", created: true, emailVerified: false }) });
+    expect(await addStaff(meta, "ghost@example.test", w.branches.A!.id)).toMatchObject({ ok: false, code: "USER_NOT_FOUND" });
+    expect(await db.user.count({ where: { email: "ghost@example.test" } })).toBe(0);
   });
 });

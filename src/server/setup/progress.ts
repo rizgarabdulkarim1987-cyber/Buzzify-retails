@@ -217,16 +217,18 @@ async function saveActivity(tx: Tx, actor: Actor, d: z.infer<typeof activityData
 
 async function saveStaff(tx: Tx, actor: Actor, d: z.infer<typeof staffData>) {
   for (const s of d.staff) {
-    if (s.userId === null) throw new RuleError("USER_NOT_FOUND");
+    // A linked business may have just created this account from a Studio identity (after the ids were read).
+    const userId = s.userId ?? (await findUserIdsByEmail([s.email])).get(s.email) ?? null;
+    if (userId === null) throw new RuleError("USER_NOT_FOUND");
     if (actor.role !== "OWNER" && !MANAGER_GRANTABLE.includes(s.role)) throw new ForbiddenError("ROLE_NOT_GRANTABLE");
     // A branch-limited role needs at least one branch; multi-branch roles see every branch anyway.
     if (!can(s.role, "multiBranch.access") && s.branchIds.length === 0) throw new RuleError("INVALID_INPUT");
     const branches = await tx.rtBranch.findMany({ where: { id: { in: s.branchIds }, active: true }, select: { id: true } });
     if (branches.length !== s.branchIds.length) throw new NotFoundError();
-    const member = await tx.rtStaff.findFirst({ where: { userId: s.userId }, select: { id: true } });
+    const member = await tx.rtStaff.findFirst({ where: { userId }, select: { id: true } });
     if (member) throw new RuleError("STAFF_EXISTS");
 
-    const staff = await tx.rtStaff.create({ data: { businessId: actor.businessId, userId: s.userId, role: s.role }, select: { id: true } });
+    const staff = await tx.rtStaff.create({ data: { businessId: actor.businessId, userId, role: s.role }, select: { id: true } });
     if (s.branchIds.length > 0) {
       await tx.rtStaffBranch.createMany({ data: s.branchIds.map((branchId) => ({ businessId: actor.businessId, staffId: staff.id, branchId })) });
     }
