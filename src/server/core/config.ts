@@ -7,14 +7,24 @@
 export class CoreConfigError extends Error {
   readonly variable: string;
   constructor(variable: string) {
-    super(`Missing required environment variable ${variable}`);
+    super(`Missing or invalid (too short) environment variable ${variable}`);
     this.name = "CoreConfigError";
     this.variable = variable;
   }
 }
 
-function required(name: string): string {
-  const v = process.env[name];
+const MIN_SECRET_LENGTH = 16;
+
+/** A trimmed, non-empty value; secrets (everything but the URL) must also be >= 16 chars. */
+function read(name: string, secret: boolean): string | undefined {
+  const v = process.env[name]?.trim();
+  if (!v) return undefined;
+  if (secret && v.length < MIN_SECRET_LENGTH) throw new CoreConfigError(name);
+  return v;
+}
+
+function required(name: string, secret = true): string {
+  const v = read(name, secret);
   if (!v) throw new CoreConfigError(name);
   return v;
 }
@@ -22,7 +32,7 @@ function required(name: string): string {
 /** The current secret, then the previous one when set (rotation window). */
 function withPrevious(name: string): string[] {
   const list = [required(name)];
-  const prev = process.env[`${name}_PREVIOUS`];
+  const prev = read(`${name}_PREVIOUS`, true);
   if (prev) list.push(prev);
   return list;
 }
@@ -31,7 +41,7 @@ export function coreConfig() {
   return {
     /** Studio (core) base URL, no trailing slash. */
     get baseUrl(): string {
-      return required("CORE_BASE_URL").replace(/\/+$/, "");
+      return required("CORE_BASE_URL", false).replace(/\/+$/, "");
     },
     /** Secrets accepted on inbound signed requests (Studio -> Retails). */
     get syncSecrets(): string[] {

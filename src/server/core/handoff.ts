@@ -7,6 +7,8 @@ import { coreConfig } from "./config";
  */
 
 export const HANDOFF_MAX_AGE_SECONDS = 60;
+const MAX_TOKEN_LENGTH = 4096;
+const FUTURE_IAT_LEEWAY_SECONDS = 5;
 
 export type HandoffClaims = {
   aud: "retail";
@@ -46,10 +48,20 @@ function isClaims(c: unknown): c is HandoffClaims {
 }
 
 export function verifyHandoff(token: string, now: Date = new Date()): HandoffResult {
+  if (token.length > MAX_TOKEN_LENGTH) return { ok: false, reason: "FORMAT" };
   const parts = token.split(".");
   if (parts.length !== 2 || !parts[0] || !parts[1]) return { ok: false, reason: "FORMAT" };
   const [payload, sig] = parts;
   if (!/^[A-Za-z0-9_-]+$/.test(payload) || !/^[A-Za-z0-9_-]+$/.test(sig)) return { ok: false, reason: "FORMAT" };
+
+  // Authenticate the raw payload part before decoding or parsing it.
+  const given = Buffer.from(sig, "base64url");
+  let match = false;
+  for (const secret of coreConfig().handoffSecrets) {
+    const expected = macOf(payload, secret);
+    if (given.length === expected.length && timingSafeEqual(given, expected)) match = true;
+  }
+  if (!match) return { ok: false, reason: "SIGNATURE" };
 
   let claims: unknown;
   try {
@@ -59,18 +71,11 @@ export function verifyHandoff(token: string, now: Date = new Date()): HandoffRes
   }
   if (!isClaims(claims)) return { ok: false, reason: "FORMAT" };
 
-  const given = Buffer.from(sig, "base64url");
-  let match = false;
-  for (const secret of coreConfig().handoffSecrets) {
-    const expected = macOf(payload, secret);
-    if (given.length === expected.length && timingSafeEqual(given, expected)) match = true;
-  }
-  if (!match) return { ok: false, reason: "SIGNATURE" };
-
   if (claims.aud !== "retail") return { ok: false, reason: "AUDIENCE" };
 
   const nowS = now.getTime() / 1000;
-  if (claims.exp - claims.iat > HANDOFF_MAX_AGE_SECONDS) return { ok: false, reason: "EXPIRED" };
+  if (claims.exp <= claims.iat || claims.exp - claims.iat > HANDOFF_MAX_AGE_SECONDS) return { ok: false, reason: "EXPIRED" };
+  if (claims.iat > nowS + FUTURE_IAT_LEEWAY_SECONDS) return { ok: false, reason: "EXPIRED" };
   if (nowS > claims.exp || nowS - claims.iat > HANDOFF_MAX_AGE_SECONDS) return { ok: false, reason: "EXPIRED" };
   return { ok: true, claims };
 }

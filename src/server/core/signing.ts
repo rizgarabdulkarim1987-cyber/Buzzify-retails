@@ -4,7 +4,8 @@ import { coreConfig } from "./config";
 /*
  * Signed requests between Retails and Studio. The signed string is
  * METHOD \n PATH \n TIMESTAMP \n SHA256(body), HMAC-SHA256, hex, in the x-bz-signature header;
- * x-bz-timestamp is unix seconds. Accepted skew is +-120 s. Nothing here logs secrets or bodies.
+ * x-bz-timestamp is unix seconds. The signed PATH is the request pathname plus the raw query
+ * string exactly as sent (e.g. /api/core/v1/state?coreBusinessId=x); the body is the raw request text. Accepted skew is +-120 s. Nothing here logs secrets or bodies.
  */
 
 export const MAX_SKEW_SECONDS = 120;
@@ -23,7 +24,7 @@ export function signRequest(method: string, path: string, body: string, secret: 
 
 /** Constant-time compare of two hex strings; false on any length or format mismatch. */
 function hexEqual(a: string, b: string): boolean {
-  if (!/^[0-9a-f]+$/i.test(a) || a.length !== b.length) return false;
+  if (!/^[0-9a-f]+$/.test(a) || a.length !== b.length) return false;
   return timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
 }
 

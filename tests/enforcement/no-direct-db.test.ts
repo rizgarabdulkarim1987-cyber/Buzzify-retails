@@ -11,8 +11,9 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SCANNED_DIRS = ["src/app", "src/server"];
-const ALLOWED_FILES = ["src/server/db.ts"];
-const ALLOWED_DIRS = ["src/server/framework/", "src/server/auth/", "src/server/admin/", "src/server/core/"];
+// rate-limit.ts: the core rate limit is keyed by client address, not by business, so it has no tenant scope.
+const ALLOWED_FILES = ["src/server/db.ts", "src/server/core/rate-limit.ts"];
+const ALLOWED_DIRS = ["src/server/framework/", "src/server/auth/", "src/server/admin/"];
 
 const BASE_DB = "src/server/db";
 /**

@@ -4,8 +4,9 @@ import { db } from "@/server/db";
 /*
  * Rate limit for core endpoints, over RtLoginAttempt (like the login throttle): at most
  * CORE_RATE_LIMIT requests per CORE_RATE_WINDOW_MS per key (the client address). Only a sha256 of
- * "core:<key>" is stored. Every request is recorded, allowed or not, so a flood stays refused
- * until it stops.
+ * "core:<key>" is stored. Only allowed requests are recorded; refused ones are not, so the window
+ * slides and a refused client is freed once its oldest requests age out. Count-then-insert is not
+ * atomic, so this is a soft limit: a concurrent burst can slightly exceed CORE_RATE_LIMIT.
  */
 
 export const CORE_RATE_LIMIT = 120;

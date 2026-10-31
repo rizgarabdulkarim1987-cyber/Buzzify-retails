@@ -19,7 +19,7 @@ beforeEach(() => {
   }
   process.env.CORE_SYNC_SECRET = "sync-secret-current";
   process.env.CORE_HANDOFF_SECRET = "handoff-secret-current";
-  process.env.CORE_OUT_SECRET = "out-secret";
+  process.env.CORE_OUT_SECRET = "out-secret-0123456789";
   process.env.CORE_BASE_URL = "https://studio.example";
 });
 afterEach(() => {
@@ -54,14 +54,26 @@ describe("signed requests", () => {
     expect(verifyRequest(req(), at(-121))).toEqual({ ok: false, reason: "SKEW" });
   });
   it("the previous secret is accepted, an unknown one is not", () => {
-    process.env.CORE_SYNC_SECRET = "sync-secret-new";
+    process.env.CORE_SYNC_SECRET = "sync-secret-new-0123";
     process.env.CORE_SYNC_SECRET_PREVIOUS = "sync-secret-current";
     expect(verifyRequest(req(), NOW)).toEqual({ ok: true });
-    expect(verifyRequest(req({}, undefined, "stranger"), NOW)).toEqual({ ok: false, reason: "BAD_SIGNATURE" });
+    expect(verifyRequest(req({}, undefined, "stranger-secret-0123456"), NOW)).toEqual({ ok: false, reason: "BAD_SIGNATURE" });
   });
   it("a malformed signature (wrong length / non-hex) fails without throwing", () => {
     const h = { "x-bz-timestamp": String(Math.floor(NOW.getTime() / 1000)), "x-bz-signature": "zz" };
     expect(verifyRequest(req({}, h), NOW)).toEqual({ ok: false, reason: "BAD_SIGNATURE" });
+  });
+  it("a changed query string fails (the signed path includes it)", () => {
+    const h = signRequest("GET", "/api/core/v1/state?coreBusinessId=x", "", "sync-secret-current", NOW);
+    const r = (path: string) => ({ method: "GET", path, body: "", headers: new Headers(h) });
+    expect(verifyRequest(r("/api/core/v1/state?coreBusinessId=x"), NOW)).toEqual({ ok: true });
+    expect(verifyRequest(r("/api/core/v1/state?coreBusinessId=y"), NOW)).toEqual({ ok: false, reason: "BAD_SIGNATURE" });
+    expect(verifyRequest(r("/api/core/v1/state"), NOW)).toEqual({ ok: false, reason: "BAD_SIGNATURE" });
+  });
+  it("an uppercase hex signature is refused", () => {
+    const h = signRequest("POST", "/api/core/state", BODY, "sync-secret-current", NOW);
+    const up = { ...h, "x-bz-signature": h["x-bz-signature"].toUpperCase() };
+    expect(verifyRequest(req({}, up), NOW)).toEqual({ ok: false, reason: "BAD_SIGNATURE" });
   });
   it("the signature header is hex", () => {
     expect(signRequest("GET", "/x", "", "s", NOW)["x-bz-signature"]).toMatch(/^[0-9a-f]{64}$/);
@@ -99,6 +111,23 @@ describe("handoff tokens", () => {
   it("a lifetime over 60 s is refused", () => {
     expect(verifyHandoff(signHandoffForTests(claims({ exp: IAT + 61 }), HS), at(1))).toEqual({ ok: false, reason: "EXPIRED" });
   });
+  it("an iat in the future is refused even with a 60 s lifetime", () => {
+    const t = signHandoffForTests(claims({ iat: IAT + 3600, exp: IAT + 3660 }), HS);
+    expect(verifyHandoff(t, NOW)).toEqual({ ok: false, reason: "EXPIRED" });
+    expect(verifyHandoff(t, at(3601)).ok).toBe(true);
+  });
+  it("exp before or equal to iat is refused", () => {
+    expect(verifyHandoff(signHandoffForTests(claims({ exp: IAT - 1 }), HS), NOW).ok).toBe(false);
+    expect(verifyHandoff(signHandoffForTests(claims({ exp: IAT }), HS), NOW).ok).toBe(false);
+  });
+  it("an oversized token is refused as FORMAT", () => {
+    expect(verifyHandoff("a".repeat(4097), NOW)).toEqual({ ok: false, reason: "FORMAT" });
+  });
+  it("the signature is checked before the payload is parsed", () => {
+    const payload = Buffer.from("not json").toString("base64url");
+    const sig = signHandoffForTests(claims(), "stranger-secret-0123456").split(".")[1];
+    expect(verifyHandoff(`${payload}.${sig}`, NOW)).toEqual({ ok: false, reason: "SIGNATURE" });
+  });
   it("wrong audience fails", () => {
     const t = signHandoffForTests(claims({ aud: "other" as "retail" }), HS);
     expect(verifyHandoff(t, at(1))).toEqual({ ok: false, reason: "AUDIENCE" });
@@ -116,7 +145,7 @@ describe("handoff tokens", () => {
     expect(verifyHandoff("a.b.c", at(1))).toEqual({ ok: false, reason: "FORMAT" });
   });
   it("the previous handoff secret is accepted", () => {
-    process.env.CORE_HANDOFF_SECRET = "handoff-new";
+    process.env.CORE_HANDOFF_SECRET = "handoff-new-0123456789";
     process.env.CORE_HANDOFF_SECRET_PREVIOUS = HS;
     expect(verifyHandoff(signHandoffForTests(claims(), HS), at(1)).ok).toBe(true);
   });
@@ -127,14 +156,22 @@ describe("coreConfig", () => {
     delete process.env.CORE_OUT_SECRET;
     expect(() => coreConfig().outSecret).toThrow(CoreConfigError);
     expect(() => coreConfig().outSecret).toThrow(/CORE_OUT_SECRET/);
-    process.env.CORE_OUT_SECRET = "late";
-    expect(coreConfig().outSecret).toBe("late");
+    process.env.CORE_OUT_SECRET = "late-secret-0123456789";
+    expect(coreConfig().outSecret).toBe("late-secret-0123456789");
     expect(coreConfig().baseUrl).toBe("https://studio.example");
+  });
+  it("rejects a secret shorter than 16 characters and trims whitespace", () => {
+    process.env.CORE_OUT_SECRET = "short";
+    expect(() => coreConfig().outSecret).toThrow(/CORE_OUT_SECRET/);
+    process.env.CORE_OUT_SECRET = "  padded-secret-0123456  ";
+    expect(coreConfig().outSecret).toBe("padded-secret-0123456");
+    process.env.CORE_SYNC_SECRET_PREVIOUS = "tiny";
+    expect(() => coreConfig().syncSecrets).toThrow(/CORE_SYNC_SECRET_PREVIOUS/);
   });
   it("lists current then previous secrets, skipping an unset previous", () => {
     expect(coreConfig().syncSecrets).toEqual(["sync-secret-current"]);
-    process.env.CORE_SYNC_SECRET_PREVIOUS = "old";
-    expect(coreConfig().syncSecrets).toEqual(["sync-secret-current", "old"]);
+    process.env.CORE_SYNC_SECRET_PREVIOUS = "old-secret-0123456789";
+    expect(coreConfig().syncSecrets).toEqual(["sync-secret-current", "old-secret-0123456789"]);
   });
 });
 
