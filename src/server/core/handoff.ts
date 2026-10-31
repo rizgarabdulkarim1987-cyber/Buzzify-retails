@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { coreConfig } from "./config";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { CoreConfigError, coreConfig } from "./config";
 
 /*
  * Handoff token: base64url(json) "." base64url(hmac-sha256(first part)). Lifetime at most 60 s
@@ -78,4 +78,92 @@ export function verifyHandoff(token: string, now: Date = new Date()): HandoffRes
   if (claims.iat > nowS + FUTURE_IAT_LEEWAY_SECONDS) return { ok: false, reason: "EXPIRED" };
   if (nowS > claims.exp || nowS - claims.iat > HANDOFF_MAX_AGE_SECONDS) return { ok: false, reason: "EXPIRED" };
   return { ok: true, claims };
+}
+
+/*
+ * Browser side of the handoff (no database here). /start puts a random `state` and the internal
+ * path to come back to in a short-lived HttpOnly cookie scoped to the handoff routes, then sends
+ * the browser to Studio; Studio sends it back to /callback with the token and the same state.
+ * SameSite=Lax is what lets the cookie ride along on that top-level GET back from Studio.
+ */
+
+export const HANDOFF_START_PATH = "/api/core/v1/handoff/start";
+export const HANDOFF_CALLBACK_PATH = "/api/core/v1/handoff/callback";
+export const HANDOFF_STATE_COOKIE = "rt_core_handoff";
+export const HANDOFF_STATE_MAX_AGE_SECONDS = 600;
+/** Where a signed-in user lands when no (valid) returnTo was given: the same page password sign-in uses. */
+export const DEFAULT_RETURN_TO = "/retail/home";
+/** Every failure lands here; the page shows one generic message, never the reason. */
+export const HANDOFF_FAILURE_PATH = "/login?error=core";
+const MAX_RETURN_TO_LENGTH = 512;
+const COOKIE_PATH = "/api/core/v1/handoff";
+
+/** `raw` when it is a path on this site, otherwise DEFAULT_RETURN_TO (no open redirect). */
+export function safeReturnTo(raw: string | null | undefined): string {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_RETURN_TO_LENGTH) return DEFAULT_RETURN_TO;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return DEFAULT_RETURN_TO;
+  // Backslashes (browsers read "/\" as "//"), control characters and encoded slashes are refused outright.
+  if (/[\\\u0000-\u001f\u007f]/.test(raw) || /%(2f|5c)/i.test(raw)) return DEFAULT_RETURN_TO;
+  try {
+    const probe = "http://retails.invalid";
+    if (new URL(raw, probe).origin !== probe) return DEFAULT_RETURN_TO;
+  } catch {
+    return DEFAULT_RETURN_TO;
+  }
+  return raw;
+}
+
+/** The login page's "Sign in with Studio" link, or null when Studio is not configured. */
+export function studioSignInHref(): string | null {
+  return process.env.CORE_BASE_URL?.trim() ? HANDOFF_START_PATH : null;
+}
+
+function stateCookieHeader(value: string, maxAge: number, secure: boolean): string {
+  return `${HANDOFF_STATE_COOKIE}=${value}; Path=${COOKIE_PATH}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
+}
+
+/** Set-Cookie header that removes the state cookie. */
+export function clearStateCookie(secure: boolean): string {
+  return stateCookieHeader("", 0, secure);
+}
+
+/**
+ * Starts a handoff: a fresh state, the Set-Cookie header holding it with returnTo, and the Studio
+ * URL to redirect to. Throws CoreConfigError when CORE_BASE_URL or APP_URL is missing.
+ */
+export function startHandoff(returnTo: string | null | undefined, opts: { secure: boolean }): { redirectTo: string; stateCookie: string } {
+  const studio = coreConfig().baseUrl;
+  const app = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (!app) throw new CoreConfigError("APP_URL");
+
+  const state = randomBytes(32).toString("base64url");
+  const value = `${state}.${Buffer.from(safeReturnTo(returnTo), "utf8").toString("base64url")}`;
+  const target = new URL(`${studio}/api/retail/v1/handoff`);
+  target.searchParams.set("return", `${app}${HANDOFF_CALLBACK_PATH}`);
+  target.searchParams.set("state", state);
+  return { redirectTo: target.toString(), stateCookie: stateCookieHeader(value, HANDOFF_STATE_MAX_AGE_SECONDS, opts.secure) };
+}
+
+const digest = (s: string) => createHash("sha256").update(s, "utf8").digest();
+
+/**
+ * Checks the state from the query against the state cookie (constant time). Returns the stored
+ * returnTo (validated again) on a match, null otherwise.
+ */
+export function checkState(cookieValue: string | null | undefined, state: string | null | undefined): { returnTo: string } | null {
+  if (!cookieValue || !state || cookieValue.length > 2048 || state.length > 256) return null;
+  const dot = cookieValue.indexOf(".");
+  if (dot <= 0) return null;
+  const stored = cookieValue.slice(0, dot);
+  if (!timingSafeEqual(digest(stored), digest(state))) return null;
+  const encoded = cookieValue.slice(dot + 1);
+  const returnTo = /^[A-Za-z0-9_-]*$/.test(encoded) ? Buffer.from(encoded, "base64url").toString("utf8") : "";
+  return { returnTo: safeReturnTo(returnTo) };
+}
+
+/** A 302 to `location` carrying the given Set-Cookie headers; never cached. */
+export function handoffRedirect(location: string, setCookies: string[] = []): Response {
+  const headers = new Headers({ Location: location, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+  for (const c of setCookies) headers.append("Set-Cookie", c);
+  return new Response(null, { status: 302, headers });
 }

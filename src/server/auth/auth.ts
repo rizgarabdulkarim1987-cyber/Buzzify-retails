@@ -8,6 +8,9 @@ export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.APP_URL,
   emailAndPassword: { enabled: true },
+  // A session lasts 12 hours at most, Studio handoff or password alike: signing out of Studio does
+  // not end a Retails session, so the cap bounds that. No sliding refresh, so use cannot extend it.
+  session: { expiresIn: 12 * 60 * 60, disableSessionRefresh: true },
   // Lets server actions (sign in, sign out) set the session cookie. Must stay the last plugin.
   plugins: [nextCookies()],
 });

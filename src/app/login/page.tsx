@@ -2,11 +2,13 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isPlatformAdmin } from "@/server/admin/platform-admin";
 import { getSessionUserId } from "@/server/auth/auth";
+import { studioSignInHref } from "@/server/core/handoff";
 import { getI18n } from "../_lib/i18n";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { LoginForm } from "./login-form";
 
-export default async function LoginPage() {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
+  const { error } = await searchParams;
   const userId = await getSessionUserId(await headers());
   if (userId) redirect((await isPlatformAdmin(userId)) ? "/admin" : "/retail/home");
   const { locale, t } = await getI18n();
@@ -35,7 +37,12 @@ export default async function LoginPage() {
               failed: t.auth.failed,
               throttled: t.auth.throttled,
               loading: t.common.loading,
+              studio: t.auth.studio,
+              or: t.auth.or,
+              coreFailed: t.auth.coreFailed,
             }}
+            studioHref={studioSignInHref()}
+            coreError={error === "core"}
           />
         </div>
       </div>

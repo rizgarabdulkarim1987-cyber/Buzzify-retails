@@ -28,6 +28,9 @@ export const en: Messages = {
     submit: "Sign in",
     failed: "The email or password is incorrect.",
     throttled: "Too many sign-in attempts. Wait a quarter of an hour, then try again.",
+    studio: "Sign in with Studio",
+    or: "or",
+    coreFailed: "Signing in with Studio did not work. Try again, or sign in with your email and password.",
   },
   header: {
     business: "Business",

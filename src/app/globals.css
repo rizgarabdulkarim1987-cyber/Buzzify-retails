@@ -810,6 +810,12 @@ textarea.input {
   margin-block-end: var(--space-5);
 }
 
+.auth-or {
+  margin: 0;
+  text-align: center;
+  font-size: var(--text-sm);
+}
+
 .wordmark {
   font-size: var(--text-lg);
   font-weight: 700;

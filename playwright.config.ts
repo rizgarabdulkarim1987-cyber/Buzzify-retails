@@ -31,6 +31,8 @@ export default defineConfig({
       INTAKE_PROVIDER: "fake",
       INTAKE_FAKE_FILE,
       ANTHROPIC_API_KEY: "",
+      // Shows "Sign in with Studio" on /login (tests/e2e/login.spec.ts); nothing listens there.
+      CORE_BASE_URL: "http://127.0.0.1:9",
     },
   },
 });
