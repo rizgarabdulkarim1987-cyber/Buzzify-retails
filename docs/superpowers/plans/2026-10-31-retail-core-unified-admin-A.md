@@ -30,7 +30,7 @@
 
 ---
 
-### المهمة 1: الترحيلة والنماذج
+### Task 1: الترحيلة والنماذج
 
 **الملفات:** `prisma/schema.prisma`، ترحيلة جديدة `20261101100000_core_link`، اختبار `tests/core/schema.test.ts`.
 
@@ -43,7 +43,7 @@
 - [ ] **2.** عدّل المخطط وولّد الترحيلة بـ`prisma migrate dev --create-only` وراجع أنها إضافية فقط؛ صنّف `RtCoreNonce` في `scoped-db.ts` كجدول غير مقيَّد (مثل `RtLoginAttempt`) وتأكد أن اختبار تصنيف الجداول الموجود يمر.
 - [ ] **3.** شغّل الاختبار + `npm run typecheck` + `prisma migrate diff` (shadow `retails_shadow`) فارغ. Commit: `feat: core link columns and nonce table`.
 
-### المهمة 2: التوقيع والتحقق والحد من المعدل
+### Task 2: التوقيع والتحقق والحد من المعدل
 
 **الملفات:** إنشاء `src/server/core/{signing,config}.ts`، `tests/core/signing.test.ts`.
 
@@ -58,7 +58,7 @@ coreConfig(): { baseUrl: string; secrets: ...}   // يقرأ البيئة ويف
 - [ ] **2.** نفّذ. حدّ المعدل: دالة `coreRateLimit(key)` فوق `RtLoginAttempt` بمفتاح مجزّأ `core:` (120 طلباً/دقيقة للعنوان) مع اختبار.
 - [ ] **3.** Commit: `feat: signed core requests and handoff tokens`.
 
-### المهمة 3: التزويد `POST /api/core/v1/provision`
+### Task 3: التزويد `POST /api/core/v1/provision`
 
 **الملفات:** تعديل `src/server/admin/provision.ts` (استخراج `provisionInTx` بلا مسؤول منصة)، إنشاء `src/server/core/state.ts`، `src/app/api/core/v1/provision/route.ts`، `tests/core/provision.test.ts`.
 
@@ -74,14 +74,14 @@ applyCoreState(tx, businessId, state): Promise<{ applied: boolean }>   // الأ
 - [ ] **3.** `applyCoreState`: يتجاهل `version ≤ coreStateVersion`؛ يضبط `RtBusiness.status` (SETUP يتحول إلى ACTIVE عند أول صورة إن كان `status` ACTIVE) ؛ يُحدّث/ينشئ `RtPlan` بالرمز المرسل (حدود من الصورة) ؛ يُحدّث الاشتراك الحي أو ينشئه؛ يضيف صف `RtFeatureOverride` لـ`ai.intake` فقط عند تغيّر القيمة (السبب: `synced from Studio v<n>`، `grantedById: "core-sync"`)؛ يخزّن `coreOwnerUserId` و`coreStateVersion`؛ كله داخل معاملة واحدة.
 - [ ] **4.** Commit: `feat: core provisioning endpoint`.
 
-### المهمة 4: المزامنة `POST/GET /api/core/v1/state` و`GET /health`
+### Task 4: المزامنة `POST/GET /api/core/v1/state` و`GET /health`
 
 **الملفات:** `src/app/api/core/v1/state/route.ts`، `src/app/api/core/v1/health/route.ts`، `tests/core/state.test.ts`.
 
 - [ ] **1. اختبارات:** صورة أحدث تُطبَّق وتغيّر الحالة والحدود؛ أقدم/مساوية تُتجاهل (200 `{applied:false}`)؛ ترتيب معكوس v6 ثم v5 ينتهي بـv6؛ `coreBusinessId` مجهول 404؛ SUSPENDED → `gateOf` يعطي READ_ONLY، ARCHIVED → CLOSED؛ تفعيل `aiIntake` ثم تعطيله يغيّر `featureEnabled`؛ `GET state?coreBusinessId=` موقّع يعيد `{version, status, aiUsageMonth: {month, units}}` (من `RtAiUsage`)؛ `health` لا يتطلب توقيعاً ويعيد `{ok:true}`.
 - [ ] **2.** نفّذ المسارات فوق `applyCoreState` والتحقق؛ Commit: `feat: core state sync endpoints`.
 
-### المهمة 5: الدخول برمز التسليم
+### Task 5: الدخول برمز التسليم
 
 **الملفات:** `src/app/api/core/v1/handoff/start/route.ts` و`.../callback/route.ts`، `src/server/core/handoff.ts`، تعديل `src/server/auth/auth.ts` (`session.expiresIn = 12h`)، زر «الدخول عبر Studio» في `src/app/login/login-form.tsx`، رسائل ar/ckb/en، `tests/core/handoff.test.ts`.
 
@@ -91,7 +91,7 @@ applyCoreState(tx, businessId, state): Promise<{ applied: boolean }>   // الأ
 - [ ] **2.** `start`: يولّد `state`، يضعه في كوكي HttpOnly/SameSite=Lax قصير العمر، ويحوّل إلى `${CORE_BASE_URL}/api/retail/v1/handoff?return=<callback>&state=<state>`. `callback`: يتحقق، ينشئ الجلسة عبر `(await auth.$context).internalAdapter.createSession` ويضع كوكيها بأدوات Better Auth (راجع وثائقه المثبّتة؛ إن لم تتوفر الواجهة اكتب الأقل لازماً واشرح)، ثم يحوّل إلى `/retail`. الدخول بكلمة السر المحلية يبقى للتطوير وحسابات الطوارئ.
 - [ ] **3.** Commit: `feat: sign-in via Studio handoff`.
 
-### المهمة 6: عميل Studio، سحب المفتاح، ودعوة الموظف
+### Task 6: عميل Studio، سحب المفتاح، ودعوة الموظف
 
 **الملفات:** `src/server/core/client.ts`، `src/server/core/client-fake.ts`، تعديل `src/server/intake/provider-claude.ts`، تعديل مسار دعوة الموظف في `src/server/admin/invitations.ts`/معالج الموظفين الموجود (اقرأه أولاً)، `tests/core/client.test.ts`، `tests/intake/provider-key.test.ts`.
 
@@ -107,7 +107,7 @@ resolveAnthropicKey(): Promise<{ apiKey: string; model: string | null } | null>
 - [ ] **2.** نفّذ، وبدّل في `provider-claude.ts` قراءة `process.env.ANTHROPIC_API_KEY` بـ`resolveAnthropicKey()` (النموذج من Studio إن وُجد، ثم `INTAKE_MODEL`، ثم الافتراضي).
 - [ ] **3.** Commit: `feat: Studio client and key pull`.
 
-### المهمة 7: التحذير، القبول، والتوثيق
+### Task 7: التحذير، القبول، والتوثيق
 
 **الملفات:** تعديل صفحات `src/app/admin/*` (شارة تحذير «مرتبط بـStudio — الأصل هناك» لمحل له `coreBusinessId`، وتعطيل تعديل الاشتراك المحلي بزر مع تلميح)، `tests/acceptance/core-link.test.ts`، `tests/e2e/core-handoff.spec.ts`، تحديث `docs/deployment-notes.md` (المتغيرات الأربعة، قيد الخروج أحادي الجانب، تدوير الأسرار).
 
