@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ar } from "@/messages/ar";
+import { ckb } from "@/messages/ckb";
+import { en } from "@/messages/en";
 import { acceptInvitation, inviteOwner, resendInvitation } from "@/server/admin/invitations";
 import { provisionBusiness } from "@/server/admin/provision";
 import { MemoryMailer, setMailer } from "@/server/email/mailer";
@@ -194,6 +197,16 @@ describe("inviteOwner and resendInvitation", () => {
       code: "OWNER_EXISTS",
     });
     expect(await db.rtInvitation.count()).toBe(1);
+  });
+
+  it("a Studio-linked business takes no local owner invitation (invite or resend): CORE_MANAGED, nothing written", async () => {
+    const w = await world();
+    await db.rtBusiness.update({ where: { id: w.businessId }, data: { coreBusinessId: "core-linked-1" } });
+    const before = await db.rtInvitation.count();
+    expect(await inviteOwner({ businessId: w.businessId, email: "other@example.test" }, w.admin("i1"))).toMatchObject({ ok: false, code: "CORE_MANAGED" });
+    expect(await resendInvitation({ invitationId: w.invitationId }, w.admin("r1"))).toMatchObject({ ok: false, code: "CORE_MANAGED" });
+    expect(await db.rtInvitation.count()).toBe(before);
+    for (const t of [ar, ckb, en]) expect(t.errors.CORE_MANAGED.trim()).not.toBe("");
   });
 
   it("only a platform admin may invite or resend; unknown targets are NOT_FOUND", async () => {

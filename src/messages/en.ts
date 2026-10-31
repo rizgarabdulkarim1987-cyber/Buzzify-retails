@@ -1340,6 +1340,7 @@ export const en: Messages = {
     INVITATION_INVALID: "This invitation link is not valid, was already used, or was replaced by a newer invitation.",
     INVITATION_EXPIRED: "This invitation link has expired. Ask the Buzzify team to send a new invitation.",
     ALREADY_MEMBER: "You are already a member of this business's team.",
+    CORE_MANAGED: "This business is linked to Studio and its owner is managed there, so no local owner invitation can be sent.",
     OWNER_EXISTS: "This business already has an owner, so a new owner invitation cannot be sent.",
     BUSINESS_ARCHIVED: "This business is archived, so this cannot be done.",
     STEP_NOT_AVAILABLE: "This step is not available yet; it arrives in a coming release.",

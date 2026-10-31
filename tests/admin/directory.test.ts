@@ -37,4 +37,13 @@ describe("platform business directory", () => {
     expect(result.value.businesses[0]).toMatchObject({ name: "Test Business", status: "SETUP", activityType: "MARKET" });
     expect(result.value.plans.map((p) => p.code)).toEqual(["basic"]);
   });
+
+  it("Studio-managed plans (core: prefix) are never offered to the local create form", async () => {
+    const admin = await createPlatformAdmin(db);
+    await createPlan(db, { code: "basic" });
+    await createPlan(db, { code: "core:shop-1:pro" });
+    const result = await listBusinesses({}, { userId: admin.id, idempotencyKey: "" });
+    if (!result.ok) throw new Error(result.code);
+    expect(result.value.plans.map((p) => p.code)).toEqual(["basic"]);
+  });
 });

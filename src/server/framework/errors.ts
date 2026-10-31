@@ -14,6 +14,7 @@ export type ErrorCode =
   | "INVITATION_EXPIRED"
   | "ALREADY_MEMBER"
   | "OWNER_EXISTS"
+  | "CORE_MANAGED"
   | "BUSINESS_ARCHIVED"
   | "STEP_NOT_AVAILABLE"
   | "USER_NOT_FOUND"
@@ -76,6 +77,7 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   INVITATION_INVALID: "رابط الدعوة غير صالح أو تم استخدامه أو استُبدل بدعوة أحدث.",
   INVITATION_EXPIRED: "انتهت صلاحية رابط الدعوة. اطلب من فريق Buzzify إرسال دعوة جديدة.",
   ALREADY_MEMBER: "أنت عضو في فريق هذه المنشأة مسبقاً.",
+  CORE_MANAGED: "هذه المنشأة مرتبطة بـStudio ويُدار مالكها من هناك، لذا لا تُرسل دعوة مالك محلية.",
   OWNER_EXISTS: "لهذه المنشأة مالك مسجّل مسبقاً، لا يمكن إرسال دعوة مالك جديدة.",
   BUSINESS_ARCHIVED: "هذه المنشأة مؤرشفة، لا يمكن تنفيذ هذه العملية.",
   STEP_NOT_AVAILABLE: "هذه الخطوة غير متاحة بعد، ستصل في إصدار قادم.",

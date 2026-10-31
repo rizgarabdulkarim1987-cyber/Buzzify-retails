@@ -49,7 +49,7 @@ export function invitationLink(token: string): string {
 async function lockBusiness(tx: Tx, businessId: string) {
   // Row lock: serializes every invitation write (invite, resend, accept) of this business.
   await tx.$executeRaw`SELECT 1 FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
-  return tx.rtBusiness.findUnique({ where: { id: businessId }, select: { id: true, name: true, status: true } });
+  return tx.rtBusiness.findUnique({ where: { id: businessId }, select: { id: true, name: true, status: true, coreBusinessId: true } });
 }
 
 async function hasActiveOwner(tx: Tx, businessId: string): Promise<boolean> {
@@ -75,6 +75,8 @@ export async function createOwnerInvitation(
   const business = await lockBusiness(tx, args.businessId);
   if (!business) throw new NotFoundError();
   if (business.status === "ARCHIVED") throw new RuleError("BUSINESS_ARCHIVED");
+  // A Studio-linked business has its owner from Studio (sign-in handoff); a local invitation would bypass that.
+  if (business.coreBusinessId !== null) throw new RuleError("CORE_MANAGED");
   if (await hasActiveOwner(tx, business.id)) throw new RuleError("OWNER_EXISTS");
 
   const { count: superseded } = await tx.rtInvitation.updateMany({

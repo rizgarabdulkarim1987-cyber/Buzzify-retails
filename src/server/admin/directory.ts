@@ -52,7 +52,7 @@ export const listBusinesses = definePlatformAction({
       take: DIRECTORY_LIMIT,
     });
     const plans = await tx.rtPlan.findMany({
-      where: { active: true },
+      where: { active: true, NOT: { code: { startsWith: "core:" } } },
       select: { code: true, name: true, maxBranches: true },
       orderBy: [{ maxBranches: "asc" }, { code: "asc" }],
     });
