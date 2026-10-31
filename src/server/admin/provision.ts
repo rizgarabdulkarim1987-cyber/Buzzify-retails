@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Prisma } from "@/generated/prisma/client";
 import { CAPABILITIES, ACTIVITY_TYPES, defaultCapabilities, validateCapabilities, type Capability } from "@/server/domain/profiles";
 import { RuleError } from "@/server/framework/errors";
 import { definePlatformAction } from "@/server/framework/platform-action";
@@ -40,65 +41,83 @@ export function provisionedCapabilities(input: Pick<ProvisionInput, "activityTyp
   return [...new Set([...defaultCapabilities(input.activityType), ...input.capabilities])];
 }
 
+/** What provisioning needs without the owner: the platform action adds the invitation, the core route adds none. */
+export type ProvisionCoreInput = Omit<ProvisionInput, "ownerEmail">;
+
+/**
+ * Writes the business (SETUP), branches, default locations, TRIAL subscription (with its event) and
+ * capabilities on `tx`. The caller owns the transaction and whatever must follow it (owner
+ * invitation, audit row). `actorId` is recorded on the subscription event.
+ */
+export async function provisionInTx(
+  tx: Prisma.TransactionClient,
+  input: ProvisionCoreInput,
+  ctx: { actorId: string; now?: Date },
+): Promise<{ businessId: string }> {
+  const now = ctx.now ?? new Date();
+
+  const plan = await tx.rtPlan.findUnique({ where: { code: input.planCode } });
+  if (!plan || !plan.active) throw new RuleError("PLAN_UNAVAILABLE");
+  if (input.branches.length > plan.maxBranches) throw new RuleError("PLAN_LIMIT");
+
+  const capabilities = provisionedCapabilities(input);
+  if (!validateCapabilities(capabilities).ok) throw new RuleError("CAPABILITY_CONFLICT");
+
+  const business = await tx.rtBusiness.create({
+    data: {
+      name: input.name,
+      activityType: input.activityType,
+      status: "SETUP",
+      timezone: "Asia/Baghdad",
+      enabledCurrencies: input.currencies,
+      defaultCurrency: input.currencies[0]!,
+    },
+    select: { id: true },
+  });
+  const businessId = business.id;
+
+  for (const branch of input.branches) {
+    const row = await tx.rtBranch.create({ data: { businessId, name: branch.name }, select: { id: true } });
+    await tx.rtLocation.create({
+      data: { businessId, branchId: row.id, name: DEFAULT_LOCATION_NAME, sellable: true, central: false },
+    });
+  }
+
+  const trialEndsAt = new Date(now.getTime() + input.trialDays * DAY_MS);
+  const subscription = await tx.rtSubscription.create({
+    data: {
+      businessId,
+      planCode: plan.code,
+      status: "TRIAL",
+      trialEndsAt,
+      currentPeriodStart: now,
+      currentPeriodEnd: trialEndsAt,
+    },
+    select: { id: true },
+  });
+  await tx.rtSubscriptionEvent.create({
+    data: {
+      subscriptionId: subscription.id,
+      businessId,
+      type: "trial.started",
+      fromStatus: null,
+      toStatus: "TRIAL",
+      actorId: ctx.actorId,
+      data: { planCode: plan.code, trialDays: input.trialDays },
+    },
+  });
+
+  await tx.rtCapability.createMany({ data: capabilities.map((capability) => ({ businessId, capability })) });
+  return { businessId };
+}
+
 export const provisionBusiness = definePlatformAction({
   name: "platform.business.provision",
   input: provisionInput,
   writes: true,
   async run({ adminId, tx, input }) {
     const now = new Date();
-
-    const plan = await tx.rtPlan.findUnique({ where: { code: input.planCode } });
-    if (!plan || !plan.active) throw new RuleError("PLAN_UNAVAILABLE");
-    if (input.branches.length > plan.maxBranches) throw new RuleError("PLAN_LIMIT");
-
-    const capabilities = provisionedCapabilities(input);
-    if (!validateCapabilities(capabilities).ok) throw new RuleError("CAPABILITY_CONFLICT");
-
-    const business = await tx.rtBusiness.create({
-      data: {
-        name: input.name,
-        activityType: input.activityType,
-        status: "SETUP",
-        timezone: "Asia/Baghdad",
-        enabledCurrencies: input.currencies,
-        defaultCurrency: input.currencies[0]!,
-      },
-      select: { id: true },
-    });
-    const businessId = business.id;
-
-    for (const branch of input.branches) {
-      const row = await tx.rtBranch.create({ data: { businessId, name: branch.name }, select: { id: true } });
-      await tx.rtLocation.create({
-        data: { businessId, branchId: row.id, name: DEFAULT_LOCATION_NAME, sellable: true, central: false },
-      });
-    }
-
-    const trialEndsAt = new Date(now.getTime() + input.trialDays * DAY_MS);
-    const subscription = await tx.rtSubscription.create({
-      data: {
-        businessId,
-        planCode: plan.code,
-        status: "TRIAL",
-        trialEndsAt,
-        currentPeriodStart: now,
-        currentPeriodEnd: trialEndsAt,
-      },
-      select: { id: true },
-    });
-    await tx.rtSubscriptionEvent.create({
-      data: {
-        subscriptionId: subscription.id,
-        businessId,
-        type: "trial.started",
-        fromStatus: null,
-        toStatus: "TRIAL",
-        actorId: adminId,
-        data: { planCode: plan.code, trialDays: input.trialDays },
-      },
-    });
-
-    await tx.rtCapability.createMany({ data: capabilities.map((capability) => ({ businessId, capability })) });
+    const { businessId } = await provisionInTx(tx, input, { actorId: adminId, now });
 
     // Last: the invitation sends the mail, so every row above already exists when it goes out.
     const invitation = await createOwnerInvitation(tx, { businessId, email: input.ownerEmail, createdById: adminId, now });
