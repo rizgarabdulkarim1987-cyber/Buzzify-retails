@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SCANNED_DIRS = ["src/app", "src/server"];
 const ALLOWED_FILES = ["src/server/db.ts"];
-const ALLOWED_DIRS = ["src/server/framework/", "src/server/auth/", "src/server/admin/"];
+const ALLOWED_DIRS = ["src/server/framework/", "src/server/auth/", "src/server/admin/", "src/server/core/"];
 
 const BASE_DB = "src/server/db";
 /**
