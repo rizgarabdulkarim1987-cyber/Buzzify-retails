@@ -106,6 +106,8 @@ const UNSCOPED = [
   "RtInvitation",
   // Failed sign-in attempts (hashed keys, no businessId); only src/server/auth/login-throttle.ts touches them.
   "RtLoginAttempt",
+  // Core link handoff-token ids (no businessId); only the core handoff route touches them.
+  "RtCoreNonce",
 ] as const satisfies readonly ModelName[];
 
 /** The UNSCOPED models that may carry a businessId column (platform-managed; the framework reads them with the base client). */

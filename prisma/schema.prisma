@@ -40,6 +40,11 @@ model RtBusiness {
   // version of the consent text agreed to (a newer text version voids an older consent).
   aiConsentAt       DateTime?
   aiConsentVersion  Int?
+  // Core link (Studio unified admin): the Studio business this shop is linked to, its owner's
+  // Studio user id, and the newest state snapshot version applied (older ones are ignored).
+  coreBusinessId    String?          @unique
+  coreOwnerUserId   String?
+  coreStateVersion  Int?
   version           Int              @default(1)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
@@ -194,6 +199,8 @@ model User {
   email         String   @unique
   emailVerified Boolean  @default(false)
   image         String?
+  // Core link: the Studio user id this local user is linked to.
+  coreUserId    String?  @unique
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -488,6 +495,14 @@ model RtLoginAttempt {
   at  DateTime
 
   @@index([key, at])
+}
+
+// Core link: handoff-token ids already used (single use), kept until `expiresAt`. Not business data.
+model RtCoreNonce {
+  jti       String   @id
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }
 
 // Setup wizard (Task 10). One row per (business, step); steps are 1..9 (CHECK in the migration).
