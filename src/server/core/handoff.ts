@@ -20,7 +20,8 @@ export type HandoffClaims = {
   email: string;
   emailVerified: boolean;
   name: string;
-  coreBusinessId: string;
+  /** Absent/null/"" for staff who have no Studio business membership; then no business is resolved. */
+  coreBusinessId?: string | null;
 };
 
 export type HandoffResult =
@@ -42,7 +43,8 @@ function isClaims(c: unknown): c is HandoffClaims {
     typeof o.aud === "string" &&
     Number.isFinite(o.iat) &&
     Number.isFinite(o.exp) &&
-    ["nonce", "jti", "coreUserId", "email", "name", "coreBusinessId"].every((k) => typeof o[k] === "string") &&
+    ["nonce", "jti", "coreUserId", "email", "name"].every((k) => typeof o[k] === "string") &&
+    (o.coreBusinessId === undefined || o.coreBusinessId === null || typeof o.coreBusinessId === "string") &&
     typeof o.emailVerified === "boolean"
   );
 }

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET as callbackGET } from "@/app/api/core/v1/handoff/callback/route";
 import { GET as startGET } from "@/app/api/core/v1/handoff/start/route";
 import { auth } from "@/server/auth/auth";
-import { signHandoffForTests, type HandoffClaims } from "@/server/core/handoff";
+import { signHandoffForTests, verifyHandoff, type HandoffClaims } from "@/server/core/handoff";
 import { useTestDb } from "../helpers/db";
 import { createBusinessWithStaff, createUser } from "../helpers/fixtures";
 
@@ -354,6 +354,100 @@ describe("GET /api/core/v1/handoff/callback", () => {
     expect(isLoginError(res)).toBe(true);
     expect(await db.user.count()).toBe(0);
     expect(await db.session.count()).toBe(0);
+  });
+
+  describe("staff token without a Studio business", () => {
+    const staffClaims = (over: Record<string, unknown> = {}) => {
+      const rest: Record<string, unknown> = claims({ coreUserId: "core-user-9", email: "cashier@example.test", name: "Cashier" });
+      delete rest.coreBusinessId;
+      return { ...rest, ...over } as unknown as HandoffClaims;
+    };
+    const signInRaw = async (c: HandoffClaims) => {
+      const s = await start(""); // no returnTo: the default landing page
+      return callback(signHandoffForTests({ ...c, nonce: nonceFor(s.state) }, SECRET), s.state, s.cookie);
+    };
+
+    it("signs in with a session, lands on /retail/home, and creates no staff row and no OWNER row", async () => {
+      const { business } = await linkedBusiness();
+      const staffBefore = await db.rtStaff.count();
+      const res = await signInRaw(staffClaims());
+      expect(isLoginError(res)).toBe(false);
+      expect(res.headers.get("location")).toBe("/retail/home");
+      const user = await db.user.findUniqueOrThrow({ where: { coreUserId: "core-user-9" } });
+      expect(await db.session.count({ where: { userId: user.id } })).toBe(1);
+      expect(await db.rtStaff.count()).toBe(staffBefore);
+      expect(await db.rtStaff.count({ where: { role: "OWNER", businessId: business.id } })).toBe(0);
+      expect(await db.rtBusiness.count()).toBe(1);
+    });
+
+    it("null and empty-string coreBusinessId are treated as absent", async () => {
+      await linkedBusiness();
+      const owners = await db.rtStaff.count({ where: { role: "OWNER" } });
+      for (const [i, v] of [null, ""].entries()) {
+        const res = await signInRaw(staffClaims({ coreUserId: `core-user-n${i}`, email: `n${i}@example.test`, coreBusinessId: v }));
+        expect(isLoginError(res)).toBe(false);
+      }
+      expect(await db.rtStaff.count({ where: { role: "OWNER" } })).toBe(owners);
+    });
+
+    it("even the Studio owner of a linked business gets no OWNER row without a coreBusinessId", async () => {
+      const { business } = await linkedBusiness();
+      const res = await signInRaw(staffClaims({ coreUserId: "core-user-1", email: "owner@example.test" }));
+      expect(isLoginError(res)).toBe(false);
+      const user = await db.user.findUniqueOrThrow({ where: { coreUserId: "core-user-1" } });
+      expect(await db.rtStaff.count({ where: { businessId: business.id, userId: user.id } })).toBe(0);
+    });
+
+    it("an already-linked staff user keeps their existing membership untouched", async () => {
+      const { business, staff } = await linkedBusiness({ staff: [{ key: "cashier", role: "CASHIER" }] });
+      await db.user.update({ where: { id: staff.cashier!.user.id }, data: { coreUserId: "core-user-9" } });
+      expect(isLoginError(await signInRaw(staffClaims()))).toBe(false);
+      const rows = await db.rtStaff.findMany({ where: { businessId: business.id } });
+      expect(rows.filter((r) => r.userId === staff.cashier!.user.id).map((r) => r.role)).toEqual(["CASHIER"]);
+    });
+
+    it("unverified email with no link is still refused, nothing created", async () => {
+      await linkedBusiness();
+      const res = await signInRaw(staffClaims({ emailVerified: false }));
+      expect(isLoginError(res)).toBe(true);
+      expect(await db.user.count({ where: { coreUserId: "core-user-9" } })).toBe(0);
+      expect(await db.session.count()).toBe(0);
+    });
+
+    it("never creates a Retails business or staff row (no businesses at all)", async () => {
+      const res = await signInRaw(staffClaims());
+      expect(isLoginError(res)).toBe(false);
+      expect(await db.rtBusiness.count()).toBe(0);
+      expect(await db.rtStaff.count()).toBe(0);
+    });
+
+    it("an existing local user with a verified email is linked by it, as with a business", async () => {
+      const u = await createUser(db, { email: "Cashier@Example.test" });
+      expect(isLoginError(await signInRaw(staffClaims()))).toBe(false);
+      expect((await db.user.findUniqueOrThrow({ where: { id: u.id } })).coreUserId).toBe("core-user-9");
+    });
+
+    it("a platform admin is never linked by email without a business either", async () => {
+      const a = await createUser(db, { email: "cashier@example.test" });
+      await db.rtPlatformAdmin.create({ data: { userId: a.id } });
+      expect(isLoginError(await signInRaw(staffClaims()))).toBe(true);
+    });
+  });
+
+  describe("verifyHandoff and coreBusinessId", () => {
+    const sign = (o: Record<string, unknown>) => {
+      const rest: Record<string, unknown> = claims();
+      delete rest.coreBusinessId;
+      return signHandoffForTests({ ...rest, ...o } as unknown as HandoffClaims, SECRET);
+    };
+    it("accepts an absent or null field, and a string", () => {
+      expect(verifyHandoff(sign({})).ok).toBe(true);
+      expect(verifyHandoff(sign({ coreBusinessId: null })).ok).toBe(true);
+      expect(verifyHandoff(sign({ coreBusinessId: "core-biz-1" })).ok).toBe(true);
+    });
+    it("rejects a non-string value", () => {
+      for (const v of [5, true, {}, []]) expect(verifyHandoff(sign({ coreBusinessId: v }))).toEqual({ ok: false, reason: "FORMAT" });
+    });
   });
 
   it.each(["//evil.com", "https://evil.com", "/\\evil", "\\\\evil", "evil", "/%2F%2Fevil.com", "", "/ok\nx"])(

@@ -13,8 +13,11 @@ import { db } from "@/server/db";
  *      its nonce must be base64url(sha256(state)), which /start sent to Studio and Studio echoes
  *      into the token (contract for Studio, see startHandoff); a mismatch spends nothing;
  *   4. its jti is consumed by inserting RtCoreNonce (kept ~2 minutes); a duplicate is a replay;
- *   5. in one transaction: the business by coreBusinessId (unknown -> refuse), the local user
- *      (see resolveUser), and for Studio's owner of that business an active RtStaff OWNER row;
+ *   5. in one transaction: when the token names a business (coreBusinessId present and non-empty):
+ *      that business (unknown -> refuse), the local user (see resolveUser), and for Studio's owner
+ *      of that business an active RtStaff OWNER row. When it names none (staff without a Studio
+ *      business): only the local user, by the same rules; no business lookup, and no RtStaff row
+ *      is ever created or changed, so access comes only from existing memberships;
  *   6. a Better Auth session (12 h) for the user.
  * Failures carry a reason for tests and logs; the route never shows it to the browser.
  */
@@ -22,7 +25,7 @@ import { db } from "@/server/db";
 export type HandoffFailure = "STATE" | "TOKEN" | "NONCE" | "REPLAY" | "BUSINESS" | "ACCOUNT_CONFLICT";
 
 export type HandoffOutcome =
-  | { ok: true; userId: string; businessId: string; returnTo: string; setCookie: string }
+  | { ok: true; userId: string; businessId: string | null; returnTo: string; setCookie: string }
   | { ok: false; reason: HandoffFailure };
 
 /** How long a spent jti is remembered; longer than any token can live (60 s + 5 s clock leeway). */
@@ -56,16 +59,21 @@ export async function completeHandoff(
   });
   if (count !== 1) return { ok: false, reason: "REPLAY" };
 
-  let linked: { userId: string; businessId: string };
+  const coreBusinessId = typeof claims.coreBusinessId === "string" && claims.coreBusinessId !== "" ? claims.coreBusinessId : null;
+
+  let linked: { userId: string; businessId: string | null };
   try {
     linked = await db.$transaction(async (tx) => {
       // Serialises concurrent handoffs of one Studio user (the unique columns are the backstop).
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`core.handoff:${claims.coreUserId}`}, 0))`;
+      if (coreBusinessId === null) {
+        return { userId: await resolveUser(tx, claims, null), businessId: null };
+      }
       // Row lock first: serialises with applyCoreState (which locks the same row), so the owner
       // compared below is the one the latest committed snapshot set, and a demotion cannot be undone.
-      await tx.$executeRaw`SELECT 1 FROM "RtBusiness" WHERE "coreBusinessId" = ${claims.coreBusinessId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT 1 FROM "RtBusiness" WHERE "coreBusinessId" = ${coreBusinessId} FOR UPDATE`;
       const business = await tx.rtBusiness.findUnique({
-        where: { coreBusinessId: claims.coreBusinessId },
+        where: { coreBusinessId },
         select: { id: true, coreOwnerUserId: true },
       });
       if (!business) throw new Refused("BUSINESS");
@@ -95,7 +103,7 @@ export async function completeHandoff(
  *     relinked) or is a platform admin (never linked by email);
  *   - none: a new user (lowercased email, no Account row, so no password) linked to coreUserId.
  */
-async function resolveUser(tx: Tx, claims: HandoffClaims, businessId: string): Promise<string> {
+async function resolveUser(tx: Tx, claims: HandoffClaims, businessId: string | null): Promise<string> {
   const byCore = await tx.user.findUnique({ where: { coreUserId: claims.coreUserId }, select: { id: true } });
   if (byCore) return byCore.id;
 

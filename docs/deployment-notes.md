@@ -113,6 +113,13 @@ that migration.
   by email to a platform admin, and refuses when several local users share the email ignoring case.
 - When a snapshot changes the owner, the previous owner's active OWNER row in that business is
   deactivated (audit `core.owner.demote`); the new owner gets OWNER at their next Studio sign-in.
+- `coreBusinessId` in the token is optional (string, or absent/null/empty). Studio names a shop only
+  for users it can place in one (owners). Retails staff (cashiers etc.) usually have no Studio
+  business membership: for them Studio omits `coreBusinessId`. Retails then resolves and links the user
+  by the same rules (coreUserId, verified email only), creates no business, no RtStaff row and no
+  OWNER row, opens the session and lands on `/retail/home`; their access comes only from existing
+  RtStaff rows. When `coreBusinessId` is present it must match a known business (else refused) and
+  the owner rules above apply unchanged.
 - Sessions last 12 hours at most (no sliding refresh), password sign-in included.
 
 ## Studio contract (Part B must implement)
