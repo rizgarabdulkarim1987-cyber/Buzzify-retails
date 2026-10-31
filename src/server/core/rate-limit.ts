@@ -27,7 +27,8 @@ export async function pruneAttempts(now: Date = new Date()): Promise<number> {
 }
 
 export async function coreRateLimit(scope: CoreRateScope, key: string): Promise<{ ok: boolean }> {
-  if (Math.random() < PRUNE_ODDS) await pruneAttempts();
+  // Housekeeping must never fail or slow a request: run it detached and swallow its errors.
+  if (Math.random() < PRUNE_ODDS) void pruneAttempts().catch(() => undefined);
   const hashed = createHash("sha256").update(`core:${scope}:${key}`, "utf8").digest("hex");
   const now = new Date();
   const since = new Date(now.getTime() - CORE_RATE_WINDOW_MS);
