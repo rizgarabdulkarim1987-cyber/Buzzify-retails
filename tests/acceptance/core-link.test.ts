@@ -24,6 +24,9 @@ import { createUser } from "../helpers/fixtures";
  * member who already has a verified Studio identity, the shop is suspended (READ_ONLY), re-enabled
  * with the AI switch on, reads a receipt with the key pulled from Studio, and is archived (CLOSED
  * for good). Nothing secret may reach the console on the way.
+ *
+ * The Studio client is the fake (setCoreClientFake); the real outbound client path (signing,
+ * timeouts, the 60 s key cache) is covered in tests/core/client.test.ts.
  */
 
 const { db } = useTestDb();
@@ -166,7 +169,9 @@ describe("Studio link: the whole chain", () => {
     const path = `/api/core/v1/state?coreBusinessId=${CORE_BIZ}`;
     const reconcile = await stateGET(new Request(`http://localhost${path}`, { headers: signRequest("GET", path, "", SYNC) }));
     expect(reconcile.status).toBe(200);
-    expect(JSON.stringify(await reconcile.json())).toContain('"version":2');
+    const report = (await reconcile.json()) as { version: number; status: string; aiUsageMonth: { units: number } };
+    expect(report).toMatchObject({ version: 2, status: "ACTIVE", aiUsageMonth: { units: 0 } });
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id: businessId } })).toMatchObject({ coreBusinessId: CORE_BIZ, coreStateVersion: 2 });
 
     // 3. The owner signs in through the handoff and lands in the shop as its OWNER.
     const signedIn = await ownerSignsIn();
@@ -242,5 +247,12 @@ describe("Studio link: the whole chain", () => {
     // Nothing secret reached the console during the whole run.
     const escaped = secrets.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     expect(logged.join("\n")).not.toMatch(new RegExp(escaped.join("|")));
+  });
+
+  it("the console spy catches a canary (so a clean run means something)", () => {
+    const canary = `canary-${randomUUID()}`;
+    console.error("[canary]", canary);
+    expect(logged.join("
+")).toContain(canary);
   });
 });

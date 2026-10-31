@@ -132,7 +132,11 @@ body; accepted skew 120 s) and has a 5 s timeout. Studio verifies with the match
   `200 {"coreUserId": string, "created": boolean, "emailVerified": boolean}`. `emailVerified` must be
   true only when Studio has verified ownership of that email. Retails links a local user to
   `coreUserId` only when it is true, the user is not a platform admin and has no `coreUserId` yet;
-  otherwise the staff add proceeds and the verified sign-in handoff links later. Any non-2xx status,
+  otherwise the staff add proceeds and the verified sign-in handoff links later. When `emailVerified`
+  is true and Retails has no account for that email, Retails creates one (lowercased email, name from
+  the email's local part, no password) so the add can proceed; the person signs in through Studio.
+  With `emailVerified` false and no account, nothing is created and the add fails as `USER_NOT_FOUND`.
+  Two local accounts that differ only by email case are never linked. Any non-2xx status,
   timeout, or malformed body makes the staff add fail with the retryable `CORE_UNAVAILABLE`
   (nothing is added, no fallback). Retails does not call this for users that already have a
   `coreUserId`.
@@ -164,8 +168,10 @@ each other, and be set as environment variables only (never committed or logged)
 `CORE_OUT_SECRET` has no overlap: change it in Studio and Retails together; calls in between fail
 (a key pull falls back to the cached key, a staff add fails with the retryable `CORE_UNAVAILABLE`).
 
-**AI key.** In production the Anthropic key comes only from Studio. `ANTHROPIC_API_KEY` is no longer
-used in production (a fallback outside production only), so the old variable can be removed.
+**AI key.** A linked deployment (`CORE_BASE_URL` set) never uses `ANTHROPIC_API_KEY`: the key comes
+only from Studio, and with none, AI is unavailable. The variable is used only in standalone mode
+(`CORE_BASE_URL` unset) and, outside production, as a development fallback; remove it from linked
+production deployments.
 
 **Sessions and sign-out.** Logout is one-way and declared as such: signing out of Retails does not
 sign out of Studio, and Studio signing out, suspending or removing a user does not end an existing
@@ -178,11 +184,17 @@ ARCHIVED closes it, and ARCHIVED is final (a later ACTIVE snapshot does not reop
 not instant: it applies when the snapshot is delivered (push, or reconcile below) and the gate is
 read on the next request; a signed-in user keeps reading until then. For a linked shop the admin page
 shows "Linked to Studio" and disables the local AI switch; local edits of plan, subscription,
-status or the AI switch are overwritten by the next snapshot.
+status or the AI switch are overwritten by the next snapshot. The AI-switch lock is a UI guard only
+(the sync overwrites the value anyway). There is no local subscription editing in Retails at all:
+subscriptions of linked shops change only through Studio snapshots.
+
+Owner invitations are refused for linked shops (`CORE_MANAGED`): the owner arrives through Studio.
+Studio plans are stored per shop as `core:<coreBusinessId>:<code>` and are not offered by the local create form.
 
 **Reconcile.** `GET /api/core/v1/state?coreBusinessId=` (signed with the sync secret, empty body)
 returns the state Retails holds and its version, for Studio to compare with its own and re-push when
-they differ. `GET /api/core/v1/health` is an unauthenticated liveness check. Snapshots with an older
+they differ. `GET /api/core/v1/health` is an unauthenticated liveness check by design (it returns only `{"ok":true}`). The handoff token travels in the callback URL's query string, so operators should keep query strings
+out of access and proxy logs for `/api/core/v1/handoff/callback`. Snapshots with an older
 or equal version are ignored, and one for a shop not provisioned yet is a retryable 404.
 
 **When Studio is down.** Sign-in by handoff fails (the user sees one generic message; local sign-in

@@ -8,8 +8,11 @@ export const E2E_SECRET = "e2e-secret-e2e-secret-e2e-secret-0123";
 
 export const PASSWORD = "e2e-password-123";
 
-/** The e2e dev server's handoff secret (playwright.config.ts) and the Studio-linked shop seeded for tests/e2e/core-handoff.spec.ts. */
-/** Studio does not exist in e2e: the browser request to it is intercepted (Chromium also refuses unsafe ports such as 9). */
+/**
+ * Studio-link e2e (tests/e2e/core-handoff.spec.ts): Studio does not exist, so the browser request to it is
+ * intercepted (Chromium also refuses unsafe ports such as 9). The handoff secret is the dev server's
+ * (playwright.config.ts); CORE_SHOP is the Studio-linked shop seeded for the spec.
+ */
 export const E2E_CORE_BASE_URL = "http://studio.e2e.test";
 export const E2E_HANDOFF_SECRET = "e2e-handoff-secret-e2e-handoff-0123";
 export const CORE_SHOP = {
