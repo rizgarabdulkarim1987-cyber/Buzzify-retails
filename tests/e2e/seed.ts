@@ -15,6 +15,7 @@ import {
   BRANCH_B,
   BUSINESS,
   CASHIER,
+  CORE_SHOP,
   E2E_DATABASE_URL,
   LONG_BRANCH,
   LONG_BUSINESS,
@@ -96,6 +97,34 @@ async function main() {
   const businessId = await provision(BUSINESS, [BRANCH_A, BRANCH_B], OWNER.email, ownerId);
   const longOwnerId = await signUp(LONG_OWNER);
   await provision(LONG_BUSINESS, [LONG_BRANCH], LONG_OWNER.email, longOwnerId);
+
+  // A shop provisioned by Studio (the same code path as POST /api/core/v1/provision); its owner arrives by handoff.
+  const { provisionFromCore } = await import("@/server/admin/core-provision");
+  const { coreStateSchema } = await import("@/server/core/state");
+  const linkedState = coreStateSchema.parse({
+    coreBusinessId: CORE_SHOP.coreBusinessId,
+    version: 1,
+    status: "ACTIVE",
+    plan: { code: "e2e", name: "E2E", maxBranches: 2, maxTerminals: 2, maxUsers: 5, storageMb: 512, aiMonthly: 5 },
+    subscription: {
+      status: "ACTIVE",
+      trialEndsAt: null,
+      currentPeriodStart: new Date(Date.now() - 86_400_000).toISOString(),
+      currentPeriodEnd: new Date(Date.now() + 365 * 86_400_000).toISOString(),
+      graceDays: 5,
+    },
+    aiIntake: false,
+    owner: { ...CORE_SHOP.owner, emailVerified: true },
+  });
+  await provisionFromCore({
+    coreBusinessId: CORE_SHOP.coreBusinessId,
+    name: CORE_SHOP.name,
+    activityType: "MARKET",
+    capabilities: [],
+    branches: [{ name: "الفرع الرئيسي" }],
+    currencies: ["IQD"],
+    state: linkedState,
+  });
 
   // A cashier of branch A, added by the owner through the setup wizard (step 5).
   const branchA = await db.rtBranch.findFirstOrThrow({ where: { businessId, name: BRANCH_A } });

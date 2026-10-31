@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_DATABASE_URL, E2E_PORT, E2E_SECRET, INTAKE_FAKE_FILE } from "./tests/e2e/fixtures";
+import { E2E_CORE_BASE_URL, E2E_DATABASE_URL, E2E_HANDOFF_SECRET, E2E_PORT, E2E_SECRET, INTAKE_FAKE_FILE } from "./tests/e2e/fixtures";
 
 const baseURL = `http://localhost:${E2E_PORT}`;
 
@@ -32,7 +32,9 @@ export default defineConfig({
       INTAKE_FAKE_FILE,
       ANTHROPIC_API_KEY: "",
       // Shows "Sign in with Studio" on /login (tests/e2e/login.spec.ts); nothing listens there.
-      CORE_BASE_URL: "http://127.0.0.1:9",
+      CORE_BASE_URL: E2E_CORE_BASE_URL,
+      // Verifies the hand-signed handoff token of tests/e2e/core-handoff.spec.ts (test-only value).
+      CORE_HANDOFF_SECRET: E2E_HANDOFF_SECRET,
     },
   },
 });
