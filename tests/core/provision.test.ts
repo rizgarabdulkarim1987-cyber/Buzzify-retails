@@ -100,11 +100,11 @@ describe("POST /api/core/v1/provision", () => {
     const caps = (await db.rtCapability.findMany({ where: { businessId: json.businessId } })).map((c) => c.capability);
     expect(caps).toContain("CREDIT");
 
-    const plan = await db.rtPlan.findUniqueOrThrow({ where: { code: "core:retail-pro" } });
+    const plan = await db.rtPlan.findUniqueOrThrow({ where: { code: "core:core-biz-1:retail-pro" } });
     expect(plan).toMatchObject({ maxBranches: 3, maxTerminals: 4, maxUsers: 9, storageMb: 2048, aiMonthly: 50, name: "Retail Pro" });
     const subs = await db.rtSubscription.findMany({ where: { businessId: json.businessId } });
     expect(subs).toHaveLength(1);
-    expect(subs[0]).toMatchObject({ status: "ACTIVE", planCode: "core:retail-pro", graceDays: 5, trialEndsAt: null });
+    expect(subs[0]).toMatchObject({ status: "ACTIVE", planCode: "core:core-biz-1:retail-pro", graceDays: 5, trialEndsAt: null });
     expect(subs[0]!.currentPeriodEnd.toISOString()).toBe("2026-12-01T00:00:00.000Z");
 
     const overrides = await db.rtFeatureOverride.findMany({ where: { businessId: json.businessId } });
@@ -160,13 +160,13 @@ describe("POST /api/core/v1/provision", () => {
     expect((await POST(signed(body()))).status).toBe(200);
     expect(await db.rtPlan.count()).toBe(2);
     expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "retail-pro" } })).maxBranches).toBe(1);
-    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "core:retail-pro" } })).maxBranches).toBe(3);
+    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "core:core-biz-1:retail-pro" } })).maxBranches).toBe(3);
   });
 
   it("a deactivated core plan is re-activated and does not block provisioning", async () => {
-    await db.rtPlan.create({ data: { code: "core:retail-pro", name: "old", maxBranches: 1, maxTerminals: 1, maxUsers: 1, storageMb: 1, aiMonthly: 0, active: false } });
+    await db.rtPlan.create({ data: { code: "core:core-biz-1:retail-pro", name: "old", maxBranches: 1, maxTerminals: 1, maxUsers: 1, storageMb: 1, aiMonthly: 0, active: false } });
     expect((await POST(signed(body()))).status).toBe(200);
-    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "core:retail-pro" } })).active).toBe(true);
+    expect((await db.rtPlan.findUniqueOrThrow({ where: { code: "core:core-biz-1:retail-pro" } })).active).toBe(true);
   });
 
   it("rejects a TRIAL snapshot without trialEndsAt and a period that ends before it starts (400, nothing written)", async () => {

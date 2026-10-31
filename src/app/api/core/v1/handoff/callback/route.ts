@@ -28,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
   const clear = clearStateCookie(process.env.NODE_ENV === "production");
   try {
     const ip = clientIp(req.headers);
-    if (!(await coreRateLimit(ip)).ok) return handoffRedirect(HANDOFF_FAILURE_PATH, [clear]);
+    if (!(await coreRateLimit("handoff", ip)).ok) return handoffRedirect(HANDOFF_FAILURE_PATH, [clear]);
 
     const query = new URL(req.url).searchParams;
     const outcome = await completeHandoff({

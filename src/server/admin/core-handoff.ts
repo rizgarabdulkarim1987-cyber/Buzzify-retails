@@ -61,6 +61,9 @@ export async function completeHandoff(
     linked = await db.$transaction(async (tx) => {
       // Serialises concurrent handoffs of one Studio user (the unique columns are the backstop).
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`core.handoff:${claims.coreUserId}`}, 0))`;
+      // Row lock first: serialises with applyCoreState (which locks the same row), so the owner
+      // compared below is the one the latest committed snapshot set, and a demotion cannot be undone.
+      await tx.$executeRaw`SELECT 1 FROM "RtBusiness" WHERE "coreBusinessId" = ${claims.coreBusinessId} FOR UPDATE`;
       const business = await tx.rtBusiness.findUnique({
         where: { coreBusinessId: claims.coreBusinessId },
         select: { id: true, coreOwnerUserId: true },

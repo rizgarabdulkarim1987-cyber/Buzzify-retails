@@ -36,7 +36,7 @@ export async function POST(req: Request): Promise<Response> {
     const verified = verifyRequest({ method: req.method, path: url.pathname + url.search, body: text, headers: req.headers });
     if (!verified.ok) return json({ ok: false, code: "UNAUTHORIZED" }, 401);
 
-    if (!(await coreRateLimit(clientIp(req.headers))).ok) return json({ ok: false, code: "RATE_LIMITED" }, 429);
+    if (!(await coreRateLimit("sync", clientIp(req.headers))).ok) return json({ ok: false, code: "RATE_LIMITED" }, 429);
 
     let raw: unknown;
     try {

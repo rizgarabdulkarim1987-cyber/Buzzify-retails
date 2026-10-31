@@ -185,14 +185,14 @@ describe("coreRateLimit", () => {
   });
 
   it("allows 120 per minute per key, then refuses; other keys unaffected", async () => {
-    for (let i = 0; i < CORE_RATE_LIMIT; i++) expect(await coreRateLimit("198.51.100.1")).toEqual({ ok: true });
-    expect(await coreRateLimit("198.51.100.1")).toEqual({ ok: false });
-    expect(await coreRateLimit("198.51.100.2")).toEqual({ ok: true });
+    for (let i = 0; i < CORE_RATE_LIMIT; i++) expect(await coreRateLimit("sync", "198.51.100.1")).toEqual({ ok: true });
+    expect(await coreRateLimit("sync", "198.51.100.1")).toEqual({ ok: false });
+    expect(await coreRateLimit("sync", "198.51.100.2")).toEqual({ ok: true });
   });
   it("frees up after the minute passes, and stores only a hash", async () => {
-    for (let i = 0; i < CORE_RATE_LIMIT; i++) await coreRateLimit("198.51.100.1");
+    for (let i = 0; i < CORE_RATE_LIMIT; i++) await coreRateLimit("sync", "198.51.100.1");
     vi.setSystemTime(new Date(NOW.getTime() + 61_000));
-    expect(await coreRateLimit("198.51.100.1")).toEqual({ ok: true });
+    expect(await coreRateLimit("sync", "198.51.100.1")).toEqual({ ok: true });
     const rows = await db.rtLoginAttempt.findMany({ take: 3 });
     expect(rows.every((r) => /^[0-9a-f]{64}$/.test(r.key))).toBe(true);
   });

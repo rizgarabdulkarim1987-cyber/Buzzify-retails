@@ -52,7 +52,7 @@ export async function provisionFromCore(input: CoreProvisionInput): Promise<{ bu
       }
 
       // The plan must exist before provisionInTx looks it up; it rolls back with everything else on failure.
-      await upsertCorePlan(tx, input.state.plan);
+      await upsertCorePlan(tx, input.coreBusinessId, input.state.plan);
       const { businessId } = await provisionInTx(
         tx,
         {
@@ -61,7 +61,7 @@ export async function provisionFromCore(input: CoreProvisionInput): Promise<{ bu
           capabilities: input.capabilities,
           branches: input.branches,
           currencies: input.currencies,
-          planCode: corePlanCode(input.state.plan.code),
+          planCode: corePlanCode(input.coreBusinessId, input.state.plan.code),
           trialDays: 1, // placeholder trial row; the snapshot below replaces it
         },
         { actorId: CORE_SYNC_ACTOR },
@@ -80,7 +80,7 @@ export async function provisionFromCore(input: CoreProvisionInput): Promise<{ bu
             name: input.name,
             branches: input.branches.map((b) => b.name),
             currencies: input.currencies,
-            planCode: corePlanCode(input.state.plan.code),
+            planCode: corePlanCode(input.coreBusinessId, input.state.plan.code),
             version: input.state.version,
           },
         },

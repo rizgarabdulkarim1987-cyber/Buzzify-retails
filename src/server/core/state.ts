@@ -15,8 +15,11 @@ import { AI_INTAKE_FEATURE, featureEnabled } from "@/server/framework/features";
 
 export const CORE_SYNC_ACTOR = "core-sync";
 
-/** Core plans live under their own prefix so a snapshot never rewrites a locally managed plan row. */
-export const corePlanCode = (code: string) => `core:${code}`;
+/**
+ * Core plans live under their own prefix, per business, so a snapshot never rewrites a locally
+ * managed plan row nor another business's limits (plan codes are Studio's, not unique across shops).
+ */
+export const corePlanCode = (coreBusinessId: string, code: string) => `core:${coreBusinessId}:${code}`;
 
 const SUBSCRIPTION_STATUSES = ["TRIAL", "ACTIVE", "GRACE", "EXPIRED", "CANCELLED"] as const satisfies readonly SubscriptionStatus[];
 const BUSINESS_STATUSES = ["ACTIVE", "SUSPENDED", "ARCHIVED"] as const satisfies readonly RtBusinessStatus[];
@@ -78,9 +81,9 @@ export const coreStateSchema: ZodType<CoreState> = z.object({
 });
 
 /** Creates the "core:"-prefixed plan or overwrites its name and limits with the snapshot's; re-activates it. */
-export async function upsertCorePlan(tx: Prisma.TransactionClient, plan: CoreState["plan"]): Promise<void> {
+export async function upsertCorePlan(tx: Prisma.TransactionClient, coreBusinessId: string, plan: CoreState["plan"]): Promise<void> {
   const { code: studioCode, ...limits } = plan;
-  const code = corePlanCode(studioCode);
+  const code = corePlanCode(coreBusinessId, studioCode);
   const fields = { ...limits, active: true };
   await tx.rtPlan.upsert({ where: { code }, create: { code, ...fields }, update: fields });
 }
@@ -106,7 +109,7 @@ export async function applyCoreState(tx: Prisma.TransactionClient, businessId: s
     return { applied: false };
   }
 
-  await upsertCorePlan(tx, state.plan);
+  await upsertCorePlan(tx, state.coreBusinessId, state.plan);
 
   // Snapshots are state, not transitions: a first snapshot may take SETUP straight to SUSPENDED or ARCHIVED.
   // SETUP becomes ACTIVE with the first ACTIVE snapshot; afterwards Studio's status is taken as is.
@@ -117,7 +120,7 @@ export async function applyCoreState(tx: Prisma.TransactionClient, businessId: s
 
   const sub = state.subscription;
   const subData = {
-    planCode: corePlanCode(state.plan.code),
+    planCode: corePlanCode(state.coreBusinessId, state.plan.code),
     status: sub.status,
     trialEndsAt: sub.trialEndsAt,
     currentPeriodStart: sub.currentPeriodStart,
@@ -199,7 +202,7 @@ function subscriptionEvent(
       fromStatus: from,
       toStatus: to,
       actorId: CORE_SYNC_ACTOR,
-      data: { planCode: corePlanCode(state.plan.code), version: state.version },
+      data: { planCode: corePlanCode(state.coreBusinessId, state.plan.code), version: state.version },
     },
   });
 }

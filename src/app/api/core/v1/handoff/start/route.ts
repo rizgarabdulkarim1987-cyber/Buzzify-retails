@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
   try {
-    if (!(await coreRateLimit(clientIp(req.headers))).ok) return handoffRedirect(HANDOFF_FAILURE_PATH);
+    if (!(await coreRateLimit("handoff", clientIp(req.headers))).ok) return handoffRedirect(HANDOFF_FAILURE_PATH);
     const returnTo = new URL(req.url).searchParams.get("returnTo");
     const { redirectTo, stateCookie } = startHandoff(returnTo, { secure: process.env.NODE_ENV === "production" });
     return handoffRedirect(redirectTo, [stateCookie]);

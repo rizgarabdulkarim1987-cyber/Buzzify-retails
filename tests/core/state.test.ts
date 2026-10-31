@@ -101,7 +101,7 @@ describe("POST /api/core/v1/state", () => {
     expect(await res.json()).toEqual({ applied: true, version: 2 });
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ coreStateVersion: 2 });
-    expect(await db.rtPlan.findUniqueOrThrow({ where: { code: "core:retail-pro" } })).toMatchObject({ maxBranches: 7, aiMonthly: 80 });
+    expect(await db.rtPlan.findUniqueOrThrow({ where: { code: "core:core-biz-1:retail-pro" } })).toMatchObject({ maxBranches: 7, aiMonthly: 80 });
     expect(await db.rtSubscription.findFirstOrThrow({ where: { businessId: id } })).toMatchObject({ status: "GRACE", graceDays: 9 });
   });
 
