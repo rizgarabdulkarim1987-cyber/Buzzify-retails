@@ -252,7 +252,6 @@ describe("Studio link: the whole chain", () => {
   it("the console spy catches a canary (so a clean run means something)", () => {
     const canary = `canary-${randomUUID()}`;
     console.error("[canary]", canary);
-    expect(logged.join("
-")).toContain(canary);
+    expect(logged.join("\n")).toContain(canary);
   });
 });
