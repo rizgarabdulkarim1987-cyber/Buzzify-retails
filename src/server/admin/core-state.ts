@@ -1,5 +1,6 @@
 import { applyCoreState, type CoreState } from "@/server/core/state";
 import { db } from "@/server/db";
+import { aiMonth } from "@/server/intake/quota";
 
 /*
  * Studio state sync, platform-level like the rest of this folder (no tenant scope: the caller is
@@ -30,17 +31,16 @@ export type CoreStateReport = {
 /**
  * What Studio reconciles against. `aiUsageMonth.units` is RtAiUsage.halfUnits, the same unit the
  * quota counts in (src/server/intake/quota.ts): one receipt read is 2, one barcode fallback read
- * is 1, so units are HALF units, not receipts. `month` is the current UTC calendar month; the
- * quota itself buckets by the business's time zone, so within a few hours of a month boundary
- * the two can differ (display only, per the spec).
+ * is 1, so units are HALF units, not receipts. `month` is the quota's own key: the calendar month
+ * of `now` in the business's time zone (aiMonth), so it always names the row the quota charges.
  */
 export async function readCoreState(coreBusinessId: string, now: Date = new Date()): Promise<CoreStateReport | null> {
   const business = await db.rtBusiness.findUnique({
     where: { coreBusinessId },
-    select: { id: true, status: true, coreStateVersion: true },
+    select: { id: true, status: true, coreStateVersion: true, timezone: true },
   });
   if (!business) return null;
-  const month = now.toISOString().slice(0, 7);
+  const month = aiMonth(now, business.timezone);
   const usage = await db.rtAiUsage.findUnique({ where: { businessId_month: { businessId: business.id, month } }, select: { halfUnits: true } });
   return { version: business.coreStateVersion ?? 0, status: business.status, aiUsageMonth: { month, units: usage?.halfUnits ?? 0 } };
 }

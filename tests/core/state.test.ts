@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET as healthGET } from "@/app/api/core/v1/health/route";
 import { POST as provisionPOST } from "@/app/api/core/v1/provision/route";
 import { GET, POST } from "@/app/api/core/v1/state/route";
+import { readCoreState } from "@/server/admin/core-state";
+import { aiMonth } from "@/server/intake/quota";
 import { signRequest } from "@/server/core/signing";
 import { featureEnabled } from "@/server/framework/features";
 import { gateOf } from "@/server/framework/gate";
@@ -140,6 +142,15 @@ describe("POST /api/core/v1/state", () => {
     expect(await gateOf(id, db)).toBe("CLOSED");
   });
 
+  it("a newer snapshot for an ARCHIVED business is 200 {applied:false} with the newly recorded version", async () => {
+    const id = await provisioned();
+    await POST(post(state({ version: 2, status: "ARCHIVED" })));
+    const res = await POST(post(state({ version: 5, status: "ACTIVE" })));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ applied: false, version: 5 });
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "ARCHIVED", coreStateVersion: 5 });
+  });
+
   it("ai.intake on then off flips featureEnabled", async () => {
     const id = await provisioned();
     expect(await featureEnabled(id, "ai.intake", db)).toBe(true);
@@ -175,13 +186,23 @@ describe("GET /api/core/v1/state", () => {
   it("returns version, status and this UTC month's AI usage in half units", async () => {
     const id = await provisioned();
     await POST(post(state({ version: 3, status: "SUSPENDED" })));
-    const month = new Date().toISOString().slice(0, 7);
+    const biz = await db.rtBusiness.findUniqueOrThrow({ where: { id }, select: { timezone: true } });
+    const month = aiMonth(new Date(), biz.timezone);
     await db.rtAiUsage.create({ data: { businessId: id, month, halfUnits: 7 } });
     await db.rtAiUsage.create({ data: { businessId: id, month: "2000-01", halfUnits: 99 } });
     const res = await GET(get("?coreBusinessId=core-biz-1"));
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual({ version: 3, status: "SUSPENDED", aiUsageMonth: { month, units: 7 } });
+  });
+
+  it("buckets the month like the quota: 2026-11-30T22:00Z in Asia/Baghdad is 2026-12", async () => {
+    const id = await provisioned();
+    await db.rtBusiness.update({ where: { id }, data: { timezone: "Asia/Baghdad" } });
+    await db.rtAiUsage.create({ data: { businessId: id, month: "2026-12", halfUnits: 5 } });
+    await db.rtAiUsage.create({ data: { businessId: id, month: "2026-11", halfUnits: 40 } });
+    const report = await readCoreState("core-biz-1", new Date("2026-11-30T22:00:00.000Z"));
+    expect(report?.aiUsageMonth).toEqual({ month: "2026-12", units: 5 });
   });
 
   it("reports units 0 when there is no usage row", async () => {

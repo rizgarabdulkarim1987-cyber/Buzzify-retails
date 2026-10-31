@@ -39,7 +39,8 @@ function failure(tag: string, err: unknown): Response {
 export async function POST(req: Request): Promise<Response> {
   try {
     const length = Number(req.headers.get("content-length") ?? 0);
-    if (length > MAX_BODY_CHARS) return json({ ok: false, code: "TOO_LARGE" }, 413);
+    // A malformed header (NaN) is not a size: ignore it and let the text length decide.
+    if (Number.isFinite(length) && length > MAX_BODY_CHARS) return json({ ok: false, code: "TOO_LARGE" }, 413);
     const text = await req.text();
     if (text.length > MAX_BODY_CHARS) return json({ ok: false, code: "TOO_LARGE" }, 413);
 
