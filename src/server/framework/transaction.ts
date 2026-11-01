@@ -1,0 +1,117 @@
+import { createHash } from "node:crypto";
+import { decode, encode } from "./serialize";
+import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import { db } from "@/server/db";
+import { IdempotencyMismatchError } from "./errors";
+
+/*
+ * Shared machinery behind defineAction (and Task 7's definePlatformAction): one database
+ * transaction that commits the change, its audit row and the idempotency result together, or
+ * nothing. Only the framework folder may import the base client, so this is where it is used.
+ */
+
+type Tx = Prisma.TransactionClient;
+
+export type AuditDraft = { entity: string; entityId: string; changes: Record<string, unknown> };
+
+export type WritePlan<O> = {
+  /** Idempotency namespace: the businessId, or 'platform'. */
+  scope: string;
+  key: string;
+  /** canonicalHash of {action, actorId, input}: binds the key to one action, one actor, one payload. */
+  payloadHash: string;
+  /**
+   * The audited business. Null for platform-level plans: then run may name the business it acted
+   * on (`auditBusinessId` in its result); a business action's fixed id can never be overridden.
+   */
+  auditBusinessId: string | null;
+  actorId: string;
+  action: string;
+  /** Does the change; returns the value and what to audit. Runs inside the transaction. */
+  run(tx: Tx): Promise<{ value: O; audit: AuditDraft; auditBusinessId?: string | null }>;
+  /**
+   * What to keep in the idempotency row instead of the value, for values that carry a one-time
+   * secret (an invitation token): a replay then returns this redacted value. Default: the value.
+   */
+  storedValue?(value: O): O;
+  /** Transaction timeout in ms (Prisma's default is 5000). For bulk work such as the catalog import. */
+  timeoutMs?: number;
+};
+
+/** Fixed-alphabet lock name for (scope, key): hashing keeps odd characters out of the SQL parameter. */
+function lockName(plan: { scope: string; key: string }): string {
+  return createHash("sha256").update(JSON.stringify([plan.scope, plan.key])).digest("hex");
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002"
+  );
+}
+
+type Stored = { payloadHash: string; result: unknown };
+
+function replay<O>(stored: Stored, hash: string): { value: O; replayed: true } {
+  if (stored.payloadHash !== hash) throw new IdempotencyMismatchError();
+  return { value: decode((stored.result as { value: unknown }).value) as O, replayed: true };
+}
+
+/**
+ * Runs plan.run once per (scope, key). A repeat with the same payload returns the stored value
+ * without running; a repeat with another payload throws IdempotencyMismatchError. Any error from
+ * run rolls everything back (the key is not consumed).
+ *
+ * Concurrency: a transaction-scoped advisory lock on (scope, key) serializes same-key callers, so
+ * the second one waits for the first to commit and then replays. The unique constraint is the
+ * backstop: if it still fires (P2002 on RtIdempotency), the stored row is re-read.
+ */
+export async function runIdempotentWrite<O>(
+  plan: WritePlan<O>,
+  client: PrismaClient = db,
+): Promise<{ value: O; replayed: boolean }> {
+  const attempt = () =>
+    client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockName(plan)}, 0))`;
+      const existing = await tx.rtIdempotency.findUnique({
+        where: { scope_key: { scope: plan.scope, key: plan.key } },
+      });
+      if (existing) return replay<O>(existing, plan.payloadHash);
+
+      const { value, audit, auditBusinessId } = await plan.run(tx);
+      await tx.rtAuditLog.create({
+        data: {
+          businessId: plan.auditBusinessId ?? auditBusinessId ?? null,
+          actorId: plan.actorId,
+          action: plan.action,
+          entity: audit.entity,
+          entityId: audit.entityId,
+          changes: encode(audit.changes) as Prisma.InputJsonObject,
+        },
+      });
+      await tx.rtIdempotency.create({
+        data: {
+          scope: plan.scope,
+          key: plan.key,
+          payloadHash: plan.payloadHash,
+          result: { value: encode(plan.storedValue ? plan.storedValue(value) : value) } as Prisma.InputJsonObject,
+        },
+      });
+      return { value, replayed: false };
+    }, plan.timeoutMs ? { timeout: plan.timeoutMs } : undefined);
+
+  try {
+    return await attempt();
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    const stored = await client.rtIdempotency.findUnique({
+      where: { scope_key: { scope: plan.scope, key: plan.key } },
+    });
+    if (!stored) throw err; // the violation came from the action's own writes
+    return replay<O>(stored, plan.payloadHash);
+  }
+}
+
+/** Runs a read inside a transaction (one consistent snapshot); no audit, no idempotency row. */
+export function runRead<O>(work: (tx: Tx) => Promise<O>, client: PrismaClient = db, timeoutMs?: number): Promise<O> {
+  return client.$transaction(work, timeoutMs ? { timeout: timeoutMs } : undefined);
+}

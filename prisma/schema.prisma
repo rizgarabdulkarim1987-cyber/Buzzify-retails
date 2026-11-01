@@ -1,0 +1,1153 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Currency {
+  IQD
+  USD
+}
+
+enum RtBusinessStatus {
+  SETUP
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum RtActivityType {
+  MARKET
+  CLOTHING
+  ELECTRONICS
+  BEAUTY
+  STATIONERY
+  MIXED
+}
+
+model RtBusiness {
+  id                String           @id @default(cuid())
+  name              String
+  activityType      RtActivityType
+  status            RtBusinessStatus @default(SETUP)
+  timezone          String           @default("Asia/Baghdad")
+  defaultCurrency   Currency
+  enabledCurrencies Currency[]
+  // AI intake (R1b): when the owner consented to sending images to the AI provider, and the
+  // version of the consent text agreed to (a newer text version voids an older consent).
+  aiConsentAt       DateTime?
+  aiConsentVersion  Int?
+  // Core link (Studio unified admin): the Studio business this shop is linked to, its owner's
+  // Studio user id, and the newest state snapshot version applied (older ones are ignored).
+  coreBusinessId    String?          @unique
+  coreOwnerUserId   String?
+  coreStateVersion  Int?
+  version           Int              @default(1)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  branches  RtBranch[]
+  locations RtLocation[]
+  terminals RtTerminal[]
+  staff     RtStaff[]
+
+  subscriptions    RtSubscription[]
+  subscriptionLog  RtSubscriptionEvent[]
+  subscriptionPays RtSubscriptionPayment[]
+  featureOverrides RtFeatureOverride[]
+
+  capabilities  RtCapability[]
+  invitations   RtInvitation[]
+  supportGrants RtSupportGrant[]
+  setupProgress RtSetupProgress[]
+
+  categories     RtCategory[]
+  brands         RtBrand[]
+  products       RtProduct[]
+  variants       RtVariant[]
+  units          RtUnit[]
+  barcodes       RtBarcode[]
+  priceLists     RtPriceList[]
+  prices         RtPrice[]
+  catalogCounter RtCatalogCounter?
+  importBatches  RtImportBatch[]
+  importRows     RtImportRow[]
+  importPresets  RtImportMappingPreset[]
+
+  batches        RtBatch[]
+  stockDocuments RtStockDocument[]
+  stockLines     RtStockLine[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
+  stockCounter   RtStockCounter?
+
+  intakes     RtIntake[]
+  intakeFiles RtIntakeFile[]
+  aiUsage     RtAiUsage[]
+}
+
+model RtBranch {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  active     Boolean  @default(true)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business  RtBusiness      @relation(fields: [businessId], references: [id])
+  locations RtLocation[]
+  terminals RtTerminal[]
+  staff     RtStaffBranch[]
+
+  stockDocuments RtStockDocument[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
+
+  // Target of the composite foreign keys that keep child rows inside one business.
+  @@unique([businessId, id])
+}
+
+model RtLocation {
+  id         String   @id @default(cuid())
+  businessId String
+  branchId   String
+  name       String
+  sellable   Boolean  @default(true)
+  central    Boolean  @default(false)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business  RtBusiness   @relation(fields: [businessId], references: [id])
+  branch    RtBranch     @relation(fields: [businessId, branchId], references: [businessId, id])
+  terminals RtTerminal[]
+
+  stockDocuments RtStockDocument[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
+
+  // Target of the terminal's composite foreign key (same business AND same branch).
+  @@unique([businessId, branchId, id])
+}
+
+model RtTerminal {
+  id         String   @id @default(cuid())
+  businessId String
+  branchId   String
+  locationId String
+  name       String
+  active     Boolean  @default(true)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  branch   RtBranch   @relation(fields: [businessId, branchId], references: [businessId, id])
+  location RtLocation @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+}
+
+enum RtRole {
+  OWNER
+  MANAGER
+  CASHIER
+  STOCK
+  PURCHASING
+  ACCOUNTANT
+  AUDITOR
+}
+
+model RtStaff {
+  id            String    @id @default(cuid())
+  businessId    String
+  userId        String
+  role          RtRole
+  deactivatedAt DateTime?
+  version       Int       @default(1)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  business RtBusiness      @relation(fields: [businessId], references: [id])
+  user     User            @relation(fields: [userId], references: [id])
+  branches RtStaffBranch[]
+
+  @@unique([businessId, userId])
+  // Target of RtStaffBranch's composite foreign key (staff stays in the same business).
+  @@unique([businessId, id])
+  // Looking up a signed-in user's memberships across businesses.
+  @@index([userId])
+}
+
+model RtStaffBranch {
+  staffId    String
+  businessId String
+  branchId   String
+
+  staff  RtStaff  @relation(fields: [businessId, staffId], references: [businessId, id], onDelete: Cascade)
+  branch RtBranch @relation(fields: [businessId, branchId], references: [businessId, id])
+
+  @@id([staffId, branchId])
+}
+
+// Better Auth tables (email + password, sessions).
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  // Core link: the Studio user id this local user is linked to.
+  coreUserId    String?  @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+  staff         RtStaff[]
+  platformAdmin RtPlatformAdmin?
+
+  supportGrantsReceived RtSupportGrant[] @relation("SupportGrantee")
+  supportGrantsGiven    RtSupportGrant[] @relation("SupportGrantedBy")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+// Action framework tables. Neither has a (non-null) businessId column, so both are classified
+// in scoped-db.ts (UNSCOPED / NULLABLE_BUSINESS) and only the framework touches them.
+model RtIdempotency {
+  id          String   @id @default(cuid())
+  // The businessId, or the literal 'platform' for platform-level actions.
+  scope       String
+  key         String
+  payloadHash String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@unique([scope, key])
+}
+
+model RtAuditLog {
+  id         String   @id @default(cuid())
+  businessId String?
+  actorId    String
+  action     String
+  entity     String
+  entityId   String
+  changes    Json
+  at         DateTime @default(now())
+
+  @@index([businessId, at])
+  @@index([entity, entityId])
+}
+
+// Buzzify's own subscription tables. Platform-managed: no tenant action touches them (classified
+// UNSCOPED in scoped-db.ts although most carry a businessId), and kept apart from any shop sales tables.
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  GRACE
+  EXPIRED
+  CANCELLED
+}
+
+enum SubscriptionPaymentMethod {
+  CASH
+  BANK_TRANSFER
+  ZAINCASH
+  FIB
+  QI_CARD
+  OTHER
+}
+
+model RtPlan {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  maxBranches  Int
+  maxTerminals Int
+  maxUsers     Int
+  storageMb    Int
+  aiMonthly    Int
+  active       Boolean  @default(true)
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions RtSubscription[]
+}
+
+// At most one live (TRIAL, ACTIVE, GRACE) subscription per business: a partial unique index in the migration.
+model RtSubscription {
+  id                 String             @id @default(cuid())
+  businessId         String
+  planCode           String
+  status             SubscriptionStatus
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  graceDays          Int                @default(7)
+  cancelledAt        DateTime?
+  version            Int                @default(1)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  business RtBusiness              @relation(fields: [businessId], references: [id])
+  plan     RtPlan                  @relation(fields: [planCode], references: [code])
+  events   RtSubscriptionEvent[]
+  payments RtSubscriptionPayment[]
+
+  @@index([businessId, createdAt])
+}
+
+model RtSubscriptionEvent {
+  id             String              @id @default(cuid())
+  subscriptionId String
+  businessId     String
+  type           String
+  fromStatus     SubscriptionStatus?
+  toStatus       SubscriptionStatus
+  actorId        String?
+  occurredAt     DateTime            @default(now())
+  // Metadata only: never card, account or personal data.
+  data           Json
+
+  subscription RtSubscription @relation(fields: [subscriptionId], references: [id])
+  business     RtBusiness     @relation(fields: [businessId], references: [id])
+
+  @@index([subscriptionId, occurredAt])
+}
+
+model RtSubscriptionPayment {
+  id             String                    @id @default(cuid())
+  businessId     String
+  subscriptionId String
+  amountMinor    BigInt
+  currency       Currency
+  method         SubscriptionPaymentMethod
+  reference      String
+  paidAt         DateTime
+  coversFrom     DateTime
+  coversTo       DateTime
+  idempotencyKey String                    @unique
+  recordedById   String
+  note           String
+  createdAt      DateTime                  @default(now())
+
+  business     RtBusiness     @relation(fields: [businessId], references: [id])
+  subscription RtSubscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId, paidAt])
+}
+
+// A platform admin's manual grant or removal of a feature for one business. The reason is mandatory
+// (at least 10 characters, a CHECK constraint in the migration).
+model RtFeatureOverride {
+  id          String   @id @default(cuid())
+  businessId  String
+  feature     String
+  enabled     Boolean
+  reason      String
+  grantedById String
+  createdAt   DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, feature])
+}
+
+// Super-admin tables (Task 7).
+
+// A Buzzify platform administrator. Holds no business data access by itself (support access is
+// Task 8); it only allows the platform actions (provisioning, invitations, lifecycle, overrides).
+model RtPlatformAdmin {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+enum Capability {
+  VARIANTS
+  SERIAL
+  BATCH
+  WEIGHT
+  MULTI_UNIT
+  WARRANTY
+  WHOLESALE
+  LOYALTY
+  CREDIT
+  HOLDS
+  TRANSFERS
+}
+
+// Which capabilities a business has enabled. Business-scoped (tenants read it through scopedDb).
+model RtCapability {
+  id         String     @id @default(cuid())
+  businessId String
+  capability Capability
+  enabled    Boolean    @default(true)
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, capability])
+}
+
+// An owner invitation. Only the sha256 (hex) of the token is stored; the raw token exists only in
+// the mail and in the creating action's first response. Platform-managed: never reachable by tenants.
+model RtInvitation {
+  id           String    @id @default(cuid())
+  businessId   String
+  // Stored lowercase (CHECK constraint in the migration).
+  email        String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  usedAt       DateTime?
+  supersededAt DateTime?
+  createdById  String
+  createdAt    DateTime  @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+// What a support grant lets the grantee read. The database stores the dotted strings.
+enum SupportScope {
+  CATALOG_READ @map("catalog.read")
+  STOCK_READ   @map("stock.read")
+  SALES_READ   @map("sales.read")
+}
+
+// Time-boxed, read-only access to one business, given by its owner to one platform admin.
+// CHECKs in the migration: reason >= 10 chars, at least one scope, expiry after creation and at most 72 hours.
+model RtSupportGrant {
+  id          String         @id @default(cuid())
+  businessId  String
+  granteeId   String
+  scopes      SupportScope[]
+  reason      String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  grantedById String
+  createdAt   DateTime       @default(now())
+
+  business  RtBusiness @relation(fields: [businessId], references: [id])
+  grantee   User       @relation("SupportGrantee", fields: [granteeId], references: [id])
+  grantedBy User       @relation("SupportGrantedBy", fields: [grantedById], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([granteeId])
+}
+
+// Failed sign-in attempts, for throttling (src/server/auth/login-throttle.ts). `key` is a sha256 of
+// "email:<normalized email>" or "ip:<client address>", never the raw value. Not business data.
+model RtLoginAttempt {
+  id  String   @id @default(cuid())
+  key String
+  at  DateTime
+
+  @@index([key, at])
+}
+
+// Core link: handoff-token ids already used (single use), kept until `expiresAt`. Not business data.
+model RtCoreNonce {
+  jti       String   @id
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
+// Setup wizard (Task 10). One row per (business, step); steps are 1..9 (CHECK in the migration).
+// Rows are created lazily by the first completed step; a missing row reads as PENDING.
+// Business-scoped (tenants read and write it through scopedDb).
+enum RtSetupStatus {
+  PENDING
+  DONE
+  SKIPPED
+}
+
+model RtSetupProgress {
+  id          String        @id @default(cuid())
+  businessId  String
+  step        Int
+  status      RtSetupStatus @default(PENDING)
+  // True when the step's data is sample/test data that must be removable before going live.
+  isTestData  Boolean       @default(false)
+  completedAt DateTime?
+  version     Int           @default(1)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, step])
+}
+
+// Catalog (R1). Business-level: shared by every branch, so no branchId anywhere. Every child row
+// reaches its parent through a composite (businessId, id) foreign key, so it can never point at
+// another business's row. Rows are archived (archivedAt), never deleted. Hand-written in the
+// migration (Prisma cannot express them): CHECKs, the single-base-unit partial unique index and the
+// price-period exclusion constraint (btree_gist).
+
+enum RtTrackingMode {
+  NONE
+  BATCH
+  SERIAL
+}
+
+enum RtPriceListKind {
+  DEFAULT
+  WHOLESALE
+}
+
+// A category tree (optional parent in the same business). Arabic name required, Kurdish and English optional.
+model RtCategory {
+  id         String    @id @default(cuid())
+  businessId String
+  parentId   String?
+  nameAr     String
+  nameCkb    String?
+  nameEn     String?
+  archivedAt DateTime?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business RtBusiness   @relation(fields: [businessId], references: [id])
+  parent   RtCategory?  @relation("RtCategoryTree", fields: [businessId, parentId], references: [businessId, id], onDelete: Restrict)
+  children RtCategory[] @relation("RtCategoryTree")
+  products RtProduct[]
+
+  @@unique([businessId, id])
+  @@index([businessId, parentId])
+}
+
+model RtBrand {
+  id         String    @id @default(cuid())
+  businessId String
+  nameAr     String
+  nameCkb    String?
+  nameEn     String?
+  archivedAt DateTime?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business RtBusiness  @relation(fields: [businessId], references: [id])
+  products RtProduct[]
+
+  @@unique([businessId, id])
+}
+
+// The model a customer recognises (e.g. "Almarai milk 1L", "Polo shirt"). CHECKs in the migration:
+// tracksExpiry only with trackingMode BATCH; expiryAlertDays > 0 when set.
+model RtProduct {
+  id              String         @id @default(cuid())
+  businessId      String
+  nameAr          String
+  nameCkb         String?
+  nameEn          String?
+  descriptionAr   String?
+  descriptionCkb  String?
+  descriptionEn   String?
+  categoryId      String?
+  brandId         String?
+  trackingMode    RtTrackingMode @default(NONE)
+  soldByWeight    Boolean        @default(false)
+  tracksExpiry    Boolean        @default(false)
+  expiryAlertDays Int?
+  // Normalised search text (all names), kept up to date by the catalog actions.
+  searchText      String         @default("")
+  // A trial item entered during setup; removeTestProducts deletes these before launch.
+  isTestData      Boolean        @default(false)
+  archivedAt      DateTime?
+  version         Int            @default(1)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  business RtBusiness  @relation(fields: [businessId], references: [id])
+  category RtCategory? @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: Restrict)
+  brand    RtBrand?    @relation(fields: [businessId, brandId], references: [businessId, id], onDelete: Restrict)
+  variants RtVariant[]
+
+  @@unique([businessId, id])
+  @@index([businessId, categoryId])
+  @@index([businessId, brandId])
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+// The sellable item (one per size/colour, or the single default variant of a market product).
+// The SKU is unique per business and never changes.
+model RtVariant {
+  id             String    @id @default(cuid())
+  businessId     String
+  productId      String
+  sku            String
+  options        Json?
+  searchText     String    @default("")
+  archivedAt     DateTime?
+  // Set once, by the ledger, when the variant gets its first movement (any branch). Business-level on
+  // purpose: the catalog locks (unit factor, tracking flags) read it, and a branch-limited editor
+  // cannot see other branches movements. Never cleared (reversals do not).
+  stockStartedAt DateTime?
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  business   RtBusiness    @relation(fields: [businessId], references: [id])
+  product    RtProduct     @relation(fields: [businessId, productId], references: [businessId, id])
+  units      RtUnit[]
+  importRows RtImportRow[]
+
+  batches        RtBatch[]
+  stockLines     RtStockLine[]
+  stockMovements RtStockMovement[]
+  stockBalances  RtStockBalance[]
+
+  @@unique([businessId, sku])
+  @@unique([businessId, id])
+  @@index([businessId, productId])
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+// A unit a variant is counted and sold in (piece, carton of 24, kg). `factor` converts to the base
+// unit. In the migration: factor > 0; isBase implies factor = 1; at most one base unit per variant
+// (partial unique index; that every variant has one is the catalog actions' job); quantityScale 0..3.
+model RtUnit {
+  id            String    @id @default(cuid())
+  businessId    String
+  variantId     String
+  name          String
+  factor        Int
+  isBase        Boolean   @default(false)
+  // Decimal places a quantity may have (0 = whole units, 3 = grams of a kg).
+  quantityScale Int       @default(0)
+  archivedAt    DateTime?
+  version       Int       @default(1)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  business     RtBusiness    @relation(fields: [businessId], references: [id])
+  variant      RtVariant     @relation(fields: [businessId, variantId], references: [businessId, id])
+  barcodes     RtBarcode[]
+  prices       RtPrice[]
+  rtImportRows RtImportRow[]
+  stockLines   RtStockLine[]
+
+  @@unique([businessId, id])
+  @@index([businessId, variantId])
+}
+
+// A barcode is text (leading zeros kept) and unique within the business across every unit and
+// variant, archived ones included: an archived code stays reserved because old invoices name it.
+model RtBarcode {
+  id         String    @id @default(cuid())
+  businessId String
+  unitId     String
+  code       String
+  archivedAt DateTime?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  unit     RtUnit     @relation(fields: [businessId, unitId], references: [businessId, id])
+
+  @@unique([businessId, code])
+  @@index([businessId, unitId])
+}
+
+// At most one list of each kind per business. A unit without a WHOLESALE price falls back to DEFAULT.
+model RtPriceList {
+  id         String          @id @default(cuid())
+  businessId String
+  name       String
+  kind       RtPriceListKind
+  version    Int             @default(1)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  prices   RtPrice[]
+
+  @@unique([businessId, kind])
+  @@unique([businessId, id])
+}
+
+// A dated price, [validFrom, validTo) with validTo null for the open period. Never edited in
+// place: a change closes the current row and opens a new one. In the migration: amountMinor >= 0,
+// validTo > validFrom, and no two periods of one (unit, list, currency) overlap (EXCLUDE USING gist),
+// which also allows at most one open period.
+model RtPrice {
+  id          String    @id @default(cuid())
+  businessId  String
+  unitId      String
+  priceListId String
+  currency    Currency
+  amountMinor BigInt
+  validFrom   DateTime
+  validTo     DateTime?
+  version     Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  business  RtBusiness  @relation(fields: [businessId], references: [id])
+  unit      RtUnit      @relation(fields: [businessId, unitId], references: [businessId, id])
+  priceList RtPriceList @relation(fields: [businessId, priceListId], references: [businessId, id])
+
+  @@index([businessId, unitId, priceListId, currency, validFrom])
+}
+
+// The per-business SKU sequence (atomic increment when a SKU is generated).
+model RtCatalogCounter {
+  id         String @id @default(cuid())
+  businessId String @unique
+  nextSku    Int    @default(1)
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+}
+
+enum ImportBatchStatus {
+  STAGED
+  VALIDATED
+  COMMITTED
+  FAILED
+}
+
+// What an import batch loads: catalog rows (R1) or opening stock (R2). Each import flow only
+// lists and commits batches of its own kind.
+enum ImportBatchKind {
+  CATALOG
+  OPENING_STOCK
+}
+
+enum ImportRowStatus {
+  OK
+  REJECTED
+  SKIPPED
+  CHANGED
+  COMMITTED
+}
+
+// One uploaded catalog file (CSV or xlsx), staged then validated then committed (Task 9). Only the
+// sha256 of the file is kept, never the bytes. `columns` are the file's headers, `mapping` the
+// chosen column map, `stats` the counts per row status.
+model RtImportBatch {
+  id          String            @id @default(cuid())
+  businessId  String
+  status      ImportBatchStatus @default(STAGED)
+  kind        ImportBatchKind   @default(CATALOG)
+  fileName    String
+  fileHash    String
+  columns     Json
+  mapping     Json?
+  stats       Json
+  // Started from the setup wizard as trial items: the products it creates get isTestData.
+  isTestData  Boolean           @default(false)
+  createdById String
+  version     Int               @default(1)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  business       RtBusiness        @relation(fields: [businessId], references: [id])
+  rows           RtImportRow[]
+  stockDocuments RtStockDocument[]
+
+  @@unique([businessId, id])
+  @@index([businessId, createdAt])
+}
+
+// A data row of a batch (rowNumber is 1-based, header excluded). `resolution` is the owner's choice
+// for a CHANGED row: UPDATE or SKIP (null until chosen). Deleted with its batch.
+model RtImportRow {
+  id               String          @id @default(cuid())
+  businessId       String
+  batchId          String
+  rowNumber        Int
+  raw              Json
+  status           ImportRowStatus
+  reason           String?
+  matchedVariantId String?
+  // The existing unit a CHANGED/SKIPPED row was compared with (a price change applies to it).
+  matchedUnitId    String?
+  diff             Json?
+  resolution       String?
+  // The validated row (serializeRowResult's `normalized`), what commit applies. Null until validated.
+  normalized       Json?
+  // 0-based columns whose xlsx cell was stored as a number (validateRows' numericCells).
+  numericCols      Int[]           @default([])
+
+  business RtBusiness    @relation(fields: [businessId], references: [id])
+  batch    RtImportBatch @relation(fields: [businessId, batchId], references: [businessId, id], onDelete: Cascade)
+  variant  RtVariant?    @relation(fields: [businessId, matchedVariantId], references: [businessId, id], onDelete: SetNull)
+  unit     RtUnit?       @relation(fields: [businessId, matchedUnitId], references: [businessId, id], onDelete: SetNull)
+
+  @@unique([businessId, batchId, rowNumber])
+}
+
+// A saved column map for the import (Task 9), reusable on the next upload. Per business; the name
+// is unique within the business. `mapping` is a Mapping (known column -> 0-based file column or null).
+model RtImportMappingPreset {
+  id          String   @id @default(cuid())
+  businessId  String
+  name        String
+  mapping     Json
+  createdById String
+  createdAt   DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, name])
+}
+
+// Stock (R2). Quantities are BigInt in base units x 1000; values are BigInt minor units of the
+// business's default currency. Every row reaches its parents through composite foreign keys that
+// start with businessId (and branchId for a location), so it never points at another business's
+// row; a batch reference also carries variantId, so a row's batch is always of the row's variant.
+// Hand-written in the migration (Prisma cannot express them): the CHECKs below, NULLS NOT DISTINCT
+// on the two unique keys with a nullable column, and the trigger that makes RtStockMovement
+// append-only.
+
+enum RtStockDocumentKind {
+  OPENING
+  RECEIPT
+  ADJUSTMENT
+  WRITE_OFF
+  REVERSAL
+}
+
+enum RtStockDocumentStatus {
+  DRAFT
+  POSTED
+}
+
+// The way an ADJUSTMENT moves stock (a WRITE_OFF is always OUT); null for every other kind.
+enum RtStockDirection {
+  IN
+  OUT
+}
+
+// A batch of a variant: an optional lot code and an optional expiry date (a date, no time). One row
+// per (variant, code, expiryDate) with NULLs equal (NULLS NOT DISTINCT), so "no code, no date" is a
+// single batch too. In the migration: a code is never blank.
+model RtBatch {
+  id         String    @id @default(cuid())
+  businessId String
+  variantId  String
+  code       String?
+  expiryDate DateTime? @db.Date
+  createdAt  DateTime  @default(now())
+
+  business  RtBusiness        @relation(fields: [businessId], references: [id])
+  variant   RtVariant         @relation(fields: [businessId, variantId], references: [businessId, id])
+  lines     RtStockLine[]
+  movements RtStockMovement[]
+  balances  RtStockBalance[]
+
+  @@unique([businessId, id])
+  // Target of the (businessId, variantId, batchId) foreign keys: a batch of the row's own variant.
+  @@unique([businessId, variantId, id])
+  // NULLS NOT DISTINCT in the migration. Prisma's compound-unique selector for this key cannot take
+  // null, so a row with a null column is found with findFirst and created with create-and-catch
+  // P2002 (never upsert on this key).
+  @@unique([businessId, variantId, code, expiryDate])
+}
+
+// A stock document. Posting writes its movements; a posted document never changes (the actions
+// refuse with DOCUMENT_POSTED) and is corrected by a REVERSAL that names it. `number` is given at
+// posting from RtStockCounter, unique per business (drafts have none). In the migration: a POSTED
+// document has a number and postedAt; number >= 1; reversesDocumentId is set exactly for a
+// REVERSAL and never names the document itself. A document is reversed at most once (unique).
+// importBatchId: the opening-stock import batch an OPENING document came from (Task 7).
+// direction: set exactly for an ADJUSTMENT or a WRITE_OFF, and OUT for a WRITE_OFF; those two kinds
+// always carry a reason (CHECKs in migration 20261030110000_stock_direction).
+model RtStockDocument {
+  id                 String                @id @default(cuid())
+  businessId         String
+  branchId           String
+  locationId         String
+  kind               RtStockDocumentKind
+  status             RtStockDocumentStatus @default(DRAFT)
+  number             Int?
+  supplierRef        String?
+  note               String?
+  reason             String?
+  direction          RtStockDirection?
+  reversesDocumentId String?
+  importBatchId      String?
+  postedAt           DateTime?
+  postedById         String?
+  version            Int                   @default(1)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  business    RtBusiness        @relation(fields: [businessId], references: [id])
+  branch      RtBranch          @relation(fields: [businessId, branchId], references: [businessId, id])
+  location    RtLocation        @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+  reverses    RtStockDocument?  @relation("RtStockReversal", fields: [businessId, reversesDocumentId], references: [businessId, id], onDelete: Restrict)
+  reversedBy  RtStockDocument?  @relation("RtStockReversal")
+  importBatch RtImportBatch?    @relation(fields: [businessId, importBatchId], references: [businessId, id], onDelete: Restrict)
+  lines       RtStockLine[]
+  movements   RtStockMovement[]
+
+  @@unique([businessId, id])
+  // Targets of the line's and the movement's document keys: a line is in its document's branch, a
+  // movement in its document's branch and location.
+  @@unique([businessId, branchId, id])
+  @@unique([businessId, branchId, locationId, id])
+  @@unique([businessId, number])
+  @@unique([businessId, reversesDocumentId])
+  @@index([businessId, createdAt])
+  @@index([businessId, importBatchId])
+}
+
+// A document line as entered: `enteredQuantity` is the text typed in `unitId`, `quantity` the same
+// amount in base units x 1000. A cost is entered per unit in `currency` with `rateMicro` (business
+// currency per 1 unit of `currency`, x 10^6) and converted to `valueMinor` in the business's
+// currency. batchCode/expiryDate are as typed; batchId is resolved when posting. Deleted with its
+// (draft) document; a line with movements cannot be deleted. branchId is its document's branch
+// (enforced by the document key), so a branch-limited actor only reaches its branches' lines.
+// In the migration: lineNo >= 1,
+// quantity > 0, costs and values >= 0, rate > 0, a cost has a currency.
+model RtStockLine {
+  id              String    @id @default(cuid())
+  businessId      String
+  branchId        String
+  documentId      String
+  lineNo          Int
+  variantId       String
+  unitId          String
+  batchCode       String?
+  expiryDate      DateTime? @db.Date
+  batchId         String?
+  quantity        BigInt
+  enteredQuantity String
+  currency        Currency?
+  unitCostMinor   BigInt?
+  rateMicro       BigInt?
+  valueMinor      BigInt?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  business  RtBusiness        @relation(fields: [businessId], references: [id])
+  document  RtStockDocument   @relation(fields: [businessId, branchId, documentId], references: [businessId, branchId, id], onDelete: Cascade)
+  variant   RtVariant         @relation(fields: [businessId, variantId], references: [businessId, id])
+  unit      RtUnit            @relation(fields: [businessId, unitId], references: [businessId, id])
+  batch     RtBatch?          @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
+  movements RtStockMovement[]
+
+  @@unique([businessId, id])
+  // Target of the movement's (businessId, documentId, variantId, lineId) key: a line of the
+  // movement's own document and variant.
+  @@unique([businessId, documentId, variantId, id])
+  @@unique([businessId, documentId, lineNo])
+  @@index([businessId, variantId])
+}
+
+// The stock ledger: append-only (a trigger in the migration refuses UPDATE and DELETE; no
+// updatedAt). Its document key carries branch and location, and its line key carries the variant,
+// so a movement always matches its document's location and its line's variant. In the migration:
+// qtyDelta <> 0, and the value moves the same way as the quantity
+// (or is 0).
+model RtStockMovement {
+  id              String   @id @default(cuid())
+  businessId      String
+  branchId        String
+  locationId      String
+  documentId      String
+  lineId          String
+  variantId       String
+  batchId         String?
+  qtyDelta        BigInt
+  valueDeltaMinor BigInt
+  createdAt       DateTime @default(now())
+
+  business RtBusiness      @relation(fields: [businessId], references: [id])
+  branch   RtBranch        @relation(fields: [businessId, branchId], references: [businessId, id])
+  location RtLocation      @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+  document RtStockDocument @relation(fields: [businessId, branchId, locationId, documentId], references: [businessId, branchId, locationId, id])
+  line     RtStockLine     @relation(fields: [businessId, documentId, variantId, lineId], references: [businessId, documentId, variantId, id])
+  variant  RtVariant       @relation(fields: [businessId, variantId], references: [businessId, id])
+  batch    RtBatch?        @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
+
+  @@index([businessId, variantId, createdAt])
+  @@index([businessId, documentId])
+}
+
+// The current stock of a (location, variant, batch), kept in step with the movements in the same
+// transaction and rebuildable from them. One row per (location, variant, batch) with NULLs equal
+// (NULLS NOT DISTINCT): a single "no batch" row. In the migration: qty >= 0. valueMinor has no
+// CHECK: a batch row's value can drop below zero because an outflow takes the variant's average
+// cost across its batches (spec 6b.2); the variant's total stays >= 0.
+model RtStockBalance {
+  id         String   @id @default(cuid())
+  businessId String
+  branchId   String
+  locationId String
+  variantId  String
+  batchId    String?
+  qty        BigInt
+  valueMinor BigInt
+  updatedAt  DateTime @updatedAt
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  branch   RtBranch   @relation(fields: [businessId, branchId], references: [businessId, id])
+  location RtLocation @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+  variant  RtVariant  @relation(fields: [businessId, variantId], references: [businessId, id])
+  batch    RtBatch?   @relation(fields: [businessId, variantId, batchId], references: [businessId, variantId, id], onDelete: Restrict)
+
+  // NULLS NOT DISTINCT in the migration. Prisma's compound-unique selector for this key cannot take
+  // null, so a row with a null column is found with findFirst and created with create-and-catch
+  // P2002 (never upsert on this key).
+  @@unique([businessId, locationId, variantId, batchId])
+  @@index([businessId, variantId])
+}
+
+// The per-business document number sequence (incremented when a document is posted).
+model RtStockCounter {
+  id         String @id @default(cuid())
+  businessId String @unique
+  nextNumber Int    @default(1)
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+}
+
+// AI intake (R1b). A photographed purchase receipt is read by the AI provider into RtIntake.result
+// (suggestions only); a stock draft is created from it only once every line is resolved by a person.
+// Usage is counted in half units: 2 = one receipt read, 1 = one AI barcode fallback. Every row is
+// business-level and readable by no support scope (the page bytes in particular). Hand-written in the
+// migration (Prisma cannot express them): the CHECKs noted on each model.
+
+enum RtIntakeKind {
+  PURCHASE_RECEIPT
+}
+
+enum RtIntakeStatus {
+  UPLOADED
+  READING
+  READ
+  FAILED
+  DRAFTED
+  DISCARDED
+}
+
+// One upload to be read. filesHash: sha256 over the ordered pages (duplicate warning, idempotency).
+// model: the AI model used. usageHalfUnits: what was reserved from the month's quota (`month`, the
+// business-local YYYY-MM it was reserved from, so a refund returns it there); refundedAt is set once
+// when a technical failure returns it. failureCode: the ErrorCode of a failed read. result: the
+// extracted lines and the reviewer's choices. stockDocumentId: the draft created from it; a plain
+// column, not a foreign key, because R2 lets a draft be deleted (the intake keeps the stale id).
+// In the migration: usageHalfUnits >= 0; month, when set, is YYYY-MM.
+model RtIntake {
+  id               String         @id @default(cuid())
+  businessId       String
+  kind             RtIntakeKind   @default(PURCHASE_RECEIPT)
+  status           RtIntakeStatus @default(UPLOADED)
+  createdById      String
+  filesHash        String
+  model            String
+  usageHalfUnits   Int            @default(0)
+  month            String?
+  result           Json?
+  failureCode      String?
+  stockDocumentId  String?
+  refundedAt       DateTime?
+  // The current read attempt (a lease): set when the intake enters READING; only this attempt may
+  // store its result or failure, and a READING intake whose lease is older than the provider timeout
+  // plus a margin is swept to FAILED with its refund.
+  readingStartedAt DateTime?
+  readingAttemptId String?
+  version          Int            @default(1)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  business RtBusiness     @relation(fields: [businessId], references: [id])
+  files    RtIntakeFile[]
+
+  @@unique([businessId, id])
+  @@index([businessId, filesHash])
+  @@index([businessId, createdAt])
+}
+
+// One page (image or PDF) of an intake, its bytes stored in the database. The retention policy
+// (30 days) deletes these page rows; the intake's filesHash and result stay. In the migration:
+// position >= 1.
+model RtIntakeFile {
+  id          String   @id @default(cuid())
+  businessId  String
+  intakeId    String
+  position    Int
+  contentType String
+  bytes       Bytes
+  // Byte length of `bytes` (summed against the plan's storageMb). In the migration: size >= 0.
+  size        Int      @default(0)
+  sha256      String
+  createdAt   DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  intake   RtIntake   @relation(fields: [businessId, intakeId], references: [businessId, id], onDelete: Cascade)
+
+  @@unique([businessId, intakeId, position])
+}
+
+// The AI usage of a business in one business-local month (YYYY-MM), in half units. Updated under a
+// row lock. In the migration: halfUnits >= 0; month is YYYY-MM.
+model RtAiUsage {
+  id         String   @id @default(cuid())
+  businessId String
+  month      String
+  halfUnits  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, month])
+}

@@ -1,0 +1,25 @@
+{
+  "supplier": "شركة البركة للتجارة العامة",
+  "date": "2026/10/29",
+  "currency": "د.ع",
+  "receiptNo": "7710",
+  "total": "19500",
+  "lines": [
+    {
+      "description": "طحين صفر ١ كغم",
+      "barcode": "6291041500213",
+      "quantity": "6",
+      "unitPrice": "1750",
+      "lineTotal": "10500",
+      "confidence": 0.95
+    },
+    {
+      "description": "عدس أصفر مجروش ١ كغم",
+      "quantity": "4",
+      "unitText": "كيس",
+      "unitPrice": "2250",
+      "lineTotal": "9000",
+      "confidence": 0.9
+    }
+  ]
+}
