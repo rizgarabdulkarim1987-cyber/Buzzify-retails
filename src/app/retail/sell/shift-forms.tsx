@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
-import type { Locale, Messages } from "@/messages";
+import { formatNumber, type Locale, type Messages } from "@/messages";
 import { fill } from "../../_lib/format";
 import { CashIcon } from "../../_ui/icons";
 import { Notice } from "../../_ui/state";
@@ -11,7 +11,7 @@ import { failureMessage } from "../catalog/_lib/failures";
 import { newKey } from "../catalog/_lib/keys";
 import { closeShiftAction, openShiftAction } from "./actions";
 import { parseAmount, type Currency, type ShiftDto } from "./_lib/cart";
-import { differenceText, money, ShiftSummaryView } from "./_lib/views";
+import { differenceText, ShiftSummaryView } from "./_lib/views";
 
 /** The attempt key: kept for a retry of the same values, new when the values change. */
 function useAttemptKey() {
@@ -70,7 +70,7 @@ export function OpenShiftForm({ locale, t, currency }: { locale: Locale; t: Mess
             inputMode={currency === "IQD" ? "numeric" : "decimal"}
             autoComplete="off"
             autoFocus
-            placeholder={money({ locale, t }, currency, 0n)}
+            placeholder={formatNumber(locale, 0)}
             value={text}
             onChange={(e) => setText(e.target.value)}
             data-testid="open-cash"

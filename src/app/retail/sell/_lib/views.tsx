@@ -148,16 +148,16 @@ export function Receipt({ locale, t, receipt, business, branch, cashier }: Ctx &
           <dd data-testid="receipt-total">{m(receipt.totalMinor)}</dd>
         </div>
         {cash ? (
-          <>
-            <div>
-              <dt>{t.sell.receipt.given}</dt>
-              <dd>{m(cash.tenderedMinor)}</dd>
-            </div>
-            <div>
-              <dt>{t.sell.receipt.cash}</dt>
-              <dd>{m(cash.amountMinor)}</dd>
-            </div>
-          </>
+          <div>
+            <dt>{t.sell.receipt.cash}</dt>
+            <dd>{m(cash.amountMinor)}</dd>
+          </div>
+        ) : null}
+        {cash && cash.tenderedMinor !== cash.amountMinor ? (
+          <div>
+            <dt>{t.sell.receipt.given}</dt>
+            <dd>{m(cash.tenderedMinor)}</dd>
+          </div>
         ) : null}
         {card ? (
           <div>

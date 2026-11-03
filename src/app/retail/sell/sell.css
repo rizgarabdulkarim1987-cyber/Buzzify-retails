@@ -984,11 +984,13 @@
 .till-close,
 .till-closed {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
 }
 
 .till-amount-field {
   display: grid;
+  min-width: 0;
   gap: var(--space-2);
   font-weight: 600;
 }
@@ -1017,6 +1019,7 @@
 
 .till-amount-input {
   flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   min-height: 4rem;
   border: 0;
