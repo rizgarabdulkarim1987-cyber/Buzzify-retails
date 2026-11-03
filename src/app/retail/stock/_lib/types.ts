@@ -7,7 +7,7 @@ import type { UiCode } from "../../catalog/_lib/types";
  */
 
 export type ExpiryState = "NONE" | "OK" | "SOON" | "EXPIRED";
-export type DocKind = "OPENING" | "RECEIPT" | "ADJUSTMENT" | "WRITE_OFF" | "REVERSAL";
+export type DocKind = "OPENING" | "RECEIPT" | "ADJUSTMENT" | "WRITE_OFF" | "REVERSAL" | "SALE";
 export type Currency = "IQD" | "USD";
 
 export type BreakdownDto = { parts: { name: string; count: string }[]; remainder: string };

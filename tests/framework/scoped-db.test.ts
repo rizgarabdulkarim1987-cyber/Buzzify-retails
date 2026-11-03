@@ -586,6 +586,11 @@ describe("model classification", () => {
     expect([...BRANCH_SCOPED_MODELS].sort()).toEqual([
       "RtBranch",
       "RtLocation",
+      "RtPayment",
+      "RtSale",
+      "RtSaleCounter",
+      "RtSaleLine",
+      "RtShift",
       "RtStaffBranch",
       "RtStockBalance",
       "RtStockDocument",

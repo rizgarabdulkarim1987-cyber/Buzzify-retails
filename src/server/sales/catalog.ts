@@ -1,0 +1,192 @@
+import { z } from "zod";
+import type { Prisma } from "@/generated/prisma/client";
+import type { Currency } from "@/generated/prisma/enums";
+import { searchInTx } from "@/server/catalog/search";
+import { defineAction } from "@/server/framework/action";
+
+/*
+ * What the till shows (R3): the top categories as big buttons and the items as tiles, each tile one
+ * sellable unit with its current price. Reads (sale.create). Trial, archived and serial items are
+ * left out (they cannot be sold). A tile sells the variant's base unit; a scanned barcode names its
+ * own unit (a carton scan sells a carton). The price is the unit's current DEFAULT-list price in the
+ * business currency (null: no price, the tile is shown but cannot be added). onHand is the unit's
+ * stock at the given location in base units x 1000 (all batches, expired ones included; the sale
+ * itself refuses what cannot be sold), or null when no location is given.
+ */
+
+type Tx = Prisma.TransactionClient;
+
+export const MAX_SELL_ITEMS = 60;
+const id = z.string().min(1).max(64);
+
+export type SellCategory = { id: string; nameAr: string; nameCkb: string | null; nameEn: string | null };
+
+export type SellItem = {
+  variantId: string;
+  unitId: string;
+  nameAr: string;
+  nameCkb: string | null;
+  nameEn: string | null;
+  unitName: string;
+  /** Decimal places the quantity may have (0 whole pieces, 3 grams of a kg). */
+  quantityScale: number;
+  /** Base units in one of this unit (1 for the base unit). */
+  factor: number;
+  soldByWeight: boolean;
+  priceMinor: bigint | null;
+  currency: Currency;
+  onHand: bigint | null;
+  /** The barcode that found it (a scan), or null. */
+  matchedBarcode: string | null;
+};
+
+/** The active top-level categories, by Arabic name. */
+export const listSellCategories = defineAction({
+  name: "sale.categories",
+  permission: "sale.create",
+  input: z.object({}).strict(),
+  writes: false,
+  async run({ tx }): Promise<SellCategory[]> {
+    return tx.rtCategory.findMany({
+      where: { archivedAt: null, parentId: null },
+      orderBy: [{ nameAr: "asc" }, { id: "asc" }],
+      select: { id: true, nameAr: true, nameCkb: true, nameEn: true },
+      take: 100,
+    });
+  },
+});
+
+/** The current DEFAULT-list price (business currency) of each unit, null when it has none: refreshes a cart after PRICE_CHANGED. */
+export const currentUnitPrices = defineAction({
+  name: "sale.prices",
+  permission: "sale.create",
+  input: z.object({ unitIds: z.array(id).min(1).max(200) }).strict(),
+  writes: false,
+  async run({ tx, input }): Promise<Record<string, bigint | null>> {
+    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true } });
+    const now = new Date();
+    const rows = await tx.rtPrice.findMany({
+      where: {
+        unitId: { in: input.unitIds },
+        currency: biz.defaultCurrency,
+        priceList: { kind: "DEFAULT" },
+        validFrom: { lte: now },
+        OR: [{ validTo: null }, { validTo: { gt: now } }],
+      },
+      select: { unitId: true, amountMinor: true },
+    });
+    const found = new Map(rows.map((r) => [r.unitId, r.amountMinor]));
+    return Object.fromEntries(input.unitIds.map((u) => [u, found.get(u) ?? null]));
+  },
+});
+
+/** The category and every active category under it. */
+async function categoryTree(tx: Tx, rootId: string): Promise<string[]> {
+  const all = await tx.rtCategory.findMany({ where: { archivedAt: null }, select: { id: true, parentId: true } });
+  const out = new Set<string>([rootId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const c of all) {
+      if (c.parentId && out.has(c.parentId) && !out.has(c.id)) {
+        out.add(c.id);
+        grew = true;
+      }
+    }
+  }
+  return [...out];
+}
+
+const sellable: Prisma.RtVariantWhereInput = {
+  archivedAt: null,
+  product: { archivedAt: null, isTestData: false, trackingMode: { not: "SERIAL" } },
+};
+
+/** Tiles for the till: by category (with its sub-categories), by text or barcode, or the first items. */
+export const listSellItems = defineAction({
+  name: "sale.items",
+  permission: "sale.create",
+  input: z
+    .object({
+      query: z.string().max(100).default(""),
+      categoryId: id.nullish(),
+      locationId: id.nullish(),
+      limit: z.number().int().min(1).max(MAX_SELL_ITEMS).default(MAX_SELL_ITEMS),
+    })
+    .strict(),
+  writes: false,
+  async run({ tx, input }): Promise<SellItem[]> {
+    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true } });
+    // Which variants, and (for a scan) which unit.
+    let picks: { variantId: string; unitId?: string; matchedBarcode?: string }[];
+    if (input.query.trim() !== "") {
+      const hits = await searchInTx(tx, { query: input.query, includeArchived: false, limit: Math.min(input.limit, 50) });
+      picks = hits.items
+        .filter((h) => !h.isTestData && !h.archived)
+        .map((h) => ({ variantId: h.variantId, ...(h.matchedBarcode ? { unitId: h.unitId, matchedBarcode: h.matchedBarcode } : {}) }));
+    } else {
+      const categoryIds = input.categoryId ? await categoryTree(tx, input.categoryId) : null;
+      const rows = await tx.rtVariant.findMany({
+        where: { ...sellable, product: { ...(sellable.product as object), ...(categoryIds ? { categoryId: { in: categoryIds } } : {}) } },
+        orderBy: [{ product: { nameAr: "asc" } }, { id: "asc" }],
+        take: input.limit,
+        select: { id: true },
+      });
+      picks = rows.map((r) => ({ variantId: r.id }));
+    }
+    if (picks.length === 0) return [];
+
+    const variantIds = [...new Set(picks.map((p) => p.variantId))];
+    const variants = await tx.rtVariant.findMany({
+      where: { ...sellable, id: { in: variantIds } },
+      select: { id: true, product: { select: { nameAr: true, nameCkb: true, nameEn: true, soldByWeight: true } } },
+    });
+    const variantOf = new Map(variants.map((v) => [v.id, v]));
+    const units = await tx.rtUnit.findMany({
+      where: { variantId: { in: variantIds }, archivedAt: null },
+      select: { id: true, variantId: true, name: true, factor: true, quantityScale: true, isBase: true },
+    });
+    const unitById = new Map(units.map((u) => [u.id, u]));
+    const baseOf = new Map(units.filter((u) => u.isBase).map((u) => [u.variantId, u]));
+    const chosen = picks
+      .map((p) => ({ p, unit: p.unitId ? unitById.get(p.unitId) : baseOf.get(p.variantId), v: variantOf.get(p.variantId) }))
+      .filter((c): c is { p: (typeof picks)[number]; unit: NonNullable<typeof c.unit>; v: NonNullable<typeof c.v> } => !!c.unit && !!c.v);
+
+    const now = new Date();
+    const prices = await tx.rtPrice.findMany({
+      where: {
+        unitId: { in: chosen.map((c) => c.unit.id) },
+        currency: biz.defaultCurrency,
+        priceList: { kind: "DEFAULT" },
+        validFrom: { lte: now },
+        OR: [{ validTo: null }, { validTo: { gt: now } }],
+      },
+      select: { unitId: true, amountMinor: true },
+    });
+    const priceOf = new Map(prices.map((p) => [p.unitId, p.amountMinor]));
+    const stock = input.locationId
+      ? await tx.rtStockBalance.groupBy({
+          by: ["variantId"],
+          where: { locationId: input.locationId, variantId: { in: variantIds } },
+          _sum: { qty: true },
+        })
+      : null;
+    const onHandOf = new Map((stock ?? []).map((s) => [s.variantId, s._sum.qty ?? 0n]));
+
+    return chosen.map(({ p, unit, v }) => ({
+      variantId: v.id,
+      unitId: unit.id,
+      nameAr: v.product.nameAr,
+      nameCkb: v.product.nameCkb,
+      nameEn: v.product.nameEn,
+      unitName: unit.name,
+      quantityScale: unit.quantityScale,
+      factor: unit.factor,
+      soldByWeight: v.product.soldByWeight,
+      priceMinor: priceOf.get(unit.id) ?? null,
+      currency: biz.defaultCurrency,
+      onHand: stock ? (onHandOf.get(v.id) ?? 0n) : null,
+      matchedBarcode: p.matchedBarcode ?? null,
+    }));
+  },
+});

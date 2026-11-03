@@ -87,6 +87,12 @@ model RtBusiness {
   intakes     RtIntake[]
   intakeFiles RtIntakeFile[]
   aiUsage     RtAiUsage[]
+
+  shifts       RtShift[]
+  sales        RtSale[]
+  saleLines    RtSaleLine[]
+  payments     RtPayment[]
+  saleCounters RtSaleCounter[]
 }
 
 model RtBranch {
@@ -106,6 +112,9 @@ model RtBranch {
   stockDocuments RtStockDocument[]
   stockMovements RtStockMovement[]
   stockBalances  RtStockBalance[]
+
+  shifts       RtShift[]
+  saleCounters RtSaleCounter[]
 
   // Target of the composite foreign keys that keep child rows inside one business.
   @@unique([businessId, id])
@@ -129,6 +138,7 @@ model RtLocation {
   stockDocuments RtStockDocument[]
   stockMovements RtStockMovement[]
   stockBalances  RtStockBalance[]
+  shifts         RtShift[]
 
   // Target of the terminal's composite foreign key (same business AND same branch).
   @@unique([businessId, branchId, id])
@@ -651,6 +661,7 @@ model RtVariant {
   stockLines     RtStockLine[]
   stockMovements RtStockMovement[]
   stockBalances  RtStockBalance[]
+  saleLines      RtSaleLine[]
 
   @@unique([businessId, sku])
   @@unique([businessId, id])
@@ -681,6 +692,7 @@ model RtUnit {
   prices       RtPrice[]
   rtImportRows RtImportRow[]
   stockLines   RtStockLine[]
+  saleLines    RtSaleLine[]
 
   @@unique([businessId, id])
   @@index([businessId, variantId])
@@ -862,6 +874,8 @@ enum RtStockDocumentKind {
   ADJUSTMENT
   WRITE_OFF
   REVERSAL
+  // R3: the stock side of a posted sale (src/server/sales). Posted with the sale, never a draft.
+  SALE
 }
 
 enum RtStockDocumentStatus {
@@ -937,6 +951,7 @@ model RtStockDocument {
   importBatch RtImportBatch?    @relation(fields: [businessId, importBatchId], references: [businessId, id], onDelete: Restrict)
   lines       RtStockLine[]
   movements   RtStockMovement[]
+  sale        RtSale?
 
   @@unique([businessId, id])
   // Targets of the line's and the movement's document keys: a line is in its document's branch, a
@@ -1150,4 +1165,176 @@ model RtAiUsage {
   business RtBusiness @relation(fields: [businessId], references: [id])
 
   @@unique([businessId, month])
+}
+
+// Sales (R3, first slice: a market's cash desk). Money is BigInt minor units of the sale's currency
+// (the business's default currency in this slice); quantities are base units x 1000 as in the stock
+// ledger. Every row is in one branch and reaches its parents through composite keys that start with
+// businessId (and branchId), so it never points at another business's or branch's row. A posted
+// sale never changes; its stock side is one SALE stock document posted in the same transaction.
+// Hand-written in the migration (Prisma cannot express them): the CHECKs noted on each model and
+// the partial unique index that allows one OPEN shift per person.
+
+enum RtShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum RtSaleStatus {
+  POSTED
+}
+
+enum RtPaymentMethod {
+  CASH
+  CARD
+}
+
+// A cash-desk shift of one person in one branch: opened with the cash in the drawer, closed with
+// the cash counted. expected = opening + the cash taken by its sales (net of change); difference =
+// counted - expected. A closed shift never changes. In the migration: at most one OPEN shift per
+// (business, person); opening and counted cash >= 0; a CLOSED shift has closedAt, closedById,
+// countedCashMinor, expectedCashMinor and differenceMinor = counted - expected; an OPEN one has none.
+model RtShift {
+  id                String        @id @default(cuid())
+  businessId        String
+  branchId          String
+  locationId        String
+  // The terminal chosen in the workplace (checked to be of this branch), when there is one.
+  terminalId        String?
+  openedById        String
+  status            RtShiftStatus @default(OPEN)
+  currency          Currency
+  openingCashMinor  BigInt
+  openedAt          DateTime      @default(now())
+  closedAt          DateTime?
+  closedById        String?
+  countedCashMinor  BigInt?
+  expectedCashMinor BigInt?
+  differenceMinor   BigInt?
+  closeNote         String?
+  version           Int           @default(1)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  business RtBusiness  @relation(fields: [businessId], references: [id])
+  branch   RtBranch    @relation(fields: [businessId, branchId], references: [businessId, id])
+  location RtLocation  @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
+  sales    RtSale[]
+  payments RtPayment[]
+
+  @@unique([businessId, id])
+  // Target of the sale's and the payment's shift key: a sale is in its shift's branch.
+  @@unique([businessId, branchId, id])
+  @@index([businessId, branchId, status])
+  @@index([businessId, openedById, status])
+}
+
+// A posted sale. number: per branch, gap-free (RtSaleCounter, taken in the posting transaction).
+// saleKey: the client's key for this sale (the idempotency key of the attempt), unique per
+// business, so a double tap or a retry can never post a second sale. In the migration: number >= 1;
+// totals >= 0; paid >= total; change = paid - total; lineCount >= 1.
+model RtSale {
+  id              String       @id @default(cuid())
+  businessId      String
+  branchId        String
+  locationId      String
+  shiftId         String
+  stockDocumentId String
+  number          Int
+  saleKey         String
+  status          RtSaleStatus @default(POSTED)
+  currency        Currency
+  totalMinor      BigInt
+  paidMinor       BigInt
+  changeMinor     BigInt
+  lineCount       Int
+  cashierId       String
+  postedAt        DateTime     @default(now())
+  createdAt       DateTime     @default(now())
+
+  business      RtBusiness      @relation(fields: [businessId], references: [id])
+  shift         RtShift         @relation(fields: [businessId, branchId, shiftId], references: [businessId, branchId, id])
+  stockDocument RtStockDocument @relation(fields: [businessId, branchId, locationId, stockDocumentId], references: [businessId, branchId, locationId, id])
+  lines         RtSaleLine[]
+  payments      RtPayment[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, branchId, id])
+  @@unique([businessId, branchId, number])
+  @@unique([businessId, saleKey])
+  // One sale per stock document (and the one-to-one relation's key).
+  @@unique([businessId, branchId, locationId, stockDocumentId])
+  @@index([businessId, shiftId])
+  @@index([businessId, branchId, postedAt])
+}
+
+// One sold line, frozen at sale time: the item's names and unit name as they were, the unit price
+// used (listPriceMinor from the dated price list, priceId the RtPrice row; unitPriceMinor differs
+// only for a permitted override), the line total (unit price x quantity, half up) and the cost the
+// ledger took out (weighted average, never shown without cost.view). In the migration: lineNo >= 1;
+// quantity > 0; prices, totals and cost >= 0.
+model RtSaleLine {
+  id              String   @id @default(cuid())
+  businessId      String
+  branchId        String
+  saleId          String
+  lineNo          Int
+  variantId       String
+  unitId          String
+  nameAr          String
+  nameCkb         String?
+  nameEn          String?
+  unitName        String
+  enteredQuantity String
+  quantity        BigInt
+  listPriceMinor  BigInt
+  unitPriceMinor  BigInt
+  priceId         String?
+  lineTotalMinor  BigInt
+  costMinor       BigInt
+  createdAt       DateTime @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  sale     RtSale     @relation(fields: [businessId, branchId, saleId], references: [businessId, branchId, id])
+  variant  RtVariant  @relation(fields: [businessId, variantId], references: [businessId, id])
+  unit     RtUnit     @relation(fields: [businessId, unitId], references: [businessId, id])
+
+  @@unique([businessId, saleId, lineNo])
+  @@index([businessId, variantId])
+}
+
+// A payment of a sale. amountMinor is what it pays of the total (cash net of the change given);
+// tenderedMinor is what the customer handed over (cash only; equal to amountMinor for a card).
+// In the migration: amountMinor > 0; tenderedMinor >= amountMinor; a CARD has tendered = amount.
+model RtPayment {
+  id            String          @id @default(cuid())
+  businessId    String
+  branchId      String
+  saleId        String
+  shiftId       String
+  method        RtPaymentMethod
+  currency      Currency
+  amountMinor   BigInt
+  tenderedMinor BigInt
+  createdAt     DateTime        @default(now())
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  sale     RtSale     @relation(fields: [businessId, branchId, saleId], references: [businessId, branchId, id])
+  shift    RtShift    @relation(fields: [businessId, branchId, shiftId], references: [businessId, branchId, id])
+
+  @@index([businessId, saleId])
+  @@index([businessId, shiftId])
+}
+
+// The per-branch sale number sequence (incremented when a sale is posted, in the same transaction).
+model RtSaleCounter {
+  id         String @id @default(cuid())
+  businessId String
+  branchId   String
+  nextNumber Int    @default(1)
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  branch   RtBranch   @relation(fields: [businessId, branchId], references: [businessId, id])
+
+  @@unique([businessId, branchId])
 }

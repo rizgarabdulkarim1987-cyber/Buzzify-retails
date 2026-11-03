@@ -60,8 +60,8 @@ export const SCOPE_MODELS: Readonly<Record<SupportScope, readonly ModelName[]>> 
   ] as const),
   // Stock (R2): batches, documents and lines, the movement ledger and balances. Not the document counter.
   STOCK_READ: Object.freeze(["RtBatch", "RtStockDocument", "RtStockLine", "RtStockMovement", "RtStockBalance"] as const),
-  // R3 (sales) fills this in with its models; empty until then, so nothing is readable.
-  SALES_READ: Object.freeze([] as const),
+  // R3: shifts, sales, their lines and payments. Not the sale number counter.
+  SALES_READ: Object.freeze(["RtShift", "RtSale", "RtSaleLine", "RtPayment"] as const),
 });
 
 /** The union of models the given scopes allow. */

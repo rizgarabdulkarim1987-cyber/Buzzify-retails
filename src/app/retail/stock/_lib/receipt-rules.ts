@@ -289,7 +289,7 @@ export type DocLineDto = {
 };
 export type DocumentDto = {
   id: string;
-  kind: "OPENING" | "RECEIPT" | "ADJUSTMENT" | "WRITE_OFF" | "REVERSAL";
+  kind: "OPENING" | "RECEIPT" | "ADJUSTMENT" | "WRITE_OFF" | "REVERSAL" | "SALE";
   status: "DRAFT" | "POSTED";
   number: number | null;
   supplierRef: string | null;

@@ -21,6 +21,10 @@ const PERMISSION_LIST = [
   "stock.view",
   // Grant or withdraw the business's consent to send images to the AI provider (R1b). OWNER only.
   "ai.consent",
+  // R3 selling: ring up sales and open and close one's own cash-desk shift.
+  "sale.create",
+  // R3: close (or look at) another person's shift in one's branches.
+  "shift.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSION_LIST)[number];
@@ -46,8 +50,10 @@ export const ROLE_PERMISSIONS: Readonly<Record<RtRole, readonly Permission[]>> =
     "catalog.import",
     "stock.adjust",
     "stock.view",
+    "sale.create",
+    "shift.manage",
   ]),
-  CASHIER: frozen(["stock.view"]),
+  CASHIER: frozen(["stock.view", "sale.create"]),
   STOCK: frozen(["stock.receive", "stock.transfer", "catalog.manage", "stock.adjust", "stock.view"]),
   PURCHASING: frozen(["stock.receive", "ai.use", "stock.view"]),
   ACCOUNTANT: frozen(["cost.view", "data.export", "supplier.pay", "multiBranch.access", "stock.view"]),

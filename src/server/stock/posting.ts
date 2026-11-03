@@ -244,8 +244,8 @@ export async function lockDraft(tx: Tx, documentId: string, lockBusiness: LockBu
 
 type LockedDoc = Awaited<ReturnType<typeof lockDraft>>;
 
-/** The next document number of the business (taken last, after the stock locks). */
-async function nextDocumentNumber(tx: Tx, businessId: string, lockBusiness: LockBusiness): Promise<number> {
+/** The next document number of the business (taken last, after the stock locks). Also used by the sale posting (src/server/sales). */
+export async function nextDocumentNumber(tx: Tx, businessId: string, lockBusiness: LockBusiness): Promise<number> {
   await lockBusiness(DOCUMENT_NUMBER_LOCK);
   await tx.rtStockCounter.createMany({ data: [{ businessId }], skipDuplicates: true });
   const row = await tx.rtStockCounter.update({ where: { businessId }, data: { nextNumber: { increment: 1 } }, select: { nextNumber: true } });
@@ -292,6 +292,9 @@ export async function postDocumentInTx(
     case "REVERSAL":
       posting = await postReversalLines(tx, actor, doc, lockBusiness);
       break;
+    case "SALE":
+      // A SALE document is created already posted by the sale posting (src/server/sales); it is never a draft.
+      throw new RuleError("STOCK_RULE", { reason: "KIND" });
   }
 
   const number = await nextDocumentNumber(tx, actor.businessId, lockBusiness);
