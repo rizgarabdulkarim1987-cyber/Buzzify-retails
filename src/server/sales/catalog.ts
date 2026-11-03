@@ -56,6 +56,30 @@ export const listSellCategories = defineAction({
   },
 });
 
+/** The current DEFAULT-list price (business currency) of each unit, null when it has none: refreshes a cart after PRICE_CHANGED. */
+export const currentUnitPrices = defineAction({
+  name: "sale.prices",
+  permission: "sale.create",
+  input: z.object({ unitIds: z.array(id).min(1).max(200) }).strict(),
+  writes: false,
+  async run({ tx, input }): Promise<Record<string, bigint | null>> {
+    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true } });
+    const now = new Date();
+    const rows = await tx.rtPrice.findMany({
+      where: {
+        unitId: { in: input.unitIds },
+        currency: biz.defaultCurrency,
+        priceList: { kind: "DEFAULT" },
+        validFrom: { lte: now },
+        OR: [{ validTo: null }, { validTo: { gt: now } }],
+      },
+      select: { unitId: true, amountMinor: true },
+    });
+    const found = new Map(rows.map((r) => [r.unitId, r.amountMinor]));
+    return Object.fromEntries(input.unitIds.map((u) => [u, found.get(u) ?? null]));
+  },
+});
+
 /** The category and every active category under it. */
 async function categoryTree(tx: Tx, rootId: string): Promise<string[]> {
   const all = await tx.rtCategory.findMany({ where: { archivedAt: null }, select: { id: true, parentId: true } });

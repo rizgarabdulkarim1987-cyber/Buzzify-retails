@@ -229,6 +229,19 @@ export const myOpenShift = defineAction({
   },
 });
 
+/** What the till page needs first: the business currency (sales are in it) and the actor's open shift summary, or null. */
+export const tillState = defineAction({
+  name: "shift.till",
+  permission: "sale.create",
+  input: z.object({}).strict(),
+  writes: false,
+  async run({ actor, tx }): Promise<{ currency: Currency; open: ShiftSummary | null }> {
+    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true } });
+    const shift = await openShiftOf(tx, actor);
+    return { currency: biz.defaultCurrency, open: shift ? await summaryOf(tx, shift) : null };
+  },
+});
+
 /** One shift's summary: one's own, or any in one's branches with shift.manage. */
 export const shiftSummary = defineAction({
   name: "shift.summary",

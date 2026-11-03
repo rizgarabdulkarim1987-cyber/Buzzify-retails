@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { RtTrackingMode } from "@/generated/prisma/client";
 import { businessToday } from "@/server/domain/stock";
-import { listSellCategories, listSellItems } from "@/server/sales/catalog";
+import { currentUnitPrices, listSellCategories, listSellItems } from "@/server/sales/catalog";
 import { createSale, getSale } from "@/server/sales/sales";
-import { closeShift, myOpenShift, openShift, shiftSummary } from "@/server/sales/shifts";
+import { closeShift, myOpenShift, openShift, shiftSummary, tillState } from "@/server/sales/shifts";
 import { rebuildBalances } from "@/server/stock/ledger";
 import { postStockDocument, saveStockDraft, type DraftLineInput } from "@/server/stock/documents";
 import { useTestDb } from "../helpers/db";
@@ -429,5 +429,24 @@ describe("the till's catalog", () => {
     const scan = await listSellItems({ query: "0062800123" }, s.as("cashier"));
     if (!scan.ok) throw new Error(scan.code);
     expect(scan.value[0]).toMatchObject({ unitId: milk.carton, unitName: "كرتون", priceMinor: 22_000n, factor: 24, matchedBarcode: "0062800123" });
+  });
+
+  it("current prices refresh a cart (null without a price); the till state gives the currency and the open shift", async () => {
+    const s = await shop();
+    const milk = await s.item({ price: 1000n });
+    const bread = await s.item({ price: null, name: "خبز" });
+    const change = new Date(Date.now() - 1000);
+    await db.rtPrice.updateMany({ where: { unitId: milk.piece }, data: { validTo: change } });
+    await s.price(milk.piece, 1250n, change);
+    const p = await currentUnitPrices({ unitIds: [milk.piece, bread.piece] }, s.as("cashier"));
+    expect(p.ok && p.value).toEqual({ [milk.piece]: 1250n, [bread.piece]: null });
+    expect(await codeOf(currentUnitPrices({ unitIds: [milk.piece] }, s.as("stock")))).toBe("FORBIDDEN");
+
+    const before = await tillState({}, s.as("cashier"));
+    expect(before.ok && before.value).toEqual({ currency: "IQD", open: null });
+    const shift = await open(s);
+    const after = await tillState({}, s.as("cashier"));
+    expect(after.ok && after.value.open?.shift.id).toBe(shift.id);
+    expect(after.ok && after.value.open?.expectedCashMinor).toBe(50_000n);
   });
 });
