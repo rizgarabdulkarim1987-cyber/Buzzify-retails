@@ -144,7 +144,7 @@ export const en: Messages = {
   },
   adminCore: {
     badge: "Managed by Buzzify",
-    notice: "Buzzify manages this setting. Local changes to the subscription, plan, status or AI switch are overwritten at the next sync.",
+    notice: "Managed by Buzzify: local changes to the subscription, plan, status or AI switch are overwritten at the next sync.",
     locked: "Local editing is disabled.",
   },
   adminAi: {
