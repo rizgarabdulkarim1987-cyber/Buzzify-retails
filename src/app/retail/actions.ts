@@ -4,6 +4,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSessionUserId } from "@/server/auth/auth";
 import { canSwitchBranch } from "@/server/domain/branch-switch";
+import { myOpenShift } from "@/server/sales/shifts";
 import { shellOptions } from "@/server/shell/options";
 import { WORKPLACE_COOKIE, WORKPLACE_COOKIE_OPTIONS, decodeWorkplace, encodeWorkplace, isId } from "../_lib/workplace";
 
@@ -16,8 +17,8 @@ function backToSelect(businessId: string | null, error: string): never {
 /**
  * Chooses the business, branch and (optional) terminal to work in. Everything is re-checked
  * against the actor's scoped options: a branch or terminal the user may not use is refused.
- * Leaving the current branch goes through canSwitchBranch (no drafts or shifts before R3, so the
- * shell passes zero; the check is wired so R3 only has to supply the real state).
+ * Leaving the current branch goes through canSwitchBranch: an open shift of the user in that
+ * branch refuses the switch (close it first).
  */
 export async function selectWorkplace(formData: FormData): Promise<void> {
   const userId = await getSessionUserId(await headers());
@@ -40,8 +41,11 @@ export async function selectWorkplace(formData: FormData): Promise<void> {
   const jar = await cookies();
   const current = decodeWorkplace(jar.get(WORKPLACE_COOKIE)?.value);
   if (current && (current.businessId !== businessId || current.branchId !== branchId)) {
-    // R3 supplies the session's real open drafts and shift here.
-    const decision = canSwitchBranch({ openDrafts: 0, openShift: false });
+    // The user's open shift in the branch being left blocks the switch (draft sales do not exist yet:
+    // the till keeps its cart and held carts in the browser).
+    const mine = await myOpenShift({}, { userId, businessId: current.businessId, idempotencyKey: "" });
+    const openShift = mine.ok && mine.value !== null && mine.value.shift.branchId === current.branchId;
+    const decision = canSwitchBranch({ openDrafts: 0, openShift });
     if (!decision.allowed) backToSelect(businessId, decision.reason);
   }
 

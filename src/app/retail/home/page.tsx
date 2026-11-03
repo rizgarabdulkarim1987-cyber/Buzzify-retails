@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { can } from "@/server/domain/permissions";
 import { getI18n } from "../../_lib/i18n";
-import { BarcodeIcon, PackageIcon, SparkIcon, StockIcon } from "../../_ui/icons";
+import { BarcodeIcon, CartIcon, PackageIcon, SparkIcon, StockIcon } from "../../_ui/icons";
 import { StateBlock } from "../../_ui/state";
 import { requireShell } from "../_shell";
 import { aiSettingsLink, scanEntry, scanRole } from "../catalog/scan/_lib/rules";
@@ -27,6 +27,7 @@ export default async function RetailHomePage() {
   if (!shell.branch) redirect("/retail/select");
   const canSetUp = shell.options?.ok === true && can(shell.options.value.role, "staff.manage");
   const canViewStock = shell.options?.ok === true && can(shell.options.value.role, "stock.view");
+  const canSell = shell.options?.ok === true && can(shell.options.value.role, "sale.create");
   // Scanning follows the catalog roles only; the AI settings card also needs the AI status (read
   // only for the owner and the manager, who are the only ones it could show to).
   const role = shell.options?.ok === true ? scanRole(shell.options.value.role) : null;
@@ -48,6 +49,13 @@ export default async function RetailHomePage() {
         </div>
       </div>
       <nav aria-label={t.catalog.title} className="home-links">
+        {canSell ? (
+          <Link href="/retail/sell" className="business-link" data-testid="open-sell">
+            <CartIcon />
+            <strong>{t.sell.title}</strong>
+            <span className="muted">{t.sell.homeCardBody}</span>
+          </Link>
+        ) : null}
         <Link href="/retail/catalog" className="business-link" data-testid="open-catalog">
           <PackageIcon />
           <strong>{t.catalog.title}</strong>

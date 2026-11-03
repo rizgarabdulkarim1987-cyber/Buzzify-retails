@@ -126,6 +126,63 @@ export const BarcodeIcon = () => (
   </Icon>
 );
 
+export const CartIcon = () => (
+  <Icon>
+    <path d="M3.5 4.5h2l2.1 10.2a1.5 1.5 0 0 0 1.5 1.3h8.1a1.5 1.5 0 0 0 1.5-1.2L20 8H6.4" />
+    <circle cx="9.5" cy="19.5" r="1.25" />
+    <circle cx="17" cy="19.5" r="1.25" />
+  </Icon>
+);
+
+export const PlusIcon = () => (
+  <Icon>
+    <path d="M12 5v14M5 12h14" />
+  </Icon>
+);
+
+export const MinusIcon = () => (
+  <Icon>
+    <path d="M5 12h14" />
+  </Icon>
+);
+
+export const TrashIcon = () => (
+  <Icon>
+    <path d="M4.5 7h15M9.5 7V4.5h5V7" />
+    <path d="M6.5 7l.9 12a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4l.9-12" />
+  </Icon>
+);
+
+export const CashIcon = () => (
+  <Icon>
+    <rect x="3" y="6.5" width="18" height="11" rx="1.5" />
+    <circle cx="12" cy="12" r="2.5" />
+    <path d="M6.5 9.5v.01M17.5 14.5v.01" />
+  </Icon>
+);
+
+export const CardIcon = () => (
+  <Icon>
+    <rect x="3" y="5.5" width="18" height="13" rx="1.5" />
+    <path d="M3 9.5h18M7 15h3" />
+  </Icon>
+);
+
+export const PrintIcon = () => (
+  <Icon>
+    <path d="M7 8.5V4h10v4.5" />
+    <rect x="4" y="8.5" width="16" height="7.5" rx="1.5" />
+    <path d="M7 13.5h10V20H7z" />
+  </Icon>
+);
+
+export const PauseIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M10 9v6M14 9v6" />
+  </Icon>
+);
+
 export const SparkIcon = () => (
   <Icon>
     <path d="M12 3.5 13.8 9a1 1 0 0 0 .7.7l5.5 1.8-5.5 1.8a1 1 0 0 0-.7.7L12 19.5 10.2 14a1 1 0 0 0-.7-.7L4 11.5l5.5-1.8a1 1 0 0 0 .7-.7z" />

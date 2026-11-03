@@ -21,6 +21,7 @@ export default async function RetailLayout({ children }: { children: ReactNode }
         terminal={shell.terminal?.name ?? null}
         user={shell.user.name || shell.user.email}
         canViewStock={shell.options?.ok === true && can(shell.options.value.role, "stock.view")}
+        canSell={shell.branch !== null && shell.options?.ok === true && can(shell.options.value.role, "sale.create")}
       />
       {children}
     </>

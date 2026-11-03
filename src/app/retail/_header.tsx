@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Locale, Messages } from "@/messages";
-import { BranchIcon, PackageIcon, SignOutIcon, StockIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
+import { BranchIcon, CartIcon, PackageIcon, SignOutIcon, StockIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { signOut } from "../session-actions";
 
@@ -13,13 +13,15 @@ type Props = {
   user: string;
   /** The user may see the stock screens (stock.view in the business shown). */
   canViewStock: boolean;
+  /** The user may sell (sale.create) and a branch is chosen. */
+  canSell?: boolean;
 };
 
 /**
  * The bar every retail screen carries: business, branch, terminal (when one is chosen) and user.
  * Long names are cut with an ellipsis (full text in the title tooltip) and never widen the page.
  */
-export function ShellHeader({ locale, t, business, branch, terminal, user, canViewStock }: Props) {
+export function ShellHeader({ locale, t, business, branch, terminal, user, canViewStock, canSell = false }: Props) {
   return (
     <header className="shell-header" data-testid="shell-header">
       <div className="bar">
@@ -32,6 +34,11 @@ export function ShellHeader({ locale, t, business, branch, terminal, user, canVi
         </div>
         <div className="bar-actions">
           <LocaleSwitcher locale={locale} label={t.locale.label} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} />
+          {canSell ? (
+            <Link href="/retail/sell" className="bar-button" aria-label={t.sell.title} title={t.sell.title} data-testid="nav-sell">
+              <CartIcon />
+            </Link>
+          ) : null}
           <Link href="/retail/catalog" className="bar-button" aria-label={t.catalog.title} title={t.catalog.title} data-testid="nav-catalog">
             <PackageIcon />
           </Link>
