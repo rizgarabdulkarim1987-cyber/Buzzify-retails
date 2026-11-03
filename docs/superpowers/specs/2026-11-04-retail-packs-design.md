@@ -4,6 +4,28 @@ Decision of the owner (2026-11-04): supermarket, mobile shop and clothing shop e
 complete product, and there will be many more types later (perfume, stationery, electronics, ...). So
 the types must not be separate codebases.
 
+## Decision on products (owner, 2026-11-04)
+
+In the Studio product hub the single "Retail" tile is replaced by three products, each with its own icon,
+name, plans and prices: **Supermarket**, **Electronics**, **Clothing**. Each is a complete product with its
+own sales, accounting and stock, and nothing links one to another. A business is created as one of them and
+opens straight on that product. The existing test shop becomes a Supermarket. Inside, they share one codebase
+only (see Principle).
+
+## UI/UX standard (applies to every pack and to the Studio hub)
+
+Owner requirement: a top-quality interface that is easy, smooth and professional.
+
+- Touch first: targets at least 56px, one obvious primary action per screen, no hover-only controls, minimum taps
+  for the daily path (open shift, sell, pay, close shift).
+- Reference: real POS screens (category tiles, product tiles, cart panel, numpad, big total, one big pay button).
+- Plain words in ar, ckb and en, RTL mirrored properly, no internal or other-product wording.
+- States designed, not defaulted: empty, loading, error, offline, long names, 2000 items, very large totals.
+- Motion is short and meaningful, honours prefers-reduced-motion. Fast: a tap answers in under 100 ms.
+- Built with the project design tokens first. Process per screen: design (impeccable, 21st-ui-build), build,
+  then review (21st-ui-review, break-ui with worst-case data) and a look in a real browser at phone, tablet and
+  desktop, in Arabic and English, before a screen counts as done.
+
 ## Principle
 
 - One engine, written and fixed once: catalog, stock ledger, sales and shifts, returns, accounting,
