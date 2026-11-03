@@ -9,12 +9,17 @@ export const E2E_SECRET = "e2e-secret-e2e-secret-e2e-secret-0123";
 export const PASSWORD = "e2e-password-123";
 
 /**
- * Studio-link e2e (tests/e2e/core-handoff.spec.ts): Studio does not exist, so the browser request to it is
- * intercepted (Chromium also refuses unsafe ports such as 9). The handoff secret is the dev server's
- * (playwright.config.ts); CORE_SHOP is the Studio-linked shop seeded for the spec.
+ * Studio-link e2e: the browser handoff (tests/e2e/core-handoff.spec.ts) intercepts the browser's
+ * request to Studio; the /login form's server-to-server calls (tests/e2e/login.spec.ts) reach the
+ * small fake Studio of tests/e2e/fake-studio.ts on E2E_STUDIO_PORT. The handoff and caller secrets
+ * are the dev server's (playwright.config.ts); CORE_SHOP is the Studio-linked shop seeded for both.
  */
-export const E2E_CORE_BASE_URL = "http://studio.e2e.test";
+export const E2E_STUDIO_PORT = Number(process.env.E2E_STUDIO_PORT || E2E_PORT + 7);
+export const E2E_CORE_BASE_URL = `http://127.0.0.1:${E2E_STUDIO_PORT}`;
 export const E2E_HANDOFF_SECRET = "e2e-handoff-secret-e2e-handoff-0123";
+export const E2E_OUT_SECRET = "e2e-caller-secret-e2e-caller-0123";
+/** Fake Studio accounts: the shop's owner signs in with PASSWORD; TWO_STEP also asks for TWO_STEP.code. */
+export const TWO_STEP = { email: "two-step@e2e.test", code: "123456" };
 export const CORE_SHOP = {
   name: "متجر ستوديو",
   coreBusinessId: "core-biz-e2e",
