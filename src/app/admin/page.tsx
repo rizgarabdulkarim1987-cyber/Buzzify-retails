@@ -22,7 +22,7 @@ const STATUS_TONE = { SETUP: "warn", ACTIVE: "accent", SUSPENDED: "danger", ARCH
 
 export default async function AdminPage() {
   const user = await getSessionUser(await headers());
-  if (!user) redirect("/login");
+  if (!user) redirect("/admin/login");
   const { locale, t } = await getI18n();
   const result = await listBusinesses({}, { userId: user.id, idempotencyKey: "" });
 

@@ -115,7 +115,10 @@ export function safeReturnTo(raw: string | null | undefined): string {
   return raw;
 }
 
-/** The login page's "Sign in with Studio" link, or null when Studio is not configured. */
+/**
+ * The href of the login page's single "Sign in" button (the handoff start), or null when the
+ * handoff is not configured; the page then falls back to the email + password form.
+ */
 export function studioSignInHref(): string | null {
   return process.env.CORE_BASE_URL?.trim() ? HANDOFF_START_PATH : null;
 }
