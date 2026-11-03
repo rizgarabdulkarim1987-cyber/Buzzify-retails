@@ -188,3 +188,39 @@ export const SparkIcon = () => (
     <path d="M12 3.5 13.8 9a1 1 0 0 0 .7.7l5.5 1.8-5.5 1.8a1 1 0 0 0-.7.7L12 19.5 10.2 14a1 1 0 0 0-.7-.7L4 11.5l5.5-1.8a1 1 0 0 0 .7-.7z" />
   </Icon>
 );
+
+export const MenuIcon = () => (
+  <Icon>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Icon>
+);
+
+export const CloseIcon = () => (
+  <Icon>
+    <path d="m6 6 12 12M18 6 6 18" />
+  </Icon>
+);
+
+/** Backspace: points to the start of the line, so it is mirrored in RTL by the .icon-flip class. */
+export const BackspaceIcon = () => (
+  <Icon className="icon icon-flip">
+    <path d="M9 5h10a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-6-7z" />
+    <path d="m12 9 5 6M17 9l-5 6" />
+  </Icon>
+);
+
+export const DrawerIcon = () => (
+  <Icon>
+    <rect x="3" y="5" width="18" height="14" rx="1.5" />
+    <path d="M3 12h18M10 15.5h4" />
+  </Icon>
+);
+
+export const GridIcon = () => (
+  <Icon>
+    <rect x="4" y="4" width="6.5" height="6.5" rx="1" />
+    <rect x="13.5" y="4" width="6.5" height="6.5" rx="1" />
+    <rect x="4" y="13.5" width="6.5" height="6.5" rx="1" />
+    <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1" />
+  </Icon>
+);

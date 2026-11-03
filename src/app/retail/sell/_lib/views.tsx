@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, formatMoney, pickName } from "../../../_lib/format";
-import { CardIcon, CashIcon, MinusIcon, PlusIcon, TrashIcon } from "../../../_ui/icons";
+import { BackspaceIcon, CardIcon, CashIcon, MinusIcon, PlusIcon, TrashIcon } from "../../../_ui/icons";
 import { lineTotal, type CartLine, type Currency, type PayState, type ReceiptDto, type SellItemDto, type ShiftDto } from "./cart";
+import { numpadKeys, tileInitial, type NumpadKey } from "./till";
 
 /*
  * The till's views, pure (no state, no effects): the client screen wires them, and the UI tests
@@ -21,8 +21,12 @@ export function localQuantity(locale: Locale, q: string): string {
   return [...q].map((c) => (c === "." ? "٫" : /\d/.test(c) ? formatNumber(locale, Number(c)) : c)).join("");
 }
 
-/** One big product tile. Without a price it is shown but disabled. */
-export function Tile({ locale, t, item, onAdd }: Ctx & { item: SellItemDto; onAdd?: () => void }) {
+/**
+ * One product tile: a colour block in its category's tone with the name's first letter (the slot
+ * a photo takes once the catalog has them), the name on up to two lines and the price, large. An
+ * item without a price is shown but cannot be added.
+ */
+export function Tile({ locale, t, item, tone = null, onAdd }: Ctx & { item: SellItemDto; tone?: number | null; onAdd?: () => void }) {
   const name = pickName(locale, item);
   const priced = item.priceMinor !== null;
   const out = item.onHand !== null && BigInt(item.onHand) <= 0n;
@@ -33,18 +37,22 @@ export function Tile({ locale, t, item, onAdd }: Ctx & { item: SellItemDto; onAd
       onClick={onAdd}
       disabled={!priced}
       data-out={out || undefined}
+      data-tone={tone ?? undefined}
       data-testid="sell-tile"
     >
+      <span className="till-tile-media" aria-hidden="true">
+        <span className="till-tile-initial">{tileInitial(name)}</span>
+      </span>
       <span className="till-tile-name">{name}</span>
       <span className="till-tile-foot">
         <span className="till-tile-price">{priced ? money({ locale, t }, item.currency, item.priceMinor!) : t.sell.noPrice}</span>
-        <span className="till-tile-unit">{out ? t.sell.outOfStock : item.unitName}</span>
+        {out ? <span className="till-tile-flag">{t.sell.outOfStock}</span> : null}
       </span>
     </button>
   );
 }
 
-/** One cart line: name, price x qty, total, and big - / + (a weighed line gets a weight box instead). */
+/** One cart line: name and unit price, the quantity (tap: numpad), big - / + for pieces, the line total. */
 export function CartLineRow({
   locale,
   t,
@@ -52,12 +60,19 @@ export function CartLineRow({
   currency,
   onStep,
   onRemove,
-  weightBox,
-}: Ctx & { line: CartLine; currency: Currency; onStep?: (d: 1 | -1) => void; onRemove?: () => void; weightBox?: ReactNode }) {
+  onEditQty,
+  last = false,
+}: Ctx & { line: CartLine; currency: Currency; onStep?: (d: 1 | -1) => void; onRemove?: () => void; onEditQty?: () => void; last?: boolean }) {
   const name = pickName(locale, line);
   const weighed = line.quantityScale > 0;
+  const qty = (
+    <button type="button" className="till-qty" onClick={onEditQty} aria-label={fill(t.till.editQty, { name })} data-testid="cart-qty">
+      {localQuantity(locale, line.quantity)}
+      {weighed ? <span className="till-qty-unit">{line.unitName}</span> : null}
+    </button>
+  );
   return (
-    <li className="till-line" data-testid="cart-line">
+    <li className="till-line" data-last={last || undefined} data-testid="cart-line">
       <div className="till-line-main">
         <span className="till-line-name">{name}</span>
         <span className="till-line-meta">
@@ -67,15 +82,13 @@ export function CartLineRow({
       <strong className="till-line-total">{money({ locale, t }, currency, lineTotal(line))}</strong>
       <div className="till-line-controls">
         {weighed ? (
-          weightBox
+          qty
         ) : (
           <div className="till-stepper">
             <button type="button" className="till-step" onClick={() => onStep?.(-1)} aria-label={fill(t.sell.decrease, { name })} data-testid="cart-dec">
               <MinusIcon />
             </button>
-            <output className="till-qty" aria-live="polite" data-testid="cart-qty">
-              {localQuantity(locale, line.quantity)}
-            </output>
+            {qty}
             <button type="button" className="till-step" onClick={() => onStep?.(1)} aria-label={fill(t.sell.increase, { name })} data-testid="cart-inc">
               <PlusIcon />
             </button>
@@ -87,6 +100,40 @@ export function CartLineRow({
       </div>
     </li>
   );
+}
+
+/**
+ * The big numpad: digits laid out like a calculator (7 8 9 on top, in every language: it is a
+ * device layout, not reading order), "000" for dinar or "." where decimals are allowed, and
+ * backspace. Digits show in the interface's numerals.
+ */
+export function Numpad({ locale, t, label, decimals, onPress, disabled = false }: Ctx & { label: string; decimals: number; onPress: (key: NumpadKey) => void; disabled?: boolean }) {
+  return (
+    <div className="till-numpad" dir="ltr" role="group" aria-label={label} data-testid="numpad">
+      {numpadKeys(decimals).map((k) => (
+        <button
+          key={k}
+          type="button"
+          className="till-key"
+          data-key={k}
+          onClick={() => onPress(k)}
+          disabled={disabled}
+          aria-label={k === "back" ? t.till.backspace : undefined}
+          data-testid={`key-${k === "." ? "dot" : k}`}
+        >
+          {k === "back" ? <BackspaceIcon /> : k === "." ? DECIMAL[locale] : localDigitsOf(locale, k)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const DECIMAL: Record<Locale, string> = { ar: "٫", ckb: "٫", en: "." };
+const localDigitsOf = (locale: Locale, digits: string) => (locale === "en" ? digits : [...digits].map((d) => formatNumber(locale, Number(d))).join(""));
+
+/** Numpad text ("12.5") in the interface's digits, for the big display above the keys. */
+export function entryText(locale: Locale, text: string): string {
+  return [...text].map((c) => (c === "." ? DECIMAL[locale] : localDigitsOf(locale, c))).join("");
 }
 
 /** The amount rows of the pay screen: due, received, remaining or change. */

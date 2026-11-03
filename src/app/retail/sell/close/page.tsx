@@ -18,8 +18,8 @@ export default async function CloseShiftPage() {
   if (!till.ok) return <RefusedPage code={till.code} t={t} />;
 
   return (
-    <main className="page till-page-narrow">
-      <div className="page-head">
+    <main className="till-form-page till-form-page-wide">
+      <div className="till-form-head">
         <h1>{t.sell.close.title}</h1>
         {till.value.open ? <p>{t.sell.close.intro}</p> : null}
       </div>
@@ -32,7 +32,7 @@ export default async function CloseShiftPage() {
           body={t.sell.close.noShiftBody}
           testId="state-no-shift"
           action={
-            <Link href="/retail/sell" className="btn btn-primary">
+            <Link href="/retail/sell" className="till-btn till-btn-go">
               {t.sell.open.title}
             </Link>
           }

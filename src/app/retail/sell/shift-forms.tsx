@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
-import { formatNumber, type Locale, type Messages } from "@/messages";
+import { useEffect, useRef, useState } from "react";
+import type { Locale, Messages } from "@/messages";
 import { fill } from "../../_lib/format";
-import { CashIcon } from "../../_ui/icons";
 import { Notice } from "../../_ui/state";
 import { failureMessage } from "../catalog/_lib/failures";
 import { newKey } from "../catalog/_lib/keys";
 import { closeShiftAction, openShiftAction } from "./actions";
 import { parseAmount, type Currency, type ShiftDto } from "./_lib/cart";
-import { differenceText, ShiftSummaryView } from "./_lib/views";
+import { keyFromKeyboard, moneyDecimals, numpadPress, type NumpadKey } from "./_lib/till";
+import { differenceText, entryText, money, Numpad, ShiftSummaryView } from "./_lib/views";
 
 /** The attempt key: kept for a retry of the same values, new when the values change. */
 function useAttemptKey() {
@@ -22,21 +22,47 @@ function useAttemptKey() {
   };
 }
 
-/** Open shift: the cash in the drawer, then straight to selling. */
+/** Numpad text for a money amount, with the physical keyboard (and a USB numpad) feeding the same keys. */
+function useMoneyEntry(currency: Currency, onEnter: () => void, active = true) {
+  const [text, setText] = useState("");
+  const press = (k: NumpadKey) => setText((x) => numpadPress(x, k, moneyDecimals(currency)));
+  const enterRef = useRef(onEnter);
+  useEffect(() => {
+    enterRef.current = onEnter;
+  });
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        return enterRef.current();
+      }
+      const k = keyFromKeyboard(e.key);
+      if (k) {
+        e.preventDefault();
+        setText((x) => numpadPress(x, k, moneyDecimals(currency)));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currency, active]);
+  const minor = text === "" ? null : parseAmount(text.replace(/\.$/, ""), currency);
+  return { text, setText, press, minor };
+}
+
+/** Open shift: the cash in the drawer on the numpad, then straight to selling. */
 export function OpenShiftForm({ locale, t, currency }: { locale: Locale; t: Messages; currency: Currency }) {
   const s = t.sell;
   const router = useRouter();
-  const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const keyFor = useAttemptKey();
+  const enter = useRef<() => void>(() => {});
+  const entry = useMoneyEntry(currency, () => enter.current());
 
-  const submit = async (value: string) => {
-    const v = parseAmount(value, currency);
-    if (v === null) {
-      setError(s.failures.badAmount);
-      return;
-    }
+  const submit = async (v: bigint) => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -54,62 +80,48 @@ export function OpenShiftForm({ locale, t, currency }: { locale: Locale; t: Mess
     }
   };
 
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    void submit(text.trim() === "" ? "0" : text);
-  };
+  useEffect(() => {
+    enter.current = () => void submit(entry.minor ?? 0n);
+  });
 
   return (
-    <form className="till-shift-form" onSubmit={onSubmit} data-testid="open-shift-form">
-      <label className="till-amount-field">
-        <span>{s.open.cash}</span>
-        <span className="till-amount-box">
-          <CashIcon />
-          <input
-            className="till-amount-input"
-            inputMode={currency === "IQD" ? "numeric" : "decimal"}
-            autoComplete="off"
-            autoFocus
-            placeholder={formatNumber(locale, 0)}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            data-testid="open-cash"
-          />
-          <span className="till-amount-unit">{t.catalog.currencyShort[currency]}</span>
-        </span>
-      </label>
+    <div className="till-shift-form" data-testid="open-shift-form">
+      <div className="till-entry">
+        <span className="till-entry-label">{t.till.openCashTitle}</span>
+        <output className="till-display" data-placeholder={entry.text === "" || undefined} aria-live="polite" data-testid="open-cash">
+          {entry.text === "" ? money({ locale, t }, currency, 0n) : `${entryText(locale, entry.text)} ${t.catalog.currencyShort[currency]}`}
+        </output>
+      </div>
+      <Numpad locale={locale} t={t} label={s.open.cash} decimals={moneyDecimals(currency)} onPress={entry.press} disabled={busy} />
       {error ? <Notice tone="danger">{error}</Notice> : null}
-      <div className="till-form-actions">
-        <button type="button" className="btn btn-secondary till-big" onClick={() => void submit("0")} disabled={busy} data-testid="open-empty">
+      <div className="till-pad-actions">
+        <button type="button" className="till-btn till-btn-quiet" onClick={() => void submit(0n)} disabled={busy} data-testid="open-empty">
           {s.open.empty}
         </button>
-        <button type="submit" className="btn btn-primary till-big" disabled={busy} aria-busy={busy} data-testid="open-submit">
+        <button type="button" className="till-btn till-btn-go" onClick={() => void submit(entry.minor ?? 0n)} disabled={busy || (entry.text !== "" && entry.minor === null)} aria-busy={busy} data-testid="open-submit">
           {s.open.submit}
         </button>
       </div>
-    </form>
+    </div>
   );
 }
 
-/** Close shift: the summary, the count, the difference as it is typed, then close. */
+/** Close shift: the summary, the counted cash on the numpad, the difference as it is typed, then close. */
 export function CloseShiftForm({ locale, t, shift }: { locale: Locale; t: Messages; shift: ShiftDto }) {
   const s = t.sell.close;
   const ctx = { locale, t };
-  const [text, setText] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [closed, setClosed] = useState<{ differenceMinor: string; shift: ShiftDto } | null>(null);
   const keyFor = useAttemptKey();
+  const enter = useRef<() => void>(() => {});
+  const entry = useMoneyEntry(shift.currency, () => enter.current(), closed === null);
 
-  const counted = text.trim() === "" ? null : parseAmount(text, shift.currency);
-  const diff = counted === null ? null : counted - BigInt(shift.expectedCashMinor);
-  const diffView = diff === null ? null : differenceText(ctx, shift.currency, diff);
-
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (counted === null) {
-      setError(t.sell.failures.badAmount);
+  const submit = async () => {
+    const counted = entry.minor;
+    if (counted === null || busy) {
+      if (counted === null) setError(t.sell.failures.badAmount);
       return;
     }
     setBusy(true);
@@ -123,17 +135,20 @@ export function CloseShiftForm({ locale, t, shift }: { locale: Locale; t: Messag
         expectedVersion: shift.version,
       });
       // No refresh here: the page would re-render as "no open shift" and hide this result.
-      if (r.ok) {
-        setClosed(r.value);
-      } else {
-        setError(failureMessage(t, r));
-      }
+      if (r.ok) setClosed(r.value);
+      else setError(failureMessage(t, r));
     } catch {
       setError(t.sell.failures.network);
     } finally {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    enter.current = () => void submit();
+  });
+  const diff = entry.minor === null ? null : entry.minor - BigInt(shift.expectedCashMinor);
+  const diffView = diff === null ? null : differenceText(ctx, shift.currency, diff);
 
   if (closed) {
     const d = differenceText(ctx, closed.shift.currency, BigInt(closed.differenceMinor));
@@ -144,7 +159,7 @@ export function CloseShiftForm({ locale, t, shift }: { locale: Locale; t: Messag
           {fill(s.closedBody, { difference: d.text })}
         </p>
         <ShiftSummaryView locale={locale} t={t} shift={closed.shift} />
-        <Link href="/retail/sell" className="btn btn-primary till-big" data-testid="open-new-shift">
+        <Link href="/retail/sell" className="till-btn till-btn-go" data-testid="open-new-shift">
           {s.openNew}
         </Link>
       </div>
@@ -154,42 +169,31 @@ export function CloseShiftForm({ locale, t, shift }: { locale: Locale; t: Messag
   return (
     <div className="till-close">
       <ShiftSummaryView locale={locale} t={t} shift={shift} />
-      <form className="till-shift-form" onSubmit={onSubmit} data-testid="close-shift-form">
-        <label className="till-amount-field">
-          <span>{s.counted}</span>
-          <span className="till-amount-box">
-            <CashIcon />
-            <input
-              className="till-amount-input"
-              inputMode={shift.currency === "IQD" ? "numeric" : "decimal"}
-              autoComplete="off"
-              autoFocus
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              aria-invalid={text.trim() !== "" && counted === null}
-              aria-describedby="close-diff"
-              data-testid="close-counted"
-            />
-            <span className="till-amount-unit">{t.catalog.currencyShort[shift.currency]}</span>
-          </span>
-        </label>
+      <div className="till-shift-form" data-testid="close-shift-form">
+        <div className="till-entry">
+          <span className="till-entry-label">{t.till.countedTitle}</span>
+          <output className="till-display" data-placeholder={entry.text === "" || undefined} aria-describedby="close-diff" data-testid="close-counted">
+            {entry.text === "" ? money(ctx, shift.currency, 0n) : `${entryText(locale, entry.text)} ${t.catalog.currencyShort[shift.currency]}`}
+          </output>
+        </div>
         <p id="close-diff" className="till-diff" data-tone={diffView?.tone} aria-live="polite" data-testid="close-difference">
           {s.difference}: {diffView ? diffView.text : t.common.none}
         </p>
+        <Numpad locale={locale} t={t} label={s.counted} decimals={moneyDecimals(shift.currency)} onPress={entry.press} disabled={busy} />
         <label className="field">
           <span>{s.note}</span>
           <textarea className="input" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
         </label>
         {error ? <Notice tone="danger">{error}</Notice> : null}
-        <div className="till-form-actions">
-          <Link href="/retail/sell" className="btn btn-secondary till-big">
+        <div className="till-pad-actions">
+          <Link href="/retail/sell" className="till-btn till-btn-quiet">
             {s.back}
           </Link>
-          <button type="submit" className="btn btn-primary till-big" disabled={busy || counted === null} aria-busy={busy} data-testid="close-submit">
+          <button type="button" className="till-btn till-btn-go" onClick={() => void submit()} disabled={busy || entry.minor === null} aria-busy={busy} data-testid="close-submit">
             {s.submit}
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

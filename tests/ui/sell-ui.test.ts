@@ -30,7 +30,8 @@ import {
   type SellItemDto,
   type ShiftDto,
 } from "../../src/app/retail/sell/_lib/cart";
-import { CartLineRow, PaySummary, Receipt, ShiftSummaryView, Tile, differenceText } from "../../src/app/retail/sell/_lib/views";
+import { CartLineRow, Numpad, PaySummary, Receipt, ShiftSummaryView, Tile, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
+import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
 
@@ -48,6 +49,7 @@ const item = (over: Partial<SellItemDto> = {}): SellItemDto => ({
   currency: "IQD",
   onHand: "10000",
   matchedBarcode: null,
+  categoryId: null,
   ...over,
 });
 const cheese = item({ variantId: "v2", unitId: "u2", nameAr: "جبن", nameEn: "Cheese", unitName: "كغم", quantityScale: 3, soldByWeight: true, priceMinor: "1500" });
@@ -136,6 +138,63 @@ describe("paying", () => {
   });
 });
 
+describe("the numpad and the tiles", () => {
+  const type = (keys: NumpadKey[], decimals: number) => keys.reduce((x, k) => numpadPress(x, k, decimals), "");
+
+  it("types money without leading zeros, '000' multiplies, backspace and clear edit", () => {
+    expect(type(["2", "5", "000"], 0)).toBe("25000");
+    expect(type(["0", "0", "7"], 0)).toBe("7");
+    expect(type(["000"], 0)).toBe("");
+    expect(type(["1", "2", "back"], 0)).toBe("1");
+    expect(type(["1", "2", "clear"], 0)).toBe("");
+    // No decimal mark for dinar; one mark and at most two decimals for dollar.
+    expect(type(["1", "."], 0)).toBe("1");
+    expect(type([".", "5", ".", "0", "1"], 2)).toBe("0.50");
+    expect(parseAmount(type(["1", "2", ".", "5"], 2), "USD")).toBe(1250n);
+    // Twelve whole digits at most.
+    expect(type(Array.from({ length: 15 }, () => "9" as NumpadKey), 0)).toHaveLength(12);
+  });
+
+  it("weights take the unit's decimals, and the typed text is what setQuantity accepts", () => {
+    const w = type(["0", ".", "7", "5", "0", "1"], 3);
+    expect(w).toBe("0.750");
+    const lines = addItem([], cheese);
+    expect(setQuantity(lines, lines[0]!.key, w)![0]!.quantity).toBe("0.75");
+    expect(numpadKeys(3)).toContain(".");
+    expect(numpadKeys(0)).toContain("000");
+  });
+
+  it("a physical keyboard (Arabic-Indic digits included) feeds the same keys", () => {
+    expect(keyFromKeyboard("٥")).toBe("5");
+    expect(keyFromKeyboard("7")).toBe("7");
+    expect(keyFromKeyboard("Backspace")).toBe("back");
+    expect(keyFromKeyboard("٫")).toBe(".");
+    expect(keyFromKeyboard("a")).toBeNull();
+  });
+
+  it("amounts start the numpad in its own text; dinar has no decimals", () => {
+    expect(minorToEntry("IQD", 25000n)).toBe("25000");
+    expect(minorToEntry("USD", 1250n)).toBe("12.5");
+    expect(minorToEntry("USD", 1200n)).toBe("12");
+    expect(minorToEntry("IQD", 0n)).toBe("");
+    expect(moneyDecimals("IQD")).toBe(0);
+    expect(moneyDecimals("USD")).toBe(2);
+  });
+
+  it("category tones follow the category list and cycle; initials skip the Arabic article", () => {
+    const cats = Array.from({ length: 10 }, (_, i) => ({ id: `c${i}` }));
+    expect(categoryTone(cats, "c2")).toBe(2);
+    expect(categoryTone(cats, "c9")).toBe(9 % CATEGORY_TONES);
+    expect(categoryTone(cats, "nope")).toBeNull();
+    expect(categoryTone(cats, null)).toBeNull();
+    expect(tileInitial("الرز")).toBe("ر");
+    expect(tileInitial("ال")).toBe("ا");
+    expect(tileInitial("sugar")).toBe("S");
+    expect(tileInitial("شەکر")).toBe("ش");
+    expect(tileInitial("")).toBe("");
+  });
+});
+
 describe("held carts", () => {
   it("hold and resume round-trip; at most MAX_HELD are kept; storage junk is dropped", () => {
     const lines = addItem([], item());
@@ -166,6 +225,34 @@ describe("views", () => {
     expect(off).toContain("disabled");
     expect(off).toContain(ar.sell.noPrice);
     expect(html(createElement(Tile, { ...ctx, item: item({ onHand: "0" }) }))).toContain(ar.sell.outOfStock);
+  });
+
+  it("a tile carries its category tone and the name's first letter in the photo slot (the Arabic article skipped)", () => {
+    const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "الرز" }), tone: 3 }));
+    expect(out).toContain('data-tone="3"');
+    expect(out).toContain('till-tile-initial">ر<');
+    expect(html(createElement(Tile, { ...ctx, item: item() }))).not.toContain("data-tone");
+  });
+
+  it("the quantity of a cart line is a button that opens the numpad", () => {
+    const out = html(createElement(CartLineRow, { ...ctx, line: line(), currency: "IQD" }));
+    expect(out).toMatch(/<button[^>]*aria-label="تغيير كمية سكر"[^>]*data-testid="cart-qty"/);
+    const weighed = html(createElement(CartLineRow, { ...ctx, line: addItem([], cheese)[0]!, currency: "IQD" }));
+    expect(weighed).not.toContain('data-testid="cart-inc"');
+    expect(weighed).toContain('data-testid="cart-qty"');
+  });
+
+  it("the numpad keeps the calculator layout, shows local digits, '000' for dinar and the decimal mark for decimals", () => {
+    const iqd = html(createElement(Numpad, { ...ctx, label: "x", decimals: 0, onPress: () => {} }));
+    expect(iqd).toContain('dir="ltr"');
+    expect(iqd).toContain('data-testid="key-000"');
+    expect(iqd).not.toContain('data-testid="key-dot"');
+    expect(iqd).toContain(">٧<");
+    expect(iqd).toContain(`aria-label="${ar.till.backspace}"`);
+    const usd = html(createElement(Numpad, { locale: "en", t: en, label: "x", decimals: 2, onPress: () => {} }));
+    expect(usd).toContain('data-testid="key-dot"');
+    expect(usd).toContain(">7<");
+    expect(entryText("ar", "12.5")).toBe("١٢٫٥");
   });
 
   it("a cart line has big - and + with spoken labels, in the interface language", () => {
@@ -227,5 +314,14 @@ describe("views", () => {
       Object.entries(o).flatMap(([k, v]) => (typeof v === "object" && v !== null ? keys(v, `${p}${k}.`) : [`${p}${k}`]));
     expect(keys(ckb.sell)).toEqual(keys(ar.sell));
     expect(keys(en.sell)).toEqual(keys(ar.sell));
+    expect(keys(ckb.till)).toEqual(keys(ar.till));
+    expect(keys(en.till)).toEqual(keys(ar.till));
+  });
+
+  it("the till words say nothing about later releases and name no other product", () => {
+    for (const t of [ar, ckb, en]) {
+      const text = JSON.stringify([t.sell, t.till]);
+      expect(text).not.toMatch(/release|إصدار|وەشان|Studio|Core|restaurant|pharmacy|cashier/i);
+    }
   });
 });

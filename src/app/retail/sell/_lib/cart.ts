@@ -27,6 +27,8 @@ export type SellItemDto = {
   /** Base units x 1000, null when not read. */
   onHand: string | null;
   matchedBarcode: string | null;
+  /** The top-level category the tile is coloured by, or null. */
+  categoryId: string | null;
 };
 
 export type CategoryDto = { id: string; nameAr: string; nameCkb: string | null; nameEn: string | null };

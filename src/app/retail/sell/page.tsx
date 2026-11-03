@@ -1,4 +1,4 @@
-import { listSellCategories, listSellItems } from "@/server/sales/catalog";
+import { MAX_SELL_ITEMS, listSellCategories, listSellItems } from "@/server/sales/catalog";
 import { tillState } from "@/server/sales/shifts";
 import { getI18n } from "../../_lib/i18n";
 import { RefusedPage } from "../catalog/_lib/state-pages";
@@ -21,8 +21,8 @@ export default async function SellPage() {
 
   if (!till.value.open) {
     return (
-      <main className="page till-page-narrow">
-        <div className="page-head">
+      <main className="till-form-page">
+        <div className="till-form-head">
           <h1>{t.sell.open.title}</h1>
           <p>{t.sell.open.intro}</p>
         </div>
@@ -45,10 +45,11 @@ export default async function SellPage() {
         locationId={open.shift.locationId}
         categories={cats.ok ? cats.value.map(categoryDto) : []}
         initialItems={items.ok ? items.value.map(itemDto) : []}
+        pageSize={MAX_SELL_ITEMS}
         heldKey={`till-held:${meta.businessId}:${meta.userId}`}
         business={businessName}
         branch={shell.branch?.name ?? ""}
-        cashier={shell.user.name || shell.user.email}
+        operator={shell.user.name || shell.user.email}
       />
     </main>
   );
