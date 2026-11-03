@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { LONG_PRODUCT_NAME, OWNER, PASSWORD, STOCK_ITEM } from "./fixtures";
 
 async function signIn(page: Page, email: string) {
-  await page.goto("/login");
+  await page.goto("/admin/login");
   await page.locator('input[name="email"]').fill(email);
   await page.locator('input[name="password"]').fill(PASSWORD);
   await page.locator('button[type="submit"]').click();

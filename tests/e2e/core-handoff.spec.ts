@@ -66,8 +66,8 @@ test("the Studio button sends the browser to Studio's handoff with state and non
   const studio = await fakeStudio(page, () => `http://localhost:${E2E_PORT}/login?stopped=studio`);
 
   await page.goto("/login");
-  const button = page.getByTestId("studio-sign-in");
-  await expect(button).toHaveText(ar.auth.studio);
+  const button = page.getByTestId("handoff-sign-in");
+  await expect(button).toHaveText(ar.auth.signIn);
   await button.click();
   await expect(page).toHaveURL(/stopped=studio/);
 
@@ -90,7 +90,7 @@ test("a Studio-signed token completes the sign-in and lands in the shop", async 
   await fakeStudio(page, (url) => backToApp(url.searchParams, url.searchParams.get("nonce")!));
 
   await page.goto("/login");
-  await page.getByTestId("studio-sign-in").click();
+  await page.getByTestId("handoff-sign-in").click();
   await expect(page).toHaveURL(/\/retail\/home/);
   await expect(page.getByText(CORE_SHOP.name).first()).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -101,14 +101,14 @@ test("a token that is not bound to this browser's handoff is refused", async ({ 
   await arabicPhone(page);
   await fakeStudio(page, (url) => backToApp(url.searchParams, "some-other-browsers-nonce"));
   await page.goto("/login");
-  await page.getByTestId("studio-sign-in").click();
+  await page.getByTestId("handoff-sign-in").click();
   await expect(page).toHaveURL(/\/login\?error=core/);
   await expect(page.getByText(ar.auth.coreFailed)).toBeVisible();
 });
 
 test("the platform admin sees a linked shop's notice and a switch that cannot be changed here (375px)", async ({ page }) => {
   await arabicPhone(page);
-  await page.goto("/login");
+  await page.goto("/admin/login");
   await page.locator('input[name="email"]').fill(ADMIN.email);
   await page.locator('input[name="password"]').fill(PASSWORD);
   await page.locator('button[type="submit"]').click();

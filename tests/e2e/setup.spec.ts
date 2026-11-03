@@ -3,7 +3,7 @@ import { ar } from "../../src/messages/ar";
 import { CASHIER, OWNER, PASSWORD } from "./fixtures";
 
 async function signIn(page: import("@playwright/test").Page, email: string) {
-  await page.goto("/login");
+  await page.goto("/admin/login");
   await page.locator('input[name="email"]').fill(email);
   await page.locator('input[name="password"]').fill(PASSWORD);
   await page.locator('button[type="submit"]').click();

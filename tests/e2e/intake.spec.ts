@@ -16,7 +16,7 @@ const SCENARIO = JSON.parse(readFileSync(INTAKE_FAKE_FILE, "utf8")) as { lines: 
 const NEW_ITEM = SCENARIO.lines[1]!.description;
 
 async function signIn(page: Page, email: string) {
-  await page.goto("/login");
+  await page.goto("/admin/login");
   await page.locator('input[name="email"]').fill(email);
   await page.locator('input[name="password"]').fill(PASSWORD);
   await page.locator('button[type="submit"]').click();
