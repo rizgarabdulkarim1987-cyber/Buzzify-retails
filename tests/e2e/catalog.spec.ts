@@ -4,7 +4,7 @@ import { ar } from "../../src/messages/ar";
 import { CASHIER, LONG_PRODUCT_NAME, MANAGER, OWNER, PASSWORD, SUGAR } from "./fixtures";
 
 async function signIn(page: Page, email: string) {
-  await page.goto("/login");
+  await page.goto("/admin/login");
   await page.locator('input[name="email"]').fill(email);
   await page.locator('input[name="password"]').fill(PASSWORD);
   await page.locator('button[type="submit"]').click();
