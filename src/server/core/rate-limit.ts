@@ -13,8 +13,11 @@ import { db } from "@/server/db";
 export const CORE_RATE_LIMIT = 120;
 export const CORE_RATE_WINDOW_MS = 60_000;
 
-/** Separate buckets: unauthenticated handoff traffic can never use up the signed Studio sync's budget. */
-export type CoreRateScope = "handoff" | "sync";
+/**
+ * Separate buckets: unauthenticated handoff traffic can never use up the signed Studio sync's budget. "signin" counts the
+ * /login form's calls to Studio per client address, before Studio's own per-email and per-address sign-in limits.
+ */
+export type CoreRateScope = "handoff" | "sync" | "signin";
 
 /** Rows older than this are of no use to any user of the table (the login throttle's window is the longest). */
 const PRUNE_AFTER_MS = LOGIN_WINDOW_MS;
