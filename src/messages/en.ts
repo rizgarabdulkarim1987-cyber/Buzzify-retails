@@ -780,6 +780,7 @@ export const en: Messages = {
         ADJUSTMENT: "Adjustment",
         WRITE_OFF: "Write-off",
         REVERSAL: "Reversal",
+        SALE: "Sale",
       },
     },
     expiring: {
@@ -1376,6 +1377,13 @@ export const en: Messages = {
     CORE_UNAVAILABLE: "Buzzify Studio cannot be reached right now, so the employee was not added. Try again in a moment.",
     IDENTITY_CONFLICT: "This employee's account is linked to a different identity in Buzzify Studio, so they cannot be added. Contact support.",
     DUPLICATE_RECEIPT: "This receipt seems to have been read before. Check the earlier document before continuing so it is not received twice.",
+    SHIFT_NOT_OPEN: "You have no open shift. Open the cash-desk shift first, then sell.",
+    SHIFT_ALREADY_OPEN: "You already have an open shift. Keep selling on it or close it first.",
+    PRICE_MISSING: "This item has no selling price. Ask a manager to set its price, then try again.",
+    PRICE_CHANGED: "A price in the cart changed since it was added. Check the new total, then pay again.",
+    PAYMENT_SHORT: "The amount paid is less than the total.",
+    PAYMENT_RULE: "Payment not accepted: the card amount cannot exceed the total, and change is given from cash only.",
+    STOCK_EXPIRED: "There is not enough stock that has not expired. Expired batches cannot be sold.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

@@ -81,6 +81,13 @@ const SCOPE_RULES = {
   RtIntake: { business: "businessId" },
   RtIntakeFile: { business: "businessId" },
   RtAiUsage: { business: "businessId" },
+  // Sales (R3): shifts, sales, their lines and payments, and the sale number counter all belong to
+  // a branch, so a branch-limited cashier only reaches their own branches.
+  RtShift: { business: "businessId", branch: "branchId" },
+  RtSale: { business: "businessId", branch: "branchId" },
+  RtSaleLine: { business: "businessId", branch: "branchId" },
+  RtPayment: { business: "businessId", branch: "branchId" },
+  RtSaleCounter: { business: "businessId", branch: "branchId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**

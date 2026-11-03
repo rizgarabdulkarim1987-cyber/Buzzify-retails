@@ -50,7 +50,15 @@ export type ErrorCode =
   | "DUPLICATE_RECEIPT"
   // Retails <-> Studio link.
   | "CORE_UNAVAILABLE"
-  | "IDENTITY_CONFLICT";
+  | "IDENTITY_CONFLICT"
+  // Sales and cash-desk shifts (R3).
+  | "SHIFT_NOT_OPEN"
+  | "SHIFT_ALREADY_OPEN"
+  | "PRICE_MISSING"
+  | "PRICE_CHANGED"
+  | "PAYMENT_SHORT"
+  | "PAYMENT_RULE"
+  | "STOCK_EXPIRED";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -113,6 +121,13 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   CORE_UNAVAILABLE: "تعذّر الاتصال بخدمة Buzzify Studio الآن، ولم تتم إضافة الموظف. أعد المحاولة بعد قليل.",
   IDENTITY_CONFLICT: "حساب هذا الموظف مرتبط بهوية مختلفة في Buzzify Studio، فلا يمكن إضافته. تواصل مع فريق الدعم.",
   DUPLICATE_RECEIPT: "يبدو أن هذا الوصل قُرئ سابقاً. راجع المستند السابق قبل المتابعة حتى لا يُستلم مرتين.",
+  SHIFT_NOT_OPEN: "لا توجد وردية مفتوحة لك. افتح وردية الصندوق أولاً ثم بِع.",
+  SHIFT_ALREADY_OPEN: "لديك وردية مفتوحة مسبقاً. أكمل البيع عليها أو أغلقها أولاً.",
+  PRICE_MISSING: "لهذا الصنف سعر بيع غير محدد. اطلب من المدير تحديد سعره ثم أعد المحاولة.",
+  PRICE_CHANGED: "تغيّر سعر صنف في السلة منذ إضافته. راجع المجموع الجديد ثم ادفع مرة أخرى.",
+  PAYMENT_SHORT: "المبلغ المدفوع أقل من مجموع الفاتورة.",
+  PAYMENT_RULE: "الدفع غير مقبول: مبلغ البطاقة لا يتجاوز المجموع، والباقي يُعاد من النقد فقط.",
+  STOCK_EXPIRED: "الكمية المتوفرة غير المنتهية الصلاحية لا تكفي. الدفعات المنتهية لا تُباع.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

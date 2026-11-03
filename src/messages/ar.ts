@@ -780,6 +780,7 @@ export const ar = {
         ADJUSTMENT: "تعديل",
         WRITE_OFF: "إتلاف",
         REVERSAL: "مستند عكسي",
+        SALE: "بيع",
       },
     },
     expiring: {

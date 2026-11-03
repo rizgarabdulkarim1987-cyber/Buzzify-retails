@@ -188,7 +188,7 @@ describe("stock messages", () => {
     expect(leafKeys(ckb.stock)).toEqual(keys);
     expect(leafKeys(en.stock)).toEqual(keys);
     for (const t of [ar, ckb, en]) {
-      for (const k of ["OPENING", "RECEIPT", "ADJUSTMENT", "WRITE_OFF", "REVERSAL"] as const) expect(t.stock.movement.kinds[k].trim()).not.toBe("");
+      for (const k of ["OPENING", "RECEIPT", "ADJUSTMENT", "WRITE_OFF", "REVERSAL", "SALE"] as const) expect(t.stock.movement.kinds[k].trim()).not.toBe("");
       for (const r of ["DAMAGED", "EXPIRED", "LOST", "COUNT_FIX", "OTHER"] as const) expect(t.stock.adjust.reasons[r].trim()).not.toBe("");
       for (const leaf of leafKeys(t.stock)) {
         const value = leaf.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown>)[k], t.stock);
