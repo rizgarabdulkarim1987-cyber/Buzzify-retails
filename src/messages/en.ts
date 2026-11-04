@@ -1450,10 +1450,10 @@ export const en: Messages = {
   },
   // The touch till (POS v2): its own block so merges with other string work stay easy.
   till: {
-    menu: "Menu",
-    closeMenu: "Close menu",
+    menu: "Options",
+    closeMenu: "Close options",
     operator: "Till operator",
-    shopMenu: "Shop menu",
+    shopMenu: "Shop options",
     holdCart: "Hold cart",
     heldCarts: "Held carts ({n})",
     clearCart: "Clear cart",

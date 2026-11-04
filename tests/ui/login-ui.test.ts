@@ -120,7 +120,8 @@ describe("public login page: Retails' own form", () => {
 });
 
 describe("the sign-in layout (globals.css)", () => {
-  const css = readFileSync("src/app/globals.css", "utf8");
+  // Line endings normalised: a Windows checkout (core.autocrlf) has CRLF in the working copy.
+  const css = readFileSync("src/app/globals.css", "utf8").replace(/\r\n/g, "\n");
   const block = (selector: string) => {
     const at = css.indexOf(`${selector} {`);
     return at < 0 ? "" : css.slice(at, css.indexOf("}", at));

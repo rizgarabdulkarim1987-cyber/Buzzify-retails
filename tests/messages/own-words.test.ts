@@ -5,7 +5,7 @@ import { en } from "@/messages/en";
 import { allPackWords } from "@/packs";
 import { SHELL_WORDS } from "@/packs/shell-words";
 import { ERROR_MESSAGES, INTERNAL_ERROR_MESSAGE } from "@/server/framework/errors";
-import { offenders } from "../helpers/own-words";
+import { entries, offenders } from "../helpers/own-words";
 
 /*
  * The guard's words live in tests/helpers/own-words.ts (shared with the rendered sign-in page
