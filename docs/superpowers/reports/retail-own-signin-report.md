@@ -110,12 +110,15 @@ with the generic "Signing in did not work" (Studio's 404 is read as a failure). 
   `authHostOptions`; both changes are kept. `tests/retail/credentials-route.test.ts` (14), the new
   `tests/retail/credentials-hosts.test.ts` and `tests/studio/auth-hosts.test.ts` pass. The new file runs in
   production mode with `PHARMACY_HOST` and `CORE_HOST` set, so Better Auth's base URL depends on the host;
-  `serverAuthFor` runs the password, the TOTP code and the token with no request host. `tsc` and `eslint` are clean on
-  the changed files. Further suites: see the hand-off.
+  `serverAuthFor` runs the password, the TOTP code and the token with no request host. `tsc` is clean. `eslint` shows the same 4
+  errors as before, all in `src/ui/cart/*`, which this branch does not touch. `tests/retail` plus `retail-entry`,
+  `space-words`, `auth`, `auth-http`, `account` and `auth-hosts`: 28 files, 407 tests, all pass.
 - Retails: `tests/core/own-sign-in.test.ts` (14), with new tests for the 20 / 5 limits, no address refused without
   asking Studio, and `unavailable` becoming `ELSEWHERE`. The new `tests/ui/login-elsewhere.test.ts` (the link in
   ar/ckb/en, word guard), `tests/ui/login-ui.test.ts` and `tests/messages` pass. `tsc` and `eslint` are clean.
-  Playwright `login.spec.ts` and `core-handoff.spec.ts`: 15 / 15.
+  Playwright `login.spec.ts` and `core-handoff.spec.ts`: 15 / 15. `tests/core tests/ui tests/messages tests/auth
+  tests/admin`: 361 / 363. The 2 failures were load timeouts in `tests/core/review-fixes.test.ts`, which passes
+  4 / 4 when run alone.
 
 ## Verified (first round)
 
