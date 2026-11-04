@@ -35,7 +35,8 @@ export const AI_CONFIG_TTL_MS = 60_000;
 const aiConfigSchema = z.object({ apiKey: z.string().min(1).nullable(), model: z.string().min(1).nullish() });
 const identitySchema = z.object({ coreUserId: z.string().min(1), created: z.boolean(), emailVerified: z.boolean() });
 
-async function signedCall<T>(method: "GET" | "POST", path: string, payload: unknown, schema: z.ZodType<T>, okStatuses: Record<number, T> = {}): Promise<T> {
+/** One signed call to Studio (shared with sign-in-client.ts). */
+export async function signedCall<T>(method: "GET" | "POST", path: string, payload: unknown, schema: z.ZodType<T>, okStatuses: Record<number, T> = {}): Promise<T> {
   let url: string;
   let headers: Record<string, string>;
   const body = payload === undefined ? "" : JSON.stringify(payload);

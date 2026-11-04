@@ -2,34 +2,92 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isPlatformAdmin } from "@/server/admin/platform-admin";
 import { getSessionUserId } from "@/server/auth/auth";
-import { studioSignInHref } from "@/server/core/handoff";
+import { HANDOFF_START_PATH, resetPasswordHref } from "@/server/core/handoff";
 import { getI18n } from "../_lib/i18n";
-import { AuthCard } from "./auth-card";
-import { LoginForm } from "./login-form";
+import { LocaleSwitcher } from "../_ui/locale-switcher";
+import { AccountSignInForm } from "./login-form";
 
-/** The public sign-in: one "Sign in" button (the handoff), or the password form when there is none. */
+/** Sales, stock and shifts, each in its own language: the calm panel beside the form on wide screens. */
+const LINES = [
+  { lang: "en", dir: "ltr", text: "Sales, stock and shifts", name: "English" },
+  { lang: "ar", dir: "rtl", text: "المبيعات والمخزون والورديات", name: "العربية" },
+  { lang: "ckb", dir: "rtl", text: "فرۆشتن، کۆگا و شیفتەکان", name: "کوردی" },
+] as const;
+
+/**
+ * The public sign-in: Retails' own email and password form (then a code or a business when the
+ * account asks for one), checked by the account system server to server. The staff-only password
+ * form lives on /admin/login and is never linked here. error=core: a browser handoff just failed.
+ */
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
   const { error } = await searchParams;
   const userId = await getSessionUserId(await headers());
   if (userId) redirect((await isPlatformAdmin(userId)) ? "/admin" : "/retail/home");
   const { locale, t } = await getI18n();
-  const handoffHref = studioSignInHref();
+  const a = t.auth;
   return (
-    <AuthCard locale={locale} t={t} intro={handoffHref ? null : t.auth.intro}>
-      <LoginForm
-        labels={{
-          email: t.auth.email,
-          password: t.auth.password,
-          submit: t.auth.submit,
-          failed: t.auth.failed,
-          throttled: t.auth.throttled,
-          loading: t.common.loading,
-          signIn: t.auth.signIn,
-          coreFailed: t.auth.coreFailed,
-        }}
-        handoffHref={handoffHref}
-        coreError={error === "core"}
-      />
-    </AuthCard>
+    <div className="auth-split">
+      <div className="auth-main">
+        <header className="auth-top">
+          <span className="wordmark" dir="ltr">
+            Buzzify <span>Retails</span>
+          </span>
+          <LocaleSwitcher
+            locale={locale}
+            label={t.locale.label}
+            names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }}
+            tone="light"
+          />
+        </header>
+        <main className="auth-body">
+          <div className="auth-form">
+            <h1 className="auth-title">{a.title}</h1>
+            <AccountSignInForm
+              labels={{
+                email: a.email,
+                password: a.password,
+                submit: a.submit,
+                failed: a.failed,
+                throttled: a.throttled,
+                loading: t.common.loading,
+                forgot: a.forgot,
+                showPassword: a.showPassword,
+                hidePassword: a.hidePassword,
+                codeIntro: a.codeIntro,
+                code: a.code,
+                codeSubmit: a.codeSubmit,
+                codeFailed: a.codeFailed,
+                expired: a.expired,
+                startOver: a.startOver,
+                chooseIntro: a.chooseIntro,
+                chooseSubmit: a.chooseSubmit,
+                notReady: a.notReady,
+                preparing: a.preparing,
+                unavailable: a.unavailable,
+                elsewhere: a.elsewhere,
+                elsewhereAction: a.elsewhereAction,
+                coreFailed: a.coreFailed,
+              }}
+              forgotHref={resetPasswordHref()}
+              elsewhereHref={HANDOFF_START_PATH}
+              notice={error === "core" ? a.coreFailed : null}
+            />
+          </div>
+        </main>
+      </div>
+      <aside className="auth-aside">
+        <p className="auth-aside-intro">{a.aside}</p>
+        <ul className="auth-lines">
+          {LINES.map((line) => (
+            <li key={line.lang} lang={line.lang}>
+              <span dir={line.dir} className="auth-line">
+                {line.text}
+              </span>
+              <span className="auth-line-name">{line.name}</span>
+            </li>
+          ))}
+        </ul>
+      </aside>
+    </div>
   );
 }

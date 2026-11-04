@@ -116,11 +116,17 @@ export function safeReturnTo(raw: string | null | undefined): string {
 }
 
 /**
- * The href of the login page's single "Sign in" button (the handoff start), or null when the
- * handoff is not configured; the page then falls back to the email + password form.
+ * Where /login's "Forgot your password?" goes: the password reset of the account system the
+ * sign-in is checked by, with the marker that makes it speak Retails' neutral words (Studio reads
+ * next=/studio/retail/continue as "this person came from Retail"). Null when it is not configured
+ * (then local passwords are used and there is nowhere to reset them).
  */
-export function studioSignInHref(): string | null {
-  return process.env.CORE_BASE_URL?.trim() ? HANDOFF_START_PATH : null;
+export const RESET_PASSWORD_PATH = "/studio/forgot";
+export const RETAIL_ENTRY_MARKER = "/studio/retail/continue";
+export function resetPasswordHref(): string | null {
+  const base = process.env.CORE_BASE_URL?.trim().replace(/\/+$/, "");
+  if (!base) return null;
+  return `${base}${RESET_PASSWORD_PATH}?next=${encodeURIComponent(RETAIL_ENTRY_MARKER)}`;
 }
 
 function stateCookieHeader(value: string, maxAge: number, secure: boolean): string {
