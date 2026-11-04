@@ -93,7 +93,12 @@ and held carts stored on the device.
   - paging with offset;
   - `categoryId` on tiles.
 
-  For the full-suite result, see the final note below.
+  Full suite on my own Postgres (port 54339): 1095 passed, 21 failed across 13 files I did not
+  touch (catalog search, schema/stock, intake barcode, core state, setup progress, and others). 12 of
+  the failures were "timed out in 5000ms", and one was a deadlock. I reran four of those files alone
+  and a *different* 2 tests failed, again on timing. This points to load on the shared machine
+  (several agents running Postgres, dev servers and suites at once), not to this change. It should be
+  rerun on a quiet machine before merging.
 - Browser check (built-in browser, `next dev` on :3117, local embedded Postgres, database
   `retails_dev_till`, seeded with `tests/e2e/seed.ts` fixture accounts, signed in as the e2e owner):
   - Imported the 30 items of `docs/samples/market-sample-items.xlsx` through the real import screens:
