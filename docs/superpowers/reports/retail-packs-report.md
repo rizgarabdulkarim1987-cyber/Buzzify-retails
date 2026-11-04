@@ -134,16 +134,44 @@ addresses") and `docs/deploy/hostinger.md` (section 7).
 - ckb was checked only in unit tests.
 - Tablet width was not checked.
 
-## Open problems / not verified
+## Owner's call (follow-up commit)
 
-- The setup server action still accepts a changed `activityType` from a crafted form. Only the UI no longer
-  offers it. Existing tests change it through setup step 3, so locking it is a rule change for the owner
-  (spec: "support changes it").
+**The activity type comes from Studio's snapshot only.**
+
+- `saveActivity` (setup step 3, `src/server/setup/progress.ts`) ignores a submitted `activityType` for a shop
+  linked to Studio (`coreBusinessId` set) and keeps the stored value. Capabilities and the version still save.
+- Chosen: a shop not linked to Studio (dev, tests, a platform-provisioned shop) still chooses it there, so
+  the existing setup and acceptance tests are unchanged.
+- No other path changes it: core provision sets it only when it creates a business, and the state sync
+  does not touch it.
+- New tests in `tests/setup/progress.test.ts`: crafted step 3 data (ELECTRONICS, CLOTHING, MIXED) leaves a
+  linked MARKET shop as MARKET; an unlinked shop can still change it.
+- Not done: a newer Studio snapshot does not update the type of an existing business. Today the type is
+  taken only at creation.
+
+**Absolute URLs for a shop.**
+
+- `src/packs/urls.ts` `shopOrigin(activityType)` returns the product's PACK_HOSTS address, else APP_URL.
+- Invitation e-mail links now use it.
+- New tests in `tests/admin/invitations.test.ts`: a CLOTHING shop's link is on the clothing address, and a
+  product without a host falls back to APP_URL.
+- The handoff callback keeps using the trusted current address. The not-available redirect already used
+  the product address.
+- Not done: the invitation mail's wording still says "Buzzify Retails" (neutral).
+
+**Checks for this commit.**
+
+- `tsc` and `eslint` are clean.
+- Run together, tests/setup, admin, acceptance, packs and handoff-hosts had 10 failures, all timeouts or
+  their knock-on errors under load.
+- Rerun alone: r0 and staff-core pass. `tests/admin/support.test.ts` passes 31 of 31 alone.
+  `tests/setup/progress.test.ts` and `tests/admin/invitations.test.ts` pass 25 of 25.
+
+## Open problems / not verified
 - Server actions do not re-check the host. They run through `loadShell`, which on a product address never
   resolves a business of another product, so another product's business is not reachable there.
 - Route ownership per pack (another pack's URL answers 404) is not enforced yet: every pack has the same
   routes today.
-- Invitation e-mail links still use APP_URL (the shared address, which works for every pack).
 - Home tiles and the "More" menu still use the shared till words. Only the header and login use pack words.
 - The Studio side must accept a `return` URL on each pack host and send owners to their product's address.
   This was not tested against a real Studio.
