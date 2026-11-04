@@ -103,7 +103,8 @@ test("the right password signs in through the account system and opens the shop 
   await page.getByLabel(ar.auth.email).fill(CORE_SHOP.owner.email);
   await page.locator("#password").fill(PASSWORD);
   await page.locator('button[type="submit"]').click();
-  await expect(page).toHaveURL(/\/retail\/home/);
+  // Signed in: the shop's home, or the workplace chooser when other specs gave the owner more places.
+  await expect(page).toHaveURL(/\/retail\/(home|select)/);
   await expect(page.getByText(CORE_SHOP.name).first()).toBeVisible();
   // The password never reached a URL.
   expect(page.url()).not.toContain(PASSWORD);
@@ -127,7 +128,7 @@ test("an account with two-step sign-in asks for the code, refuses a wrong one, t
   await expect(page.getByText(ckb.auth.codeFailed)).toBeVisible();
   await page.getByLabel(ckb.auth.code).fill(TWO_STEP.code);
   await page.getByRole("button", { name: ckb.auth.codeSubmit }).click();
-  await expect(page).toHaveURL(/\/retail\/home/);
+  await expect(page).toHaveURL(/\/retail\/(home|select)/);
 });
 
 test("the staff-only /admin/login keeps the email and password form", async ({ page }) => {

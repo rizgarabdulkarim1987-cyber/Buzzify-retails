@@ -93,6 +93,8 @@ test("a Studio-signed token completes the sign-in and lands in the shop", async 
   await page.goto(START);
   await expect(page).toHaveURL(/\/retail\/home/);
   await expect(page.getByText(CORE_SHOP.name).first()).toBeVisible();
+  // The shop page may settle (a refresh after the workplace is chosen) before it can be measured.
+  await page.waitForLoadState("networkidle");
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
