@@ -651,7 +651,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 <GridIcon />
                 {tl.shopMenu}
               </Link>
-              <LocaleSwitcher locale={locale} label={tl.language} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} tone="light" />
+              <LocaleSwitcher key={locale} locale={locale} label={tl.language} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} tone="light" />
               <form action={signOut}>
                 <button type="submit" className="till-menu-link">
                   <SignOutIcon />

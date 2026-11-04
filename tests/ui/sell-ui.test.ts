@@ -230,7 +230,7 @@ describe("views", () => {
   it("a tile carries its category tone and the name's first letter in the photo slot (the Arabic article skipped)", () => {
     const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "الرز" }), tone: 3 }));
     expect(out).toContain('data-tone="3"');
-    expect(out).toContain('till-tile-initial">ر<');
+    expect(out).toContain('aria-hidden="true">ر<');
     expect(html(createElement(Tile, { ...ctx, item: item() }))).not.toContain("data-tone");
   });
 

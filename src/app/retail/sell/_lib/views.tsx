@@ -40,14 +40,14 @@ export function Tile({ locale, t, item, tone = null, onAdd }: Ctx & { item: Sell
       data-tone={tone ?? undefined}
       data-testid="sell-tile"
     >
-      <span className="till-tile-media" aria-hidden="true">
-        <span className="till-tile-initial">{tileInitial(name)}</span>
-      </span>
-      <span className="till-tile-name">{name}</span>
-      <span className="till-tile-foot">
-        <span className="till-tile-price">{priced ? money({ locale, t }, item.currency, item.priceMinor!) : t.sell.noPrice}</span>
+      <span className="till-tile-media">
+        <span className="till-tile-initial" aria-hidden="true">
+          {tileInitial(name)}
+        </span>
         {out ? <span className="till-tile-flag">{t.sell.outOfStock}</span> : null}
       </span>
+      <span className="till-tile-name">{name}</span>
+      <span className="till-tile-price">{priced ? money({ locale, t }, item.currency, item.priceMinor!) : t.sell.noPrice}</span>
     </button>
   );
 }
@@ -131,9 +131,12 @@ export function Numpad({ locale, t, label, decimals, onPress, disabled = false }
 const DECIMAL: Record<Locale, string> = { ar: "٫", ckb: "٫", en: "." };
 const localDigitsOf = (locale: Locale, digits: string) => (locale === "en" ? digits : [...digits].map((d) => formatNumber(locale, Number(d))).join(""));
 
-/** Numpad text ("12.5") in the interface's digits, for the big display above the keys. */
+/** Numpad text ("12500.5") in the interface's digits with thousands grouped, for the big display above the keys. */
 export function entryText(locale: Locale, text: string): string {
-  return [...text].map((c) => (c === "." ? DECIMAL[locale] : localDigitsOf(locale, c))).join("");
+  if (text === "") return "";
+  const [whole = "", frac] = text.split(".");
+  const grouped = whole === "" ? "" : formatNumber(locale, BigInt(whole));
+  return frac === undefined ? grouped : `${grouped}${DECIMAL[locale]}${localDigitsOf(locale, frac)}`;
 }
 
 /** The amount rows of the pay screen: due, received, remaining or change. */

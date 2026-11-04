@@ -14,8 +14,8 @@
   --till-go: oklch(0.5 0.14 152);
   --till-go-hover: oklch(0.44 0.13 152);
   --till-go-ink: oklch(0.99 0.01 152);
-  --till-cart-w: minmax(21rem, 26rem);
-  --till-rail-w: 9.5rem;
+  --till-cart-w: clamp(19rem, 30vw, 26rem);
+  --till-rail-w: clamp(8rem, 11vw, 9.5rem);
 
   /* Category tones: a strong colour (white text on it passes 4.5:1) and a soft tint of it. */
   --till-hue-0: 25;
@@ -407,6 +407,7 @@ body:has(.till-app) .shell-header {
 
 /* The photo slot: until the catalog has photos it shows the name's first letter on the category tone. */
 .till-tile-media {
+  position: relative;
   display: grid;
   place-items: center;
   aspect-ratio: 16 / 7;
@@ -440,16 +441,8 @@ body:has(.till-app) .shell-header {
   overflow-wrap: anywhere;
 }
 
-.till-tile-foot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding-inline: var(--space-1);
-  min-width: 0;
-}
-
 .till-tile-price {
+  padding-inline: var(--space-1);
   font-size: var(--text-xl);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -459,7 +452,9 @@ body:has(.till-app) .shell-header {
 }
 
 .till-tile-flag {
-  flex: none;
+  position: absolute;
+  inset-block-start: var(--space-1);
+  inset-inline-end: var(--space-1);
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--color-danger-soft);
@@ -1244,6 +1239,40 @@ body:has(.till-app) .shell-header {
 .till-pay-confirm {
   position: sticky;
   inset-block-end: 0;
+}
+
+/* Phone: the payment fits one screen with the thumb on the keys (56px keys, tighter amounts). */
+@media (max-width: 55.99rem) {
+  .till-paypad {
+    --till-key: var(--till-hit);
+    gap: var(--space-2);
+    padding-block: var(--space-3);
+  }
+
+  .till-pay-body {
+    gap: var(--space-2);
+  }
+
+  .till-pay-summary > div {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .till-pay-summary dd {
+    font-size: var(--text-xl);
+  }
+
+  .till-pay-summary .till-pay-due dd,
+  .till-pay-result dd {
+    font-size: 1.875rem;
+  }
+
+  .till-note {
+    font-size: var(--text-md);
+  }
+
+  .till-key {
+    font-size: 1.5rem;
+  }
 }
 
 @media (min-width: 56rem) {
