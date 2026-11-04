@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
+import { getPack, packWords } from "@/packs";
 import { shopOrigin } from "@/packs/urls";
 import { getMailer } from "@/server/email/mailer";
 import { ForbiddenError, NotFoundError, RuleError } from "@/server/framework/errors";
@@ -98,13 +99,15 @@ export async function createOwnerInvitation(
     select: { id: true },
   });
 
+  // The shop's own product name ("Buzzify سوبرماركت"), the same one its address and sign-in page show.
+  const product = packWords(getPack(business.activityType), "ar").productName;
   await getMailer().send({
     to: args.email,
-    subject: "دعوة لإدارة منشأتك على Buzzify Retails",
+    subject: `دعوة لإدارة منشأتك على ${product}`,
     text: [
       "مرحباً،",
       "",
-      `تمت دعوتك لتكون مالك المنشأة "${business.name}" على Buzzify Retails.`,
+      `تمت دعوتك لتكون مالك المنشأة "${business.name}" على ${product}.`,
       `لقبول الدعوة افتح الرابط التالي وسجّل الدخول بهذا البريد الإلكتروني. الرابط صالح لمدة ${INVITATION_TTL_DAYS} أيام ولمرة واحدة فقط:`,
       "",
       invitationLink(token, business.activityType),

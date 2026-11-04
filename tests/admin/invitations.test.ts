@@ -170,6 +170,15 @@ describe("invitation links use the shop's product address", () => {
     expect(mailer.messages.at(-1)!.text).not.toContain("http://localhost:3000/invite");
   });
 
+  it("the mail names the shop's product, not Buzzify Retails", async () => {
+    await world();
+    const mail = mailer.messages.at(-1)!;
+    expect(mail.subject).toContain("Buzzify ملابس");
+    expect(mail.text).toContain("Buzzify ملابس");
+    expect(`${mail.subject}
+${mail.text}`).not.toContain("Retails");
+  });
+
   it("a product without an address falls back to APP_URL", async () => {
     process.env.PACK_HOSTS = "supermarket.localhost=SUPERMARKET";
     const w = await world();
