@@ -21,6 +21,7 @@ export const itemDto = (i: SellItem): SellItemDto => ({
   currency: i.currency,
   onHand: i.onHand === null ? null : i.onHand.toString(),
   matchedBarcode: i.matchedBarcode,
+  categoryId: i.categoryId,
 });
 
 export const shiftDto = (s: ShiftSummary): ShiftDto => ({

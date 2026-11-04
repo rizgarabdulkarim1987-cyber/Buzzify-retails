@@ -40,12 +40,13 @@ export async function closeShiftAction(
   );
 }
 
-/** Tiles: by category, or by a typed text / scanned barcode. */
-export async function sellItemsAction(input: { query: unknown; categoryId: unknown; locationId: unknown }): Promise<SellResult<SellItemDto[]>> {
+/** Tiles: by category (a page at offset), or by a typed text / scanned barcode. */
+export async function sellItemsAction(input: { query: unknown; categoryId: unknown; locationId: unknown; offset?: unknown }): Promise<SellResult<SellItemDto[]>> {
   const query = typeof input.query === "string" ? input.query.slice(0, 100) : "";
   const categoryId = isText(input.categoryId, 64) ? input.categoryId : null;
   const locationId = isText(input.locationId, 64) ? input.locationId : null;
-  return call("", (m) => listSellItems({ query, categoryId, locationId }, m), (v) => v.map(itemDto));
+  const offset = typeof input.offset === "number" && Number.isInteger(input.offset) && input.offset >= 0 && input.offset <= 100_000 ? input.offset : 0;
+  return call("", (m) => listSellItems({ query, categoryId, locationId, offset }, m), (v) => v.map(itemDto));
 }
 
 /** Current prices of the cart's units (after PRICE_CHANGED). */

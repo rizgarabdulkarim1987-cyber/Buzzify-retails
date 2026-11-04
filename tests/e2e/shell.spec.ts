@@ -39,12 +39,13 @@ test("the header shows business, branch, terminal and user", async ({ page }) =>
   await expect(page).toHaveURL(/\/retail\/select/);
   await page.getByRole("button", { name: TERMINAL_A }).click();
 
-  await expect(page).toHaveURL(/\/retail\/home/);
+  // Whoever sells lands straight in the till: the open-shift screen while no shift is open.
+  await expect(page).toHaveURL(/\/retail\/sell/);
   await expect(page.getByTestId("header-business")).toHaveText(BUSINESS);
   await expect(page.getByTestId("header-branch")).toHaveText(BRANCH_A);
   await expect(page.getByTestId("header-terminal")).toHaveText(TERMINAL_A);
   await expect(page.getByTestId("header-user")).toHaveText(CASHIER.name);
-  await expect(page.getByTestId("state-home-empty")).toBeVisible();
+  await expect(page.getByTestId("open-shift-form")).toBeVisible();
 });
 
 test("an 80-character business name does not overflow the header at 375px width", async ({ page }) => {
@@ -54,7 +55,7 @@ test("an 80-character business name does not overflow the header at 375px width"
   await expect(page).toHaveURL(/\/retail\/select/);
   // The long branch has no terminal: one button chooses it.
   await page.getByRole("button", { name: ar.select.chooseBranch }).click();
-  await expect(page).toHaveURL(/\/retail\/home/);
+  await expect(page).toHaveURL(/\/retail\/sell/);
 
   const name = page.getByTestId("header-business");
   await expect(name).toHaveText(LONG_BUSINESS);

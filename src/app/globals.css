@@ -2884,3 +2884,104 @@ textarea.input {
   display: grid;
   gap: var(--space-2);
 }
+
+/* Shop menu (home): four big tiles, everything else under "More" ------------------------------- */
+
+.shop-home {
+  display: grid;
+  gap: var(--space-5);
+  padding-block: var(--space-5) var(--space-7);
+}
+
+.shop-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  gap: var(--space-4);
+}
+
+.shop-tile {
+  display: grid;
+  align-content: center;
+  gap: var(--space-1);
+  min-height: 10rem;
+  padding: var(--space-5);
+  border: 2px solid var(--color-line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.shop-tile:hover {
+  border-color: var(--color-accent-line);
+  background: var(--color-accent-soft);
+}
+
+.shop-tile .icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-block-end: var(--space-2);
+  color: var(--color-accent);
+}
+
+.shop-tile strong {
+  font-size: 1.75rem;
+  line-height: var(--leading-tight);
+}
+
+.shop-tile span {
+  color: var(--color-ink-2);
+  font-size: var(--text-lg);
+}
+
+.shop-tile-go {
+  border-color: oklch(0.5 0.14 152);
+  background: oklch(0.5 0.14 152);
+  color: oklch(0.99 0.01 152);
+}
+
+.shop-tile-go:hover {
+  border-color: oklch(0.44 0.13 152);
+  background: oklch(0.44 0.13 152);
+}
+
+.shop-tile-go .icon,
+.shop-tile-go span {
+  color: inherit;
+}
+
+.shop-more summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3.5rem;
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.shop-more ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr));
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shop-more a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 3.5rem;
+  padding-inline: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
+  color: var(--color-ink);
+  font-weight: 600;
+  text-decoration: none;
+}

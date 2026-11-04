@@ -38,6 +38,8 @@ export type SellItem = {
   onHand: bigint | null;
   /** The barcode that found it (a scan), or null. */
   matchedBarcode: string | null;
+  /** The product's top-level category (what the till colours the tile by), or null. */
+  categoryId: string | null;
 };
 
 /** The active top-level categories, by Arabic name. */
@@ -80,9 +82,20 @@ export const currentUnitPrices = defineAction({
   },
 });
 
+type CatRow = { id: string; parentId: string | null };
+const activeCategories = (tx: Tx): Promise<CatRow[]> => tx.rtCategory.findMany({ where: { archivedAt: null }, select: { id: true, parentId: true } });
+
+/** The top-level ancestor of a category (itself when it has no parent), null when it is unknown or archived. */
+function rootOf(all: readonly CatRow[], id: string | null): string | null {
+  if (!id) return null;
+  const byId = new Map(all.map((c) => [c.id, c]));
+  let cur = byId.get(id);
+  for (let i = 0; cur && cur.parentId && i < 32; i++) cur = byId.get(cur.parentId);
+  return cur && !cur.parentId ? cur.id : null;
+}
+
 /** The category and every active category under it. */
-async function categoryTree(tx: Tx, rootId: string): Promise<string[]> {
-  const all = await tx.rtCategory.findMany({ where: { archivedAt: null }, select: { id: true, parentId: true } });
+function categoryTree(all: readonly CatRow[], rootId: string): string[] {
   const out = new Set<string>([rootId]);
   let grew = true;
   while (grew) {
@@ -102,7 +115,10 @@ const sellable: Prisma.RtVariantWhereInput = {
   product: { archivedAt: null, isTestData: false, trackingMode: { not: "SERIAL" } },
 };
 
-/** Tiles for the till: by category (with its sub-categories), by text or barcode, or the first items. */
+/**
+ * Tiles for the till: by category (with its sub-categories), by text or barcode, or the first
+ * items. Browsing (no text) pages with offset; a search returns its best matches only.
+ */
 export const listSellItems = defineAction({
   name: "sale.items",
   permission: "sale.create",
@@ -112,11 +128,13 @@ export const listSellItems = defineAction({
       categoryId: id.nullish(),
       locationId: id.nullish(),
       limit: z.number().int().min(1).max(MAX_SELL_ITEMS).default(MAX_SELL_ITEMS),
+      offset: z.number().int().min(0).max(100_000).default(0),
     })
     .strict(),
   writes: false,
   async run({ tx, input }): Promise<SellItem[]> {
     const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true } });
+    const cats = await activeCategories(tx);
     // Which variants, and (for a scan) which unit.
     let picks: { variantId: string; unitId?: string; matchedBarcode?: string }[];
     if (input.query.trim() !== "") {
@@ -125,10 +143,11 @@ export const listSellItems = defineAction({
         .filter((h) => !h.isTestData && !h.archived)
         .map((h) => ({ variantId: h.variantId, ...(h.matchedBarcode ? { unitId: h.unitId, matchedBarcode: h.matchedBarcode } : {}) }));
     } else {
-      const categoryIds = input.categoryId ? await categoryTree(tx, input.categoryId) : null;
+      const categoryIds = input.categoryId ? categoryTree(cats, input.categoryId) : null;
       const rows = await tx.rtVariant.findMany({
         where: { ...sellable, product: { ...(sellable.product as object), ...(categoryIds ? { categoryId: { in: categoryIds } } : {}) } },
         orderBy: [{ product: { nameAr: "asc" } }, { id: "asc" }],
+        skip: input.offset,
         take: input.limit,
         select: { id: true },
       });
@@ -139,7 +158,7 @@ export const listSellItems = defineAction({
     const variantIds = [...new Set(picks.map((p) => p.variantId))];
     const variants = await tx.rtVariant.findMany({
       where: { ...sellable, id: { in: variantIds } },
-      select: { id: true, product: { select: { nameAr: true, nameCkb: true, nameEn: true, soldByWeight: true } } },
+      select: { id: true, product: { select: { nameAr: true, nameCkb: true, nameEn: true, soldByWeight: true, categoryId: true } } },
     });
     const variantOf = new Map(variants.map((v) => [v.id, v]));
     const units = await tx.rtUnit.findMany({
@@ -187,6 +206,7 @@ export const listSellItems = defineAction({
       currency: biz.defaultCurrency,
       onHand: stock ? (onHandOf.get(v.id) ?? 0n) : null,
       matchedBarcode: p.matchedBarcode ?? null,
+      categoryId: rootOf(cats, v.product.categoryId),
     }));
   },
 });

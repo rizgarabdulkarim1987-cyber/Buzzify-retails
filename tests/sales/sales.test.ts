@@ -429,6 +429,23 @@ describe("the till's catalog", () => {
     const scan = await listSellItems({ query: "0062800123" }, s.as("cashier"));
     if (!scan.ok) throw new Error(scan.code);
     expect(scan.value[0]).toMatchObject({ unitId: milk.carton, unitName: "كرتون", priceMinor: 22_000n, factor: 24, matchedBarcode: "0062800123" });
+    // A tile carries its top-level category (a sub-category's item is coloured by its parent).
+    expect(inDairy.value.map((i) => i.categoryId)).toEqual([dairy.id, dairy.id]);
+    expect(all.ok && all.value.find((i) => i.nameAr === "خبز")?.categoryId).toBeNull();
+  });
+
+  it("browsing pages with offset: the pages do not overlap and together hold every item", async () => {
+    const s = await shop();
+    for (const n of ["أ", "ب", "ت", "ث", "ج"]) await s.item({ price: 500n, name: `مادة ${n}` });
+    const page = async (offset: number) => {
+      const r = await listSellItems({ limit: 2, offset }, s.as("cashier"));
+      if (!r.ok) throw new Error(r.code);
+      return r.value.map((i) => i.variantId);
+    };
+    const [a, b, c] = [await page(0), await page(2), await page(4)];
+    expect([a.length, b.length, c.length]).toEqual([2, 2, 1]);
+    expect(new Set([...a, ...b, ...c]).size).toBe(5);
+    expect(await page(5)).toEqual([]);
   });
 
   it("current prices refresh a cart (null without a price); the till state gives the currency and the open shift", async () => {
