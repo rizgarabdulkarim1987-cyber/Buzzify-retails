@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RtRole } from "@/generated/prisma/client";
+import type { RtActivityType, RtRole } from "@/generated/prisma/client";
 import { defineAction } from "@/server/framework/action";
 
 /*
@@ -12,7 +12,7 @@ import { defineAction } from "@/server/framework/action";
 export type ShellTerminal = { id: string; name: string };
 export type ShellBranch = { id: string; name: string; terminals: ShellTerminal[] };
 export type ShellOptions = {
-  business: { id: string; name: string };
+  business: { id: string; name: string; activityType: RtActivityType };
   role: RtRole;
   branches: ShellBranch[];
 };
@@ -23,7 +23,7 @@ export const shellOptions = defineAction({
   input: z.object({}),
   writes: false,
   async run({ actor, tx }): Promise<ShellOptions> {
-    const business = await tx.rtBusiness.findFirstOrThrow({ select: { id: true, name: true } });
+    const business = await tx.rtBusiness.findFirstOrThrow({ select: { id: true, name: true, activityType: true } });
     const branches = await tx.rtBranch.findMany({
       where: { active: true },
       select: { id: true, name: true },

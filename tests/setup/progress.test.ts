@@ -178,6 +178,31 @@ describe("setup progress", () => {
     expect((await db.rtBusiness.findUniqueOrThrow({ where: { id: a.business.id } })).version).toBe(v);
   });
 
+  it("a shop linked to Studio keeps Studio's activity type: a crafted step 3 cannot change it (capabilities still save)", async () => {
+    const { a } = await world();
+    await db.rtBusiness.update({ where: { id: a.business.id }, data: { coreBusinessId: "core-biz-linked", activityType: "MARKET" } });
+    const v = (await db.rtBusiness.findUniqueOrThrow({ where: { id: a.business.id } })).version;
+    for (const activityType of ["ELECTRONICS", "CLOTHING", "MIXED"]) {
+      const version = (await db.rtBusiness.findUniqueOrThrow({ where: { id: a.business.id } })).version;
+      expect(
+        await completeSetupStep({ step: 3, data: { activityType, capabilities: ["VARIANTS", "HOLDS"], expectedVersion: version } }, a.as("owner")),
+      ).toMatchObject({ ok: true });
+      expect((await db.rtBusiness.findUniqueOrThrow({ where: { id: a.business.id } })).activityType).toBe("MARKET");
+    }
+    expect((await db.rtBusiness.findUniqueOrThrow({ where: { id: a.business.id } })).version).toBe(v + 3);
+    const caps = await db.rtCapability.findMany({ where: { businessId: a.business.id, enabled: true } });
+    expect(caps.map((c) => c.capability).sort()).toEqual(["HOLDS", "VARIANTS"]);
+  });
+
+  it("a shop not linked to Studio (dev, tests) still chooses its activity type in setup", async () => {
+    const { a } = await world();
+    const v = (await db.rtBusiness.findUniqueOrThrow({ where: { id: a.business.id } })).version;
+    expect(
+      await completeSetupStep({ step: 3, data: { activityType: "ELECTRONICS", capabilities: ["SERIAL"], expectedVersion: v } }, a.as("owner")),
+    ).toMatchObject({ ok: true });
+    expect((await db.rtBusiness.findUniqueOrThrow({ where: { id: a.business.id } })).activityType).toBe("ELECTRONICS");
+  });
+
   it("permissions: a cashier can neither read nor complete steps; a manager cannot add a manager or anyone as owner", async () => {
     const { a } = await world();
     expect(await getSetupProgress({}, a.as("cashier"))).toMatchObject({ ok: false, code: "FORBIDDEN" });

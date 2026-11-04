@@ -3,6 +3,10 @@ import { redirect } from "next/navigation";
 import { isPlatformAdmin } from "@/server/admin/platform-admin";
 import { getSessionUserId } from "@/server/auth/auth";
 import { HANDOFF_START_PATH, resetPasswordHref } from "@/server/core/handoff";
+import { packById, packWords } from "@/packs";
+import { productBrand } from "@/packs/brand";
+import { currentHost } from "../_lib/host";
+import { Wordmark } from "../_ui/wordmark";
 import { getI18n } from "../_lib/i18n";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { AccountSignInForm } from "./login-form";
@@ -25,13 +29,15 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (userId) redirect((await isPlatformAdmin(userId)) ? "/admin" : "/retail/home");
   const { locale, t } = await getI18n();
   const a = t.auth;
+  // On a product address the page names that product; the shared address stays neutral.
+  const { packId } = await currentHost();
+  const pack = packId ? packById(packId) : null;
+  const brand = productBrand(pack, locale);
   return (
     <div className="auth-split">
       <div className="auth-main">
         <header className="auth-top">
-          <span className="wordmark" dir="ltr">
-            Buzzify <span>Retails</span>
-          </span>
+          <Wordmark brand={brand.brand} word={brand.word} />
           <LocaleSwitcher
             locale={locale}
             label={t.locale.label}
@@ -41,7 +47,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         </header>
         <main className="auth-body">
           <div className="auth-form">
-            <h1 className="auth-title">{a.title}</h1>
+            <h1 className="auth-title">{pack ? packWords(pack, locale).loginTitle : a.title}</h1>
             <AccountSignInForm
               labels={{
                 email: a.email,

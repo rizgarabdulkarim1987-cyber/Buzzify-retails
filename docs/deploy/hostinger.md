@@ -33,6 +33,15 @@ openssl rand -base64 32
 | `CORE_OUT_SECRET` | `RETAIL_CALLER_SECRET` | secret 2 (signs Retails' calls to Studio) |
 | `CORE_HANDOFF_SECRET` | `RETAIL_HANDOFF_SECRET` | secret 3 (signs sign-in tokens) |
 
+Optional, for the three products on their own addresses (see section 7):
+
+| Retails | Studio | Value |
+| --- | --- | --- |
+| `PACK_HOSTS` | | `supermarket.buzzify.tech=SUPERMARKET,electronics.buzzify.tech=ELECTRONICS,clothing.buzzify.tech=CLOTHING` |
+| | `RETAIL_URL_SUPERMARKET` | `https://supermarket.buzzify.tech` |
+| | `RETAIL_URL_ELECTRONICS` | `https://electronics.buzzify.tech` |
+| | `RETAIL_URL_CLOTHING` | `https://clothing.buzzify.tech` |
+
 Leave these unset in production:
 
 - `ANTHROPIC_API_KEY`: Retails pulls the key from Studio. Setting it is only a fallback outside production.
@@ -87,3 +96,32 @@ Do these only after Retails is up, in this order:
 - If Studio's database is restored from a backup, press Resync on each retail shop.
 - More detail (the Studio contract, retention of receipt images, migrations by milestone) is in
   `docs/deployment-notes.md`.
+
+## 7. One address per product (PACK_HOSTS)
+
+Retails is three products on one app: Buzzify Supermarket, Buzzify Electronics and Buzzify Clothing.
+Each business belongs to one of them by its activity type (`MARKET`, `ELECTRONICS`, `CLOTHING`; any other
+type, `MIXED` included, is a Supermarket). The products can each have their own address:
+
+- `PACK_HOSTS` is a comma-separated list of `host=PACKID` pairs. A host is the bare host name: lowercase,
+  no `https://`, no port, no path, no trailing dot. Each host once, each pack at most once, and never
+  APP_URL's host. Pack ids: `SUPERMARKET`, `ELECTRONICS`, `CLOTHING`.
+- A malformed value stops the app at start in production (the log names `PACK_HOSTS` and the rule).
+  Unset = the old behaviour: one address (APP_URL) for every product.
+- `APP_URL` stays the shared address and keeps serving every product: a business opens there in its own
+  product. Sign-in links in invitation emails still use APP_URL.
+- On a product address only that product's businesses open. Someone whose businesses all belong to another
+  product is sent to that product's address (when PACK_HOSTS has one), otherwise to a plain page that says
+  the shop is not on this address.
+- Absolute URLs (the Studio sign-in callback) are built on the address the browser is on, but only when it
+  is APP_URL's host or a PACK_HOSTS host. `Host` is the only header read; `X-Forwarded-Host` is ignored. So
+  the proxy must pass the browser's `Host` through unchanged (Caddy does by default).
+- Cookies are per address: someone signed in on the Supermarket address is not signed in on the shared
+  address, and the reverse.
+
+Studio side (Studio repo): send each owner to the address of their product (`RETAIL_URL_SUPERMARKET`,
+`RETAIL_URL_ELECTRONICS`, `RETAIL_URL_CLOTHING`, falling back to `RETAIL_URL`), send `activityType`
+`MARKET`, `ELECTRONICS` or `CLOTHING` in the provision snapshot, and accept a handoff `return` URL on any of
+these addresses (it is always `<address>/api/core/v1/handoff/callback`). The handoff secrets do not change.
+
+On the VPS the addresses are Caddy site blocks; see `docs/deploy/vps-deploy.md`, "Product addresses".

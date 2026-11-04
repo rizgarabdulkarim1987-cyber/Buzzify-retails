@@ -129,6 +129,46 @@ textarea {
   color: var(--color-bar-ink-2);
 }
 
+/* The product wordmark sits as a small line over the business name, so it never takes bar width. */
+.bar-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.bar-wordmark {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--color-bar-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-wordmark span {
+  color: var(--color-accent-line);
+}
+
+/* On a phone the icons fill the bar: the product and the business get their own row above them. */
+@media (max-width: 30rem) {
+  .bar {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-block: var(--space-1);
+  }
+
+  .bar-business {
+    flex-basis: 100%;
+    font-size: var(--text-md);
+  }
+
+  .bar-actions {
+    margin-inline-start: auto;
+  }
+}
+
 .bar-actions {
   display: flex;
   align-items: center;
@@ -579,6 +619,19 @@ textarea {
 
 .input::placeholder {
   color: var(--color-ink-3);
+}
+
+/* A value shown in a field's place that cannot be changed here. */
+.input-readonly {
+  display: flex;
+  align-items: center;
+  background: var(--color-panel);
+  border-color: var(--color-line);
+  font-weight: 600;
+}
+
+.input-readonly:hover {
+  border-color: var(--color-line);
 }
 
 textarea.input {

@@ -148,9 +148,13 @@ export function clearStateCookie(secure: boolean): string {
  * nonce is not the hash of the state in this browser's cookie, so a token minted for one browser's
  * handoff cannot be redeemed with another browser's state/cookie pair (login CSRF, token injection).
  */
-export function startHandoff(returnTo: string | null | undefined, opts: { secure: boolean }): { redirectTo: string; stateCookie: string } {
+export function startHandoff(
+  returnTo: string | null | undefined,
+  opts: { secure: boolean; appUrl?: string | null },
+): { redirectTo: string; stateCookie: string } {
   const studio = coreConfig().baseUrl;
-  const app = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  // appUrl: the trusted origin of the address this browser is on (src/packs/hosts.ts); APP_URL otherwise.
+  const app = (opts.appUrl ?? process.env.APP_URL)?.trim().replace(/\/+$/, "");
   if (!app) throw new CoreConfigError("APP_URL");
 
   const state = randomBytes(32).toString("base64url");
