@@ -151,6 +151,24 @@ textarea {
   color: var(--color-accent-line);
 }
 
+/* On a phone the icons fill the bar: the product and the business get their own row above them. */
+@media (max-width: 30rem) {
+  .bar {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-block: var(--space-1);
+  }
+
+  .bar-business {
+    flex-basis: 100%;
+    font-size: var(--text-md);
+  }
+
+  .bar-actions {
+    margin-inline-start: auto;
+  }
+}
+
 .bar-actions {
   display: flex;
   align-items: center;

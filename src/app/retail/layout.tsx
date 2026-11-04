@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { packWords, visibleNav } from "@/packs";
+import { packById, packWords, visibleNav } from "@/packs";
 import { productBrand } from "@/packs/brand";
 import { can } from "@/server/domain/permissions";
+import { currentHost } from "../_lib/host";
 import { getI18n } from "../_lib/i18n";
 import { loadShell, requireShell } from "./_shell";
 import { ShellHeader } from "./_header";
@@ -11,8 +12,11 @@ import { ShellHeader } from "./_header";
 export async function generateMetadata(): Promise<Metadata> {
   const shell = await loadShell();
   const { locale } = await getI18n();
-  const name = productBrand(shell?.pack ?? null, locale).name;
-  return { title: { default: name, template: `%s · ${name}` } };
+  // Signed out (e.g. right after sign-out), the address's own product still names the tab.
+  const hostPack = (await currentHost()).packId;
+  const name = productBrand(shell?.pack ?? (hostPack ? packById(hostPack) : null), locale).name;
+  // absolute: the root layout's template would otherwise repeat the name ("X · X").
+  return { title: { absolute: name, template: `%s · ${name}` } };
 }
 
 export default async function RetailLayout({ children }: { children: ReactNode }) {
