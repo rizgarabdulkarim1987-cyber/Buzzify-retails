@@ -162,7 +162,7 @@ each other, and be set as environment variables only (never committed or logged)
 | `CORE_SYNC_SECRET` | Verifies Studio -> Retails signed requests (`POST /api/core/v1/provision`, `POST` and `GET /api/core/v1/state`). |
 | `CORE_SYNC_SECRET_PREVIOUS` | Optional. The previous sync secret, also accepted during a rotation. |
 | `CORE_OUT_SECRET` | Signs Retails -> Studio requests (key pull, identities, the /login form's password and code checks). Studio holds the same value. |
-| `TRUSTED_PROXY_HOPS` | Optional (default 1). Which `X-Forwarded-For` entry, from the end, is the browser's address forwarded to Studio's per-address sign-in limit. Must match the proxies in front of Retails. |
+| `TRUSTED_PROXY_HOPS` | Optional (default 1). Which `X-Forwarded-For` entry, from the end, is the browser's address. `/login` uses it for its own per-address limit and forwards it to Studio's. It must equal the number of proxies in front of Retails. Caddy alone, with no `trusted_proxies`, is 1. With a CDN in front of Caddy it is 2. When there are fewer entries than this, `/login` refuses to sign in. `X-Real-IP` is never read. |
 | `CORE_HANDOFF_SECRET` | Verifies the sign-in handoff token signed by Studio. |
 | `CORE_HANDOFF_SECRET_PREVIOUS` | Optional. The previous handoff secret, also accepted during a rotation. |
 

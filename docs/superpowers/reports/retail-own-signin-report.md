@@ -1,7 +1,39 @@
 # Retails' own sign-in form: report
 
-Branch `retail-own-signin` (from `origin/main` 5b2c90b) in buzzify-retails, and branch `retail-own-signin`
-(from `origin/main` 016cee7a) in buzzify-core (worktree `buzzify-menu-retail-link`). Local commits only.
+Branch `retail-own-signin` (from `origin/main` 5b2c90b) in buzzify-retails, and branch `retail-own-signin` in
+buzzify-core (worktree `buzzify-menu-retail-link`), first cut from `origin/main` 016cee7a and since rebased on
+`origin/main` b963ce7b. Local commits only.
+
+## Security review fixes (second round)
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 HIGH | Sign-ins counted in `retail:ip` before any sign-in limit, so a spray could starve the AI-key and identity calls | Studio: `/credentials*` count the caller in their own bucket, `retail-signin:ip` (300 / min), and never touch `retail:ip`. Retails: Studio's own limits are applied first, in the server action, before Studio is asked: 20 steps per browser address and 5 password attempts per email per 10 minutes, every attempt counted (`signInAttempt`, sha256 keys in `RtLoginAttempt`). It replaces the old 120 / min count. |
+| 2 HIGH | `x-real-ip` fallback; an unknown address shared one `unknown` bucket | Retails reads `X-Forwarded-For` only (`TRUSTED_PROXY_HOPS` from the end; fewer entries than hops gives no address). Without an address it refuses locally, with the generic "Signing in did not work", and does not ask Studio. Studio now refuses a credentials call with an empty `clientIp` (400). |
+| 3 MEDIUM | Super admins and platform owners could sign in through another server's form | Studio answers `unavailable` right after the right password (before any code step), and again in `finish`. The answer is the same as for every other refusal. Retails maps Studio's `unavailable` to `ELSEWHERE`: the form says "This account signs in on its own sign-in page." and shows one primary link, "Continue to sign in", to `/api/core/v1/handoff/start` (the browser handoff, so Studio's own sign-in page). |
+| 4 MEDIUM | A signed request could be replayed for 120 s | `admitRetailCall(..., { once: true })` on `/credentials*`: after the signature checks out, its sha256 is spent as a `retail-sig:` count (max 1, 240 s window, atomic upsert). A repeat is 401. The cron job prunes the marks (`pruneSpentSignatures`). This is applied only where every body is unique (a fresh nonce each call): two ai-config GETs signed in the same second are identical and genuine. |
+| 5 LOW | Better Auth's 400 `INVALID_EMAIL` and an over-1024-char password failed with 503 | Both, and Better Auth's `PASSWORD_TOO_LONG` / `_SHORT`, are now `invalid`. The password field accepts up to 4096 characters, so a long one reaches the `MAX_PASSWORD_LENGTH` check. |
+
+### `TRUSTED_PROXY_HOPS` and the real proxy chain
+
+On the VPS, Caddy runs in front of the Retails container and nothing runs in front of Caddy. With Caddy's default
+`reverse_proxy` (no `trusted_proxies`), Caddy ignores any `X-Forwarded-For` the browser sent and sets it to the one
+address it saw. Next keeps that header as it is (it only fills `X-Forwarded-For` from the socket when the header is
+missing). So the header holds exactly one entry, the browser's, and the default `TRUSTED_PROXY_HOPS=1` is right.
+
+How to check:
+
+1. The Caddyfile's `reverse_proxy` block for the Retails site has no `trusted_proxies`, and no CDN or other proxy
+   sits in front of Caddy (DNS points straight at the VPS).
+2. From a machine outside, sign in with a wrong password while sending a forged header, for example
+   `curl -H 'X-Forwarded-For: 192.0.2.1' ...`. Then, temporarily, log the header the app receives, or read Caddy's
+   access log entry: the app must see one entry, your real address. If two entries arrive (a CDN in front, or
+   `trusted_proxies` set), set `TRUSTED_PROXY_HOPS=2` so the CDN's own entry is skipped.
+
+If the value is too high, Retails sees fewer entries than hops and refuses every sign-in. If it is too low, every
+browser shares the proxy's address and is locked out together.
+
+Retails' own `/login` limits key on the same address, so a wrong value affects both sides alike.
 
 ## What was built
 
@@ -43,20 +75,20 @@ and its `_PREVIOUS`). Code: `src/server/retail/credentials.ts`, routes under `sr
 | `/api/retail/v1/credentials/two-factor` | `{ challenge, code, clientIp, nonce, userAgent? }` |
 | `/api/retail/v1/credentials/choose` | `{ challenge, shopId, clientIp, nonce }` |
 
-`nonce` = base64url(sha256(state)), 43 chars; `clientIp` = IPv4/IPv6 or `""`. Answers (200):
+`nonce` = base64url(sha256(state)), 43 chars; `clientIp` = an IPv4/IPv6 address, never empty. Answers (200):
 `{status:"ok", handoffToken}`, `{status:"needs_2fa", challenge}`, `{status:"choose", challenge, shops:[{id,name,ready}]}`,
 `{status:"invalid"}` (wrong email, wrong password, deactivated: one answer), `{status:"invalid_code"}`,
 `{status:"expired"}`, `{status:"preparing"}`, `{status:"unavailable"}` (the handoff's own rule refuses: `mayHandOff`,
-unverified email). 429 `{code:"RATE_LIMITED"}` + `retry-after`; 401 unsigned/old/wrong secret; 400 malformed;
-503 link off or misconfigured.
+unverified email; and every super admin or platform owner). 429 `{code:"RATE_LIMITED"}` + `retry-after`;
+401 unsigned/old/wrong secret/replayed; 400 malformed (an empty `clientIp` too); 503 link off or misconfigured.
 
 - Password check: `serverAuthFor(prisma).api.signInEmail` (the Studio sign-in's own Better Auth call; same instance
   config without the Next cookie plugin, so no Studio cookie is sent back). The Better Auth session it creates is
   deleted at once.
 - Limits: the Studio sign-in's own keys, `signin:ip:<clientIp>` (20 / 10 min) and `signin:email:<email>`
   (5 / 10 min), both counted on every attempt; the code step counts `totp:user:<id>` (5 / 5 min) plus Better Auth's
-  own five tries per challenge. `clientIp` is trusted only because the call is signed. Plus the existing
-  `retail:ip` count of the caller (300 / min).
+  own five tries per challenge. `clientIp` is trusted only because the call is signed. Plus the caller's
+  count in its own bucket, `retail-signin:ip` (300 / min), apart from the other calls' `retail:ip`.
 - 2FA: TOTP and recovery codes (what Studio's sign-in supports). The challenge is Better Auth's signed two-factor
   cookie value, wrapped (`tf.` + base64url); a used recovery code is audited as on Studio.
 - Pick: a one-time `verification` row (`retail-pick:<sha256>`), 5 minutes.
@@ -72,7 +104,20 @@ Studio: `RETAIL_URL`, `RETAIL_CALLER_SECRET`, `RETAIL_HANDOFF_SECRET` as today.
 **Studio first.** Until Studio serves `/api/retail/v1/credentials`, a deployed Retails `/login` answers every sign-in
 with the generic "Signing in did not work" (Studio's 404 is read as a failure). No migration on either side.
 
-## Verified
+## Verified (second round, after the review fixes and the rebase)
+
+- Studio, rebased on `origin/main` b963ce7b. There was one conflict, in `createAuth`, where upstream added
+  `authHostOptions`; both changes are kept. `tests/retail/credentials-route.test.ts` (14), the new
+  `tests/retail/credentials-hosts.test.ts` and `tests/studio/auth-hosts.test.ts` pass. The new file runs in
+  production mode with `PHARMACY_HOST` and `CORE_HOST` set, so Better Auth's base URL depends on the host;
+  `serverAuthFor` runs the password, the TOTP code and the token with no request host. `tsc` and `eslint` are clean on
+  the changed files. Further suites: see the hand-off.
+- Retails: `tests/core/own-sign-in.test.ts` (14), with new tests for the 20 / 5 limits, no address refused without
+  asking Studio, and `unavailable` becoming `ELSEWHERE`. The new `tests/ui/login-elsewhere.test.ts` (the link in
+  ar/ckb/en, word guard), `tests/ui/login-ui.test.ts` and `tests/messages` pass. `tsc` and `eslint` are clean.
+  Playwright `login.spec.ts` and `core-handoff.spec.ts`: 15 / 15.
+
+## Verified (first round)
 
 - Studio (`BUZZIFY_DB_PORT=54339`): `tests/retail/credentials-route.test.ts` (10 tests: unsigned / wrong secret /
   old timestamp refused before anything is counted; one generic `invalid`; per-email and per-address limits on the
@@ -106,10 +151,9 @@ with the generic "Signing in did not work" (Studio's 404 is read as a failure). 
   (`/studio/reset?token=`) carries no marker, so the reset page and its "Back to sign in" use the Studio frame, and
   the e-mail template wording was not changed. Making that neutral needs the entry carried through Better Auth's
   reset mail: not done.
-- Sign-ins through Retails share Studio's `retail:ip` budget (300 / min per Retails egress) with the AI-key pull and
-  identities calls; a login spray from many addresses could use it up. Retails' own `signin` count (120 / min per
-  browser address) only limits single addresses.
-- `TRUSTED_PROXY_HOPS` must match the real proxy chain in front of Retails; if wrong, every browser shares one
-  address bucket at Studio (20 failures / 10 min lock everyone out) or the address can be forged (the per-email limit
-  still holds).
+- A spray from many addresses can still fill `retail-signin:ip` (300 / min) and so hold up other people's
+  sign-ins for up to a minute. It can no longer touch the AI-key or identity calls.
+- `ELSEWHERE` also covers the handoff's other refusals (an unverified email, a POS-only account): those people are
+  sent to Studio's sign-in page, which then says why. Only someone who typed the right password sees this.
+- `TRUSTED_PROXY_HOPS` must match the real proxy chain (see above). This was not checked on the VPS.
 - The `docs/superpowers/reports/retail-own-words-report.md` named in the brief does not exist on `main`.
