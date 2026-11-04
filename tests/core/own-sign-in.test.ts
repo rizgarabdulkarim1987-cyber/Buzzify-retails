@@ -1,10 +1,10 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { auth } from "@/server/auth/auth";
 import { CoreClientError } from "@/server/core/client";
 import { signHandoffForTests, type HandoffClaims } from "@/server/core/handoff";
-import { forwardedClientIp, passwordSignIn } from "@/server/core/own-sign-in";
-import { CORE_RATE_LIMIT } from "@/server/core/rate-limit";
+import { codeSignIn, forwardedClientIp, passwordSignIn } from "@/server/core/own-sign-in";
+import { SIGNIN_EMAIL_LIMIT, SIGNIN_IP_LIMIT, SIGNIN_WINDOW_MS, signInKey } from "@/server/core/rate-limit";
 import { createHttpCoreSignInClient, setCoreSignInFake, type CoreSignInClient, type SignInAnswer } from "@/server/core/sign-in-client";
 import { verifyRequest } from "@/server/core/signing";
 import { dumpAllRows, useTestDb } from "../helpers/db";
@@ -272,13 +272,51 @@ describe("the /login form, through Studio", () => {
     expect(logs.join("\n")).not.toContain(PASSWORD);
   });
 
-  it("counts calls per client address on Retails' side too, before Studio is asked", async () => {
+  it("holds Studio's own limits on Retails' side first: 20 steps per address and 5 passwords per email in ten minutes", async () => {
     const { client, calls } = fakeStudio();
-    const key = createHash("sha256").update("core:signin:203.0.113.9", "utf8").digest("hex");
-    await db.rtLoginAttempt.createMany({ data: Array.from({ length: CORE_RATE_LIMIT }, () => ({ key, at: new Date() })) });
-    const outcome = await passwordSignIn(client, { email: "owner@example.test", password: PASSWORD }, { clientIp: "203.0.113.9" });
-    expect(outcome).toEqual({ kind: "failed", reason: "THROTTLED" });
+    const meta = { clientIp: "203.0.113.9" };
+    // Every attempt counts, the right password included, as on Studio.
+    for (let i = 0; i < SIGNIN_EMAIL_LIMIT; i++) await passwordSignIn(client, { email: i % 2 ? "Owner@Example.test" : "owner@example.test", password: i ? "wrong" : PASSWORD }, meta);
+    expect(calls.password).toHaveLength(SIGNIN_EMAIL_LIMIT);
+    expect(await passwordSignIn(client, { email: " owner@example.test", password: PASSWORD }, { clientIp: "198.51.100.1" })).toEqual({ kind: "failed", reason: "THROTTLED" });
+    expect(calls.password).toHaveLength(SIGNIN_EMAIL_LIMIT);
+    // Another email from the same address is still asked about, up to the per-address limit.
+    expect((await passwordSignIn(client, { email: "other@example.test", password: "x" }, meta)).kind).toBe("failed");
+    expect(calls.password).toHaveLength(SIGNIN_EMAIL_LIMIT + 1);
+
+    const ipKey = signInKey("ip", "192.0.2.50");
+    await db.rtLoginAttempt.createMany({ data: Array.from({ length: SIGNIN_IP_LIMIT }, () => ({ key: ipKey, at: new Date() })) });
+    const before = calls.password.length + calls.code.length;
+    expect(await passwordSignIn(client, { email: "fresh@example.test", password: "x" }, { clientIp: "192.0.2.50" })).toEqual({ kind: "failed", reason: "THROTTLED" });
+    expect(await codeSignIn(client, { challenge: "tf.the-challenge", code: "123456" }, { clientIp: "192.0.2.50" })).toEqual({ kind: "failed", reason: "THROTTLED" });
+    expect(calls.password.length + calls.code.length).toBe(before);
+
+    // Ten minutes on, the address is free again. Only hashes are stored, never the email or the address.
+    await db.rtLoginAttempt.updateMany({ where: { key: ipKey }, data: { at: new Date(Date.now() - SIGNIN_WINDOW_MS - 1000) } });
+    expect((await passwordSignIn(client, { email: "fresh@example.test", password: "x" }, { clientIp: "192.0.2.50" })).kind).toBe("failed");
+    expect(calls.password.length).toBe(before + 1);
+    const rows = JSON.stringify(await db.rtLoginAttempt.findMany());
+    expect(rows).not.toContain("owner@example.test");
+    expect(rows).not.toContain("192.0.2.50");
+  });
+
+  it("refuses, generically and without asking Studio, a sign-in whose browser address cannot be told", async () => {
+    await linkedBusiness();
+    const { client, calls } = fakeStudio();
+    setCoreSignInFake(client);
+    jar.headers = new Headers({ "user-agent": "Test Browser" });
+    const { state } = await act(initial, { email: "owner@example.test", password: PASSWORD });
+    expect(state).toMatchObject({ step: "password", failed: "FAILED" });
+    expect(await passwordSignIn(client, { email: "owner@example.test", password: PASSWORD }, { clientIp: "" })).toEqual({ kind: "failed", reason: "FAILED" });
     expect(calls.password).toHaveLength(0);
+    expect(await db.rtLoginAttempt.count()).toBe(0);
+  });
+
+  it("an account Studio will not sign in here (a platform account) is sent to Studio's own sign-in", async () => {
+    setCoreSignInFake(fakeStudio({ answer: { status: "unavailable" } }).client);
+    const { state } = await act(initial, { email: "root@example.test", password: PASSWORD });
+    expect(state).toEqual({ step: "password", failed: "ELSEWHERE", email: "root@example.test", shops: [] });
+    expect(sessionCookie()).toBeUndefined();
   });
 
   it("without the account system configured, /login checks local passwords like /admin/login", async () => {
@@ -293,9 +331,12 @@ describe("forwardedClientIp", () => {
     expect(forwardedClientIp(new Headers({ "x-forwarded-for": "1.1.1.1, 203.0.113.9" }))).toBe("203.0.113.9");
     process.env.TRUSTED_PROXY_HOPS = "2";
     expect(forwardedClientIp(new Headers({ "x-forwarded-for": "1.1.1.1, 203.0.113.9, 10.0.0.2" }))).toBe("203.0.113.9");
+    // Fewer entries than proxies: the one that would be the browser's was never added by a proxy.
+    expect(forwardedClientIp(new Headers({ "x-forwarded-for": "203.0.113.9" }))).toBe("");
     delete process.env.TRUSTED_PROXY_HOPS;
     expect(forwardedClientIp(new Headers({ "x-forwarded-for": "2001:db8::1" }))).toBe("2001:db8::1");
-    expect(forwardedClientIp(new Headers({ "x-real-ip": "198.51.100.3" }))).toBe("198.51.100.3");
+    // X-Real-IP is whatever the browser wrote: never read.
+    expect(forwardedClientIp(new Headers({ "x-real-ip": "198.51.100.3" }))).toBe("");
     expect(forwardedClientIp(new Headers({ "x-forwarded-for": "<script>" }))).toBe("");
     expect(forwardedClientIp(new Headers())).toBe("");
   });

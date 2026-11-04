@@ -2,12 +2,14 @@ import { randomBytes } from "node:crypto";
 import { completeHandoff } from "@/server/admin/core-handoff";
 import { CoreClientError } from "./client";
 import { DEFAULT_RETURN_TO, handoffNonce } from "./handoff";
-import { coreRateLimit } from "./rate-limit";
+import { signInAttempt } from "./rate-limit";
 import type { BrowserMeta, CoreSignInClient, SignInAnswer } from "./sign-in-client";
 
 /*
  * The /login form, signed in through Studio without leaving Retails. Each step:
- *   1. a Retails-side count per client address (coreRateLimit "signin"), before Studio is asked;
+ *   1. a client address, or no sign-in at all; then Retails' own counts, the same as Studio's
+ *      (signInAttempt: 20 per address, and 5 per email for the password, per ten minutes), before
+ *      Studio is asked;
  *   2. a fresh handoff state made here, on the server, whose nonce (base64url(sha256(state)))
  *      goes to Studio in the signed call; Studio mints the token with that nonce;
  *   3. an "ok" answer's token is redeemed at once by completeHandoff, the very code the browser
@@ -18,7 +20,20 @@ import type { BrowserMeta, CoreSignInClient, SignInAnswer } from "./sign-in-clie
  * Logs carry a reason or an error class only.
  */
 
-export type SignInFailure = "INVALID_CREDENTIALS" | "THROTTLED" | "INVALID_CODE" | "EXPIRED" | "PREPARING" | "UNAVAILABLE" | "FAILED";
+/**
+ * ELSEWHERE: the password was right but Studio will not sign this account in through this form (a platform account, or
+ * one the handoff's own rule turns away); the form sends the person to the browser handoff, Studio's own sign-in page.
+ * UNAVAILABLE: Studio gave a token but this server would not open a session with it.
+ */
+export type SignInFailure =
+  | "INVALID_CREDENTIALS"
+  | "THROTTLED"
+  | "INVALID_CODE"
+  | "EXPIRED"
+  | "PREPARING"
+  | "UNAVAILABLE"
+  | "ELSEWHERE"
+  | "FAILED";
 export type Shop = { id: string; name: string; ready: boolean };
 
 export type StepOutcome =
@@ -32,7 +47,10 @@ const ADDRESS = /^[0-9A-Fa-f:.]{1,64}$/;
 /**
  * The browser's address to forward to Studio: the X-Forwarded-For entry the nearest proxy added
  * (the last, or TRUSTED_PROXY_HOPS entries from the end), as Studio reads its own visitors. The
- * first entry is whatever the browser wrote and could dodge the per-address limit. "" when none.
+ * first entry is whatever the browser wrote and could dodge the per-address limit. Next itself
+ * fills X-Forwarded-For with the socket's peer when no proxy did, so it is there behind Caddy and
+ * without it. X-Real-IP is not read: nothing in front of Retails is known to set it, so a browser
+ * could. "" when there is no usable entry (then the form refuses to sign in).
  */
 export function forwardedClientIp(headers: Headers): string {
   const entries = (headers.get("x-forwarded-for") ?? "")
@@ -41,7 +59,8 @@ export function forwardedClientIp(headers: Headers): string {
     .filter(Boolean);
   const configured = Number.parseInt(process.env.TRUSTED_PROXY_HOPS ?? "", 10);
   const hops = Number.isInteger(configured) && configured >= 1 ? configured : 1;
-  const ip = entries.length > 0 ? entries[Math.max(0, entries.length - hops)]! : (headers.get("x-real-ip")?.trim() ?? "");
+  if (entries.length < hops) return "";
+  const ip = entries[entries.length - hops]!;
   return ADDRESS.test(ip) ? ip : "";
 }
 
@@ -79,16 +98,24 @@ async function settle(answer: SignInAnswer, state: string, meta: BrowserMeta): P
     case "preparing":
       return failed("PREPARING");
     case "unavailable":
-      return failed("UNAVAILABLE");
+      return failed("ELSEWHERE");
     case "throttled":
       return failed("THROTTLED");
   }
 }
 
-/** Runs one step: the Retails-side count, a fresh state, Studio's answer, then settle. Never throws. */
-async function step(meta: BrowserMeta, ask: (nonce: string) => Promise<SignInAnswer>): Promise<StepOutcome> {
+/**
+ * Runs one step: an address or nothing, the Retails-side counts, a fresh state, Studio's answer, then settle. Never
+ * throws. Without an address the step is refused locally, generically: browsers that cannot be told apart never share
+ * one count, and Studio is not asked.
+ */
+async function step(meta: BrowserMeta, email: string | undefined, ask: (nonce: string) => Promise<SignInAnswer>): Promise<StepOutcome> {
   try {
-    if (!(await coreRateLimit("signin", meta.clientIp || "unknown")).ok) return failed("THROTTLED");
+    if (!ADDRESS.test(meta.clientIp)) {
+      console.warn("[core.sign-in] refused: no client address");
+      return failed("FAILED");
+    }
+    if (!(await signInAttempt({ ip: meta.clientIp, email })).ok) return failed("THROTTLED");
     const { state, nonce } = freshState();
     return await settle(await ask(nonce), state, meta);
   } catch (err) {
@@ -99,15 +126,15 @@ async function step(meta: BrowserMeta, ask: (nonce: string) => Promise<SignInAns
 }
 
 export function passwordSignIn(client: CoreSignInClient, input: { email: string; password: string }, meta: BrowserMeta): Promise<StepOutcome> {
-  return step(meta, (nonce) => client.checkPassword({ email: input.email, password: input.password, nonce, ...meta }));
+  return step(meta, input.email, (nonce) => client.checkPassword({ email: input.email, password: input.password, nonce, ...meta }));
 }
 
 export function codeSignIn(client: CoreSignInClient, input: { challenge: string; code: string }, meta: BrowserMeta): Promise<StepOutcome> {
-  return step(meta, (nonce) => client.checkCode({ challenge: input.challenge, code: input.code, nonce, ...meta }));
+  return step(meta, undefined, (nonce) => client.checkCode({ challenge: input.challenge, code: input.code, nonce, ...meta }));
 }
 
 export function chooseSignIn(client: CoreSignInClient, input: { challenge: string; shopId: string }, meta: BrowserMeta): Promise<StepOutcome> {
-  return step(meta, (nonce) => client.choose({ challenge: input.challenge, shopId: input.shopId, nonce, clientIp: meta.clientIp }));
+  return step(meta, undefined, (nonce) => client.choose({ challenge: input.challenge, shopId: input.shopId, nonce, clientIp: meta.clientIp }));
 }
 
 /** A Set-Cookie line (openSession's) as the name, decoded value and options Next's cookies().set takes. */

@@ -29,6 +29,8 @@ export type AccountLabels = PasswordLabels & {
   notReady: string;
   preparing: string;
   unavailable: string;
+  elsewhere: string;
+  elsewhereAction: string;
   coreFailed: string;
 };
 
@@ -81,6 +83,8 @@ function failureText(failed: AccountSignInState["failed"], labels: AccountLabels
       return labels.preparing;
     case "UNAVAILABLE":
       return labels.unavailable;
+    case "ELSEWHERE":
+      return labels.elsewhere;
     case "FAILED":
       return labels.coreFailed;
   }
@@ -93,7 +97,18 @@ function failureText(failed: AccountSignInState["failed"], labels: AccountLabels
  * "Forgot your password?" goes, or null when there is nowhere to reset it. notice: shown before
  * the first attempt (a sign-in that just failed elsewhere).
  */
-export function AccountSignInForm({ labels, forgotHref, notice = null }: { labels: AccountLabels; forgotHref: string | null; notice?: string | null }) {
+export function AccountSignInForm({
+  labels,
+  forgotHref,
+  elsewhereHref,
+  notice = null,
+}: {
+  labels: AccountLabels;
+  forgotHref: string | null;
+  /** The browser handoff: where an account this form may not sign in (a platform account) signs in instead. */
+  elsewhereHref: string;
+  notice?: string | null;
+}) {
   const [state, action, pending] = useActionState<AccountSignInState, FormData>(signInWithAccount, {
     step: "password",
     failed: null,
@@ -161,6 +176,11 @@ export function AccountSignInForm({ labels, forgotHref, notice = null }: { label
   return (
     <form action={action} className="form" data-testid="signin-password">
       {message ? <Notice tone="danger">{message}</Notice> : null}
+      {state.failed === "ELSEWHERE" ? (
+        <a className="btn btn-primary btn-block" href={elsewhereHref} data-testid="signin-elsewhere">
+          {labels.elsewhereAction}
+        </a>
+      ) : null}
       <input type="hidden" name="intent" value="password" />
       <label className="field">
         <span>{labels.email}</span>

@@ -43,6 +43,8 @@ export const en: Messages = {
     notReady: "Being prepared",
     preparing: "Your business is being prepared. Try again in a few minutes.",
     unavailable: "This account cannot sign in here. Ask the business owner for access.",
+    elsewhere: "This account signs in on its own sign-in page.",
+    elsewhereAction: "Continue to sign in",
     aside: "Everything the shop runs on, in one place.",
   },
   header: {

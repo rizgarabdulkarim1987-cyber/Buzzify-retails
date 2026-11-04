@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isPlatformAdmin } from "@/server/admin/platform-admin";
 import { getSessionUserId } from "@/server/auth/auth";
-import { resetPasswordHref } from "@/server/core/handoff";
+import { HANDOFF_START_PATH, resetPasswordHref } from "@/server/core/handoff";
 import { getI18n } from "../_lib/i18n";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
 import { AccountSignInForm } from "./login-form";
@@ -64,9 +64,12 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                 notReady: a.notReady,
                 preparing: a.preparing,
                 unavailable: a.unavailable,
+                elsewhere: a.elsewhere,
+                elsewhereAction: a.elsewhereAction,
                 coreFailed: a.coreFailed,
               }}
               forgotHref={resetPasswordHref()}
+              elsewhereHref={HANDOFF_START_PATH}
               notice={error === "core" ? a.coreFailed : null}
             />
           </div>
