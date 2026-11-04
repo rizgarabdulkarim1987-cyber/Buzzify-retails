@@ -91,7 +91,8 @@ test("a Studio-signed token completes the sign-in and lands in the shop", async 
   await fakeStudio(page, (url) => backToApp(url.searchParams, url.searchParams.get("nonce")!));
 
   await page.goto(START);
-  await expect(page).toHaveURL(/\/retail\/home/);
+  // Whoever sells lands straight in the till: /retail/home sends them on to /retail/sell.
+  await expect(page).toHaveURL(/\/retail\/sell/);
   await expect(page.getByText(CORE_SHOP.name).first()).toBeVisible();
   // The shop page may settle (a refresh after the workplace is chosen) before it can be measured.
   await page.waitForLoadState("networkidle");
