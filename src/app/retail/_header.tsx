@@ -1,7 +1,10 @@
 import Link from "next/link";
 import type { Locale, Messages } from "@/messages";
+import type { NavId } from "@/packs";
+import type { ProductBrand } from "@/packs/brand";
 import { BranchIcon, CartIcon, PackageIcon, SignOutIcon, StockIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
+import { Wordmark } from "../_ui/wordmark";
 import { signOut } from "../session-actions";
 
 type Props = {
@@ -11,42 +14,43 @@ type Props = {
   branch: string | null;
   terminal: string | null;
   user: string;
-  /** The user may see the stock screens (stock.view in the business shown). */
-  canViewStock: boolean;
-  /** The user may sell (sale.create) and a branch is chosen. */
-  canSell?: boolean;
+  /** The product this address or business belongs to (its wordmark). */
+  product: ProductBrand;
+  /** The pack's header sections the user may open (role and branch already checked), with the pack's words. */
+  nav: { id: NavId; href: string; label: string }[];
 };
 
+const NAV_ICONS: Partial<Record<NavId, () => React.JSX.Element>> = { sell: CartIcon, catalog: PackageIcon, stock: StockIcon };
+
 /**
- * The bar every retail screen carries: business, branch, terminal (when one is chosen) and user.
- * Long names are cut with an ellipsis (full text in the title tooltip) and never widen the page.
+ * The bar every retail screen carries: the product wordmark over the business, the pack's sections,
+ * then branch, terminal (when one is chosen) and user. Long names are cut with an ellipsis (full
+ * text in the title tooltip) and never widen the page.
  */
-export function ShellHeader({ locale, t, business, branch, terminal, user, canViewStock, canSell = false }: Props) {
+export function ShellHeader({ locale, t, business, branch, terminal, user, product, nav }: Props) {
   return (
     <header className="shell-header" data-testid="shell-header">
       <div className="bar">
         <div className="bar-business" title={business ?? undefined}>
           <StoreIcon />
-          <span className="visually-hidden">{t.header.business}: </span>
-          <span className="truncate" data-testid="header-business">
-            {business ?? t.header.noBusiness}
-          </span>
+          <div className="bar-titles">
+            <Wordmark brand={product.brand} word={product.word} className="bar-wordmark" />
+            <span className="visually-hidden">{t.header.business}: </span>
+            <span className="truncate" data-testid="header-business">
+              {business ?? t.header.noBusiness}
+            </span>
+          </div>
         </div>
         <div className="bar-actions">
           <LocaleSwitcher locale={locale} label={t.locale.label} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} />
-          {canSell ? (
-            <Link href="/retail/sell" className="bar-button" aria-label={t.sell.title} title={t.sell.title} data-testid="nav-sell">
-              <CartIcon />
-            </Link>
-          ) : null}
-          <Link href="/retail/catalog" className="bar-button" aria-label={t.catalog.title} title={t.catalog.title} data-testid="nav-catalog">
-            <PackageIcon />
-          </Link>
-          {canViewStock ? (
-            <Link href="/retail/stock" className="bar-button" aria-label={t.stock.title} title={t.stock.title} data-testid="nav-stock">
-              <StockIcon />
-            </Link>
-          ) : null}
+          {nav.map((item) => {
+            const Icon = NAV_ICONS[item.id] ?? PackageIcon;
+            return (
+              <Link key={item.id} href={item.href} className="bar-button" aria-label={item.label} title={item.label} data-testid={`nav-${item.id}`}>
+                <Icon />
+              </Link>
+            );
+          })}
           <Link href="/retail/select" className="bar-button" aria-label={t.header.switchBranch} title={t.header.switchBranch}>
             <SwitchIcon />
           </Link>

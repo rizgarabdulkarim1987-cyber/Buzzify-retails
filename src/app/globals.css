@@ -129,6 +129,28 @@ textarea {
   color: var(--color-bar-ink-2);
 }
 
+/* The product wordmark sits as a small line over the business name, so it never takes bar width. */
+.bar-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.bar-wordmark {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--color-bar-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-wordmark span {
+  color: var(--color-accent-line);
+}
+
 .bar-actions {
   display: flex;
   align-items: center;
@@ -579,6 +601,19 @@ textarea {
 
 .input::placeholder {
   color: var(--color-ink-3);
+}
+
+/* A value shown in a field's place that cannot be changed here. */
+.input-readonly {
+  display: flex;
+  align-items: center;
+  background: var(--color-panel);
+  border-color: var(--color-line);
+  font-weight: 600;
+}
+
+.input-readonly:hover {
+  border-color: var(--color-line);
 }
 
 textarea.input {

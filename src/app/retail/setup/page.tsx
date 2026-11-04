@@ -5,7 +5,8 @@ import { formatNumber, type Locale, type Messages } from "@/messages";
 import type { RtRole } from "@/generated/prisma/client";
 import { userLabels } from "@/server/auth/users";
 import { can } from "@/server/domain/permissions";
-import { ACTIVITY_TYPES, CAPABILITIES } from "@/server/domain/profiles";
+import { getPack, packWords } from "@/packs";
+import { CAPABILITIES } from "@/server/domain/profiles";
 import { currentGate } from "@/server/framework/business-info";
 import {
   AVAILABLE_STEPS,
@@ -245,16 +246,15 @@ function StepFields(props: {
       return (
         <>
           <input type="hidden" name="expectedVersion" value={b.version} />
-          <label className="field">
+          {/* The product is fixed when the business is created (support changes it), and naming the
+              other products here would show another product's words: the field is read-only. */}
+          <input type="hidden" name="activityType" value={b.activityType} />
+          <div className="field">
             <span>{t.setup.activity.activityType}</span>
-            <select className="input" name="activityType" defaultValue={b.activityType}>
-              {ACTIVITY_TYPES.map((a) => (
-                <option key={a} value={a}>
-                  {t.activity[a]}
-                </option>
-              ))}
-            </select>
-          </label>
+            <output className="input input-readonly" data-testid="setup-product">
+              {packWords(getPack(b.activityType), props.locale).productName}
+            </output>
+          </div>
           <fieldset className="fieldset">
             <legend>{t.setup.activity.capabilities}</legend>
             <span className="hint">{t.setup.activity.capabilitiesHint}</span>
