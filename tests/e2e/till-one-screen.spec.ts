@@ -91,6 +91,28 @@ test("the till is one fixed screen: lines page instead of scrolling, X removes w
   await page.getByTestId("calc-=").click();
   await expect(page.getByTestId("calc-out")).toContainText("١٢");
 
+  // Paying happens in the calculator's place: no popup, no scroll, and the keypad reads 7 8 9 from the left.
+  await page.getByTestId('cart-pay').first().click();
+  await expect(page.getByTestId('pay-panel')).toBeVisible();
+  await expect(page.getByTestId('calculator')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('line-rows')).toBeVisible();
+  expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
+  const k7 = await page.getByTestId('key-7').boundingBox();
+  const k9 = await page.getByTestId('key-9').boundingBox();
+  const k1 = await page.getByTestId('key-1').boundingBox();
+  expect(k7!.x).toBeLessThan(k9!.x);
+  expect(k7!.y).toBeLessThan(k1!.y);
+  await page.screenshot({ path: 'test-results/inline-pay-1280x520.png' });
+  // On a normal laptop screen the keys are real, touchable keys.
+  await page.setViewportSize({ width: 1366, height: 768 });
+  expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
+  expect((await page.getByTestId('key-5').boundingBox())!.height).toBeGreaterThanOrEqual(40);
+  await page.screenshot({ path: 'test-results/inline-pay-1366x768.png' });
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('calculator')).toBeVisible();
+
   // Phone width: two fixed panes, still no scroll.
   await page.setViewportSize({ width: 375, height: 667 });
   expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
