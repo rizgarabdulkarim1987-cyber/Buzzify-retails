@@ -1,7 +1,9 @@
 import type { SellCategory, SellItem } from "@/server/sales/catalog";
+import type { ExpenseView } from "@/server/sales/expenses";
 import type { SaleView } from "@/server/sales/sales";
 import type { ShiftSummary } from "@/server/sales/shifts";
 import type { CategoryDto, ReceiptDto, SellItemDto, ShiftDto } from "./cart";
+import type { ExpenseDto } from "./expenses";
 
 /* What crosses the wire to the till: BigInt as digit strings, dates as ISO text. Cost never leaves the server. */
 
@@ -35,6 +37,7 @@ export const shiftDto = (s: ShiftSummary): ShiftDto => ({
   cashMinor: s.cashMinor.toString(),
   cardMinor: s.cardMinor.toString(),
   expectedCashMinor: s.expectedCashMinor.toString(),
+  expensesMinor: s.expensesMinor.toString(),
   usdRateMicro: s.shift.usdRateMicro === null ? null : s.shift.usdRateMicro.toString(),
   openingUsdMinor: s.shift.openingUsdMinor.toString(),
   usdTenderedMinor: s.usdTenderedMinor.toString(),
@@ -69,4 +72,14 @@ export const receiptDto = (s: SaleView): ReceiptDto => ({
       ? { usdMinor: p.tenderedForeignMinor.toString(), rateMicro: p.rateMicro.toString() }
       : {}),
   })),
+});
+
+export const expenseDto = (e: ExpenseView): ExpenseDto => ({
+  id: e.id,
+  categoryKey: e.categoryKey,
+  amountMinor: e.amountMinor.toString(),
+  note: e.note,
+  createdAt: e.createdAt.toISOString(),
+  voidedAt: e.voidedAt === null ? null : e.voidedAt.toISOString(),
+  voidReason: e.voidReason,
 });

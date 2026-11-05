@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { can } from "@/server/domain/permissions";
+import { listShiftExpenses } from "@/server/sales/expenses";
 import { tillState } from "@/server/sales/shifts";
 import { getI18n } from "../../../_lib/i18n";
 import { StateBlock } from "../../../_ui/state";
 import { RefusedPage } from "../../catalog/_lib/state-pages";
-import { shiftDto } from "../_lib/dto";
+import { expenseDto, shiftDto } from "../_lib/dto";
 import { tillGate } from "../_lib/load";
 import { CloseShiftForm } from "../shift-forms";
 
@@ -16,6 +18,8 @@ export default async function CloseShiftPage() {
   if (!gate.ok) return <RefusedPage code={gate.code} t={t} />;
   const till = await tillState({}, gate.meta);
   if (!till.ok) return <RefusedPage code={till.code} t={t} />;
+  const expenses = till.value.open ? await listShiftExpenses({ shiftId: till.value.open.shift.id }, gate.meta) : null;
+  const role = gate.shell.options?.ok === true ? gate.shell.options.value.role : null;
 
   return (
     <main className="till-form-page till-form-page-wide">
@@ -24,7 +28,14 @@ export default async function CloseShiftPage() {
         {till.value.open ? <p>{t.sell.close.intro}</p> : null}
       </div>
       {till.value.open ? (
-        <CloseShiftForm locale={locale} t={t} shift={shiftDto(till.value.open)} />
+        <CloseShiftForm
+          locale={locale}
+          t={t}
+          shift={shiftDto(till.value.open)}
+          expenses={expenses?.ok ? expenses.value.map(expenseDto) : []}
+          canVoidExpense={role !== null && can(role, "shift.manage")}
+          who={gate.shell.user.name || gate.shell.user.email}
+        />
       ) : (
         <StateBlock
           kind="empty"

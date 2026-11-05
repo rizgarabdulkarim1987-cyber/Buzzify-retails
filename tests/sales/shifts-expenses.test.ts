@@ -122,4 +122,22 @@ describe("the summary and the close subtract the shift's expenses", () => {
     if (!c.ok) throw new Error(c.code);
     expect(c.value).toMatchObject({ expectedCashMinor: 750n, differenceMinor: 0n, expectedUsdMinor: 15_000n, differenceUsdMinor: -100n });
   });
+
+  it("a close and an expense racing never interleave: the closed expected cash holds exactly the expenses that got in", async () => {
+    for (let round = 0; round < 4; round++) {
+      const s = await shop();
+      const shift = await open(s, {}, 50_000n);
+      const [c, e] = await Promise.all([
+        closeShift({ shiftId: shift.id, countedCashMinor: 50_000n, expectedVersion: shift.version }, s.as("cashier")),
+        spend(s, 10_000n),
+      ]);
+      expect(c.ok).toBe(true);
+      const row = await db.rtShift.findUniqueOrThrow({ where: { id: shift.id } });
+      const kept = await db.rtExpense.aggregate({ where: { shiftId: shift.id, voidedAt: null }, _sum: { amountMinor: true } });
+      expect(row.status).toBe("CLOSED");
+      expect(row.expectedCashMinor).toBe(50_000n - (kept._sum.amountMinor ?? 0n));
+      if (e.ok) expect(kept._sum.amountMinor).toBe(10_000n);
+      else expect(e.code).toBe("SHIFT_NOT_OPEN");
+    }
+  }, 60_000);
 });

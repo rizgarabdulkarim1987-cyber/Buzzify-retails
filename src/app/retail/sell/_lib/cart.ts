@@ -61,6 +61,8 @@ export type ShiftDto = {
   cashMinor: string;
   cardMinor: string;
   expectedCashMinor: string;
+  /** The shift's expenses not voided (paid from the dinar drawer); expectedCashMinor already subtracts them. */
+  expensesMinor: string;
   /** IQD per 1 USD x 10^6, or null: this shift takes no dollars. */
   usdRateMicro: string | null;
   openingUsdMinor: string;

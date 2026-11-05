@@ -1,4 +1,5 @@
 import { MAX_SELL_ITEMS, listSellCategories, listSellItems } from "@/server/sales/catalog";
+import { can } from "@/server/domain/permissions";
 import { tillState } from "@/server/sales/shifts";
 import { FALLBACK_PACK, packById, packWords } from "@/packs";
 import { getI18n } from "../../_lib/i18n";
@@ -62,6 +63,7 @@ export default async function SellPage() {
         business={businessName}
         branch={shell.branch?.name ?? ""}
         operator={shell.user.name || shell.user.email}
+        canVoidExpense={shell.options?.ok === true && can(shell.options.value.role, "shift.manage")}
       />
     </main>
   );

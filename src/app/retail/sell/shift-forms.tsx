@@ -9,7 +9,9 @@ import { Notice } from "../../_ui/state";
 import { failureMessage } from "../catalog/_lib/failures";
 import { newKey } from "../catalog/_lib/keys";
 import { closeShiftAction, openShiftAction } from "./actions";
+import { ExpenseSection } from "./expense-panel";
 import { microToRateText, parseAmount, rateToMicro, type Currency, type ShiftDto } from "./_lib/cart";
+import type { ExpenseDto } from "./_lib/expenses";
 import { keyFromKeyboard, moneyDecimals, numpadPress, type NumpadKey } from "./_lib/till";
 import { differenceText, entryText, money, Numpad, rateLine, ShiftSummaryView } from "./_lib/views";
 
@@ -230,9 +232,25 @@ export function OpenShiftForm({
 }
 
 /** Close shift: the summary, the counted cash (and dollars) on the numpad, the differences as they are typed, then close. */
-export function CloseShiftForm({ locale, t, shift }: { locale: Locale; t: Messages; shift: ShiftDto }) {
+export function CloseShiftForm({
+  locale,
+  t,
+  shift,
+  expenses = [],
+  canVoidExpense = false,
+  who = "",
+}: {
+  locale: Locale;
+  t: Messages;
+  shift: ShiftDto;
+  /** The shift's expenses (voided ones included), newest first. */
+  expenses?: ExpenseDto[];
+  canVoidExpense?: boolean;
+  who?: string;
+}) {
   const s = t.sell.close;
   const ctx = { locale, t };
+  const router = useRouter();
   const hasUsd = shift.usdRateMicro !== null;
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -296,6 +314,7 @@ export function CloseShiftForm({ locale, t, shift }: { locale: Locale; t: Messag
           </p>
         ) : null}
         <ShiftSummaryView locale={locale} t={t} shift={closed.shift} />
+        <ExpenseSection locale={locale} t={t} currency={closed.shift.currency} initial={expenses} canVoid={false} who={who} />
         <Link href="/retail/sell" className="till-btn till-btn-go" data-testid="open-new-shift">
           {s.openNew}
         </Link>
@@ -305,7 +324,10 @@ export function CloseShiftForm({ locale, t, shift }: { locale: Locale; t: Messag
 
   return (
     <div className="till-close">
-      <ShiftSummaryView locale={locale} t={t} shift={shift} />
+      <div className="till-close-side">
+        <ShiftSummaryView locale={locale} t={t} shift={shift} />
+        <ExpenseSection locale={locale} t={t} currency={shift.currency} initial={expenses} canVoid={canVoidExpense} who={who} onVoided={() => router.refresh()} />
+      </div>
       <div className="till-shift-form" data-testid="close-shift-form">
         <div className={hasUsd ? "till-entry-pair" : undefined}>
           <Entry

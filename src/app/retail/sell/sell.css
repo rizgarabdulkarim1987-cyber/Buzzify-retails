@@ -1285,8 +1285,12 @@ a.till-nav-item:hover {
 .till-fn {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
   gap: 6px;
+}
+
+.till-fn-expense {
+  grid-column: 1 / -1;
 }
 
 .till-fn-key {
@@ -1385,8 +1389,12 @@ a.till-nav-item:hover {
 
   .till-fn {
     order: -1;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     grid-template-rows: auto;
+  }
+
+  .till-fn-expense {
+    grid-column: auto;
   }
 
   .till-fn-key {
@@ -2706,4 +2714,310 @@ body:has(.till-done) .shell-header {
 :root:lang(en) .till-cols {
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+/* Expenses ------------------------------------------------------------------------------------------
+   Paid from the drawer: the till's Expense panel (it reuses the payment layout: head and Save stay put on a
+   phone, only the middle scrolls, so Save never covers a key) and the close screen's collapsed list.
+   Logical properties only, so Arabic and Sorani mirror by themselves. */
+
+.till-btn-danger {
+  border-color: var(--color-danger-fill);
+  background: var(--color-danger-fill);
+  color: var(--color-on-fill);
+}
+
+.till-btn-danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.till-xpad:focus {
+  outline: none;
+}
+
+.till-x-col {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.till-x-amountbox {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  outline: 2px solid var(--color-accent);
+  outline-offset: -3px;
+}
+
+.till-x-amountbox > span {
+  color: var(--color-ink-2);
+  font-size: var(--t-b);
+  font-weight: 500;
+}
+
+.till-x-amountbox .till-display {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 1.75rem;
+}
+
+.till-x-cats {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.till-x-cats legend {
+  margin-block-end: var(--space-2);
+  padding: 0;
+  font-size: var(--t-b);
+  font-weight: 700;
+}
+
+.till-x-catgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.till-x-cat {
+  min-height: 2.75rem;
+  padding-block: var(--space-2);
+  line-height: var(--leading-tight);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.till-x-cat[aria-pressed="true"] {
+  cursor: pointer;
+}
+
+.till-x-notefield {
+  min-width: 0;
+}
+
+.till-x-notefield .input {
+  min-height: 2.75rem;
+}
+
+.till-x-need {
+  color: var(--color-danger);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.till-x-today {
+  min-width: 0;
+}
+
+.till-x-today h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.till-x-empty {
+  margin: 0;
+  color: var(--color-ink-2);
+}
+
+.till-x-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.till-x-row {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.till-x-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px var(--space-3);
+  min-width: 0;
+}
+
+.till-x-amount {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.till-x-note {
+  grid-column: 1 / -1;
+  color: var(--color-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.till-x-meta {
+  grid-column: 1 / -1;
+  color: var(--color-ink-3);
+  font-size: 0.75rem;
+}
+
+.till-x-row[data-voided] {
+  background: var(--color-panel);
+}
+
+.till-x-row[data-voided] .till-x-main strong,
+.till-x-row[data-voided] .till-x-amount {
+  color: var(--color-ink-3);
+  text-decoration: line-through;
+}
+
+.till-x-void {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--t-b);
+  overflow-wrap: anywhere;
+}
+
+.till-x-badge {
+  display: inline-block;
+  padding: 1px var(--space-2);
+  border-radius: 999px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.till-x-voidbtn {
+  justify-self: end;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-danger-line);
+  border-radius: var(--radius);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.till-x-voidbtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.till-x-voidbtn:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.till-x-voidform {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.till-x-voidform .input {
+  min-height: 2.75rem;
+}
+
+.till-x-voidacts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.till-x-voidacts .till-btn {
+  min-height: 2.75rem;
+}
+
+.till-x-error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--t-b);
+}
+
+/* Wide screens: amount and keypad beside the categories and the note; the day's list under both. */
+@media (min-width: 56rem) {
+  .till-x-body .till-x-today {
+    grid-column: 1 / -1;
+  }
+
+  .till-x-catgrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .till-x-amountbox {
+    position: static;
+  }
+}
+
+/* The close screen: the summary and, under it, the shift's expenses as one collapsed line. */
+.till-close-side {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.till-x-section {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.till-x-section > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  list-style: none;
+}
+
+.till-x-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.till-x-sum {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
+  color: var(--color-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.till-x-sum b {
+  color: var(--color-ink);
+}
+
+.till-x-section > summary:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.till-x-scroll {
+  max-height: min(24rem, 60dvh);
+  padding: 0 var(--space-3) var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
