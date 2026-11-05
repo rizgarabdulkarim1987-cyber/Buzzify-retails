@@ -40,7 +40,6 @@ import { Numpad, Receipt, TicketPad, TicketRow, Tile, entryText, money } from ".
 import { accentFor, ACCENT } from "./_lib/category-accent";
 import { categoryKind } from "./_lib/category-kind";
 import { CategoryTile } from "./_lib/category-tile";
-import { grotesk, mono } from "./_lib/tile-fonts";
 import { ChevronIcon } from "./_lib/nav-icons";
 import { TillNav } from "./till-nav";
 
@@ -847,7 +846,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
         <section className="till-products" aria-label={s.items} aria-busy={loading}>
           {!showItems ? (
-            <div className={`till-cattiles ${grotesk.variable} ${mono.variable}`} data-testid="sell-cats" aria-label={s.categories} role="group">
+            <div className="till-cattiles" data-testid="sell-cats" aria-label={s.categories} role="group">
               <CategoryTile
                 name={s.all}
                 kind="all"

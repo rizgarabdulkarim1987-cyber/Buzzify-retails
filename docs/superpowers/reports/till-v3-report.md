@@ -59,3 +59,13 @@ Against the Odoo-style standard it now has the same structure: big ticket with a
 - Quick cash offers amounts at or above what is due. The offline strip follows the browser's online flag only.
 - Dev-mode speed with thousands of tiles was measured only in the first pass (78 to 166 ms per tap with 2,000 tiles); this pass was checked with 45 items, and not in a production build.
 - Two items in the sample show "out" because their opening stock is zero in this local data.
+
+## App fonts (separate commit)
+
+All Retails screens use Space Grotesk (400, 500, 700) for text and Geist Mono (400, 500) for small labels, counts, indices, table headers, status chips, the ticket's quantity and price cells and the sale tab sub-lines. Both come from `next/font/google` in the root layout (Latin subset, display swap, self-hosted at build, exposed as `--font-grotesk` and `--font-mono`).
+
+- Space Grotesk and Geist Mono have **no Arabic glyphs**. Arabic and Sorani letters (and Arabic-Indic digits) fall through to the project's existing Arabic stack, named `--font-arabic` in `tokens.css`: Segoe UI, then Noto Sans Arabic, Noto Sans, SF Arabic, Geeza Pro, Tahoma. On this Windows machine that is Segoe UI. Digits keep the locale's current style (nothing in number formatting changed): Western digits come from Space Grotesk, Arabic-Indic digits from the Arabic font.
+- Letter-spacing and capitals on small labels apply to English only (`:root:lang(en)`); Arabic and Sorani never get tracking, which would break their joins.
+- No text under 11px: the two 10px rules (till function-key sub-label, rail "soon" label) were raised to 11px; a test guards this.
+- Font bytes on `/retail/sell` (measured in dev with Chrome, woff2): about 22 KB for Space Grotesk plus about 23 KB for Geist Mono, 45 KB in total, two requests. Not measured in a production build and no LCP number was taken, so "small" rests on the file sizes alone.
+- Screenshots of the new fonts: `fonts-sell-*`, `fonts-stock-*` (desktop ar and en, tablet ar, phone ar) and `fonts-login-*`. No horizontal overflow on login, sell, shift, stock, items and setup in ar, ckb and en at desktop, tablet and phone widths (measured). Weak: mixed Arabic and Latin lines look acceptable in Segoe UI, but weights and x-heights are not identical, and on a phone or Mac the Arabic fallback is a different font that I did not see.

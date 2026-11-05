@@ -41,8 +41,11 @@
   --color-success-soft: oklch(0.955 0.03 150);
   --color-skeleton: oklch(0.925 0.008 85);
 
-  /* Type: one Arabic-capable system family for everything (Sorani letters included). */
-  --font-ui: "Segoe UI", "Noto Sans Arabic", "Noto Sans", "SF Arabic", "Geeza Pro", Tahoma, system-ui, sans-serif;
+  /* Type: Space Grotesk for Latin letters and digits, then the system Arabic stack (Sorani letters included) for everything it lacks. */
+  --font-arabic: "Segoe UI", "Noto Sans Arabic", "Noto Sans", "SF Arabic", "Geeza Pro", Tahoma, system-ui, sans-serif;
+  --font-ui: var(--font-grotesk), var(--font-arabic);
+  /* Geist Mono for small labels, counts, indices and table headers; Arabic letters again from the system stack. */
+  --font-data: var(--font-mono), ui-monospace, "SFMono-Regular", Consolas, var(--font-arabic);
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
   --text-md: 0.9375rem;

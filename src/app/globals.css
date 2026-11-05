@@ -550,8 +550,9 @@ textarea {
   border-radius: 999px;
   background: var(--color-panel);
   color: var(--color-ink-2);
+  font-family: var(--font-data);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -715,8 +716,9 @@ textarea.input {
   padding: var(--space-2) var(--space-3);
   border-block-end: 1px solid var(--color-line-strong);
   color: var(--color-ink-2);
+  font-family: var(--font-data);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   text-align: start;
   white-space: nowrap;
 }
@@ -972,6 +974,7 @@ textarea.input {
 }
 
 .auth-code {
+  font-family: var(--font-data);
   font-size: var(--text-lg);
   letter-spacing: 0.08em;
 }
@@ -1357,6 +1360,7 @@ textarea.input {
 }
 
 .qe-barcode {
+  font-family: var(--font-data);
   font-size: var(--text-lg);
   letter-spacing: 0.02em;
 }
@@ -3246,4 +3250,11 @@ textarea.input {
   color: var(--color-ink);
   font-weight: 600;
   text-decoration: none;
+}
+
+/* Small caps labels: Latin gets tracking and capitals; Arabic and Sorani never (tracking would break their joins). */
+:root:lang(en) .data-table th,
+:root:lang(en) .badge {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }

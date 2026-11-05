@@ -437,7 +437,7 @@ a.till-nav-item:hover {
 
 .till-cattile-index {
   color: var(--accent);
-  font-family: var(--font-tile-mono), ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-data);
   font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -449,7 +449,7 @@ a.till-nav-item:hover {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  font-family: var(--font-grotesk), var(--font-ui);
+  font-family: var(--font-ui);
   font-size: 1.3125rem;
   font-weight: 700;
   line-height: 1.4;
@@ -477,7 +477,7 @@ a.till-nav-item:hover {
   gap: var(--space-2);
   margin-block-start: var(--space-2);
   color: var(--accent);
-  font-family: var(--font-tile-mono), ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-data);
   font-size: 0.6875rem;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -1292,7 +1292,7 @@ a.till-nav-item:hover {
 
 .till-fn-key small {
   color: var(--color-ink-3);
-  font-size: 0.625rem;
+  font-size: 0.6875rem;
 }
 
 .till-fn-key:hover:not(:disabled) {
@@ -1496,7 +1496,7 @@ a.till-nav-item:hover {
     padding: 0;
     background: transparent;
     color: var(--color-ink-3);
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
   }
 
   .till-menu .till-nav {
@@ -2441,4 +2441,27 @@ body:has(.till-done) .shell-header {
   .till-receipt-thanks {
     color: #000;
   }
+}
+
+/* Mono voice: counts, headers, tab sub-lines and the numbers of the ticket table. */
+.till-count,
+.till-badge,
+.till-cols,
+.till-tab small,
+.till-switch-btn small,
+.till-total small,
+.till-sale span,
+.till-row-qty,
+.till-row-price {
+  font-family: var(--font-data);
+}
+
+.till-cols {
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+:root:lang(en) .till-cols {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
