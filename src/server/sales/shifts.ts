@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Currency, RtShiftStatus } from "@/generated/prisma/enums";
 import { money } from "@/server/catalog/price-core";
+import { validRateMicro } from "@/server/domain/fx";
 import { can } from "@/server/domain/permissions";
 import type { Actor } from "@/server/framework/actor";
 import { defineAction } from "@/server/framework/action";
@@ -25,6 +26,14 @@ import { updateVersioned } from "@/server/framework/versioned";
  *   expectedVersion must match (VERSION_CONFLICT). expected = opening + the cash its sales took
  *   (cash payments net of change); difference = counted - expected (negative: cash is missing).
  *   A closed shift never changes.
+ * - Dollars (spec 2026-11-05): a shift may carry a typed rate (usdRateMicro, IQD per 1 USD x 10^6; 100 to
+ *   10,000, only when USD is in the business's enabled currencies) and opening dollars (which need a
+ *   rate). setShiftRate (shift.manage, OPEN shift, expectedVersion) changes the rate; a sale stores the
+ *   rate it used, so a past sale never changes. The dinar drawer moves by the dinar cash rows' kept
+ *   amount and, for a dollar row, by amountMinor - tenderedMinor (minus the change given from the dinar
+ *   drawer for it). The dollar drawer = opening dollars + dollars handed over. A shift with a rate
+ *   closes with countedUsdMinor (required) and records expected and difference for both drawers; one
+ *   without a rate closes exactly as before (countedUsdMinor refused, the dollar fields stay null).
  * - myOpenShift / shiftSummary: reads; the summary counts the shift's sales and sums them by method.
  */
 
@@ -45,11 +54,17 @@ export type ShiftView = {
   status: RtShiftStatus;
   currency: Currency;
   openingCashMinor: bigint;
+  /** IQD per 1 USD x 10^6, or null: no dollars at this till. */
+  usdRateMicro: bigint | null;
+  openingUsdMinor: bigint;
   openedAt: Date;
   closedAt: Date | null;
   countedCashMinor: bigint | null;
   expectedCashMinor: bigint | null;
   differenceMinor: bigint | null;
+  countedUsdMinor: bigint | null;
+  expectedUsdMinor: bigint | null;
+  differenceUsdMinor: bigint | null;
   version: number;
 };
 
@@ -58,11 +73,17 @@ export type ShiftSummary = {
   salesCount: number;
   /** Sum of the sales' totals. */
   totalMinor: bigint;
-  /** Cash kept by the sales (net of change). */
+  /** What the sales moved in the dinar drawer: dinar cash kept, minus the change given for dollar payments. */
   cashMinor: bigint;
   cardMinor: bigint;
-  /** opening + cashMinor: what the drawer should hold now (or held at close). */
+  /** Dollars (USD cents) handed over by the sales. */
+  usdTenderedMinor: bigint;
+  /** The dinar value of those dollars (sum of the dollar payments' tendered dinars). cashMinor + usdDinarMinor + cardMinor = totalMinor. */
+  usdDinarMinor: bigint;
+  /** opening + cashMinor: what the dinar drawer should hold now (or held at close). */
   expectedCashMinor: bigint;
+  /** openingUsdMinor + usdTenderedMinor while the shift has a rate, else null. */
+  expectedUsdMinor: bigint | null;
 };
 
 const shiftSelect = {
@@ -74,11 +95,16 @@ const shiftSelect = {
   status: true,
   currency: true,
   openingCashMinor: true,
+  usdRateMicro: true,
+  openingUsdMinor: true,
   openedAt: true,
   closedAt: true,
   countedCashMinor: true,
   expectedCashMinor: true,
   differenceMinor: true,
+  countedUsdMinor: true,
+  expectedUsdMinor: true,
+  differenceUsdMinor: true,
   version: true,
 } as const;
 
@@ -87,26 +113,57 @@ export async function openShiftOf(tx: Tx, actor: Actor): Promise<ShiftView | nul
   return tx.rtShift.findFirst({ where: { openedById: actor.userId, status: "OPEN" }, select: shiftSelect });
 }
 
-/** Totals of the shift's sales (count, total) and payments (cash net of change, card). */
-export async function shiftTotals(tx: Tx, shiftId: string): Promise<{ salesCount: number; totalMinor: bigint; cashMinor: bigint; cardMinor: bigint }> {
+/** Totals of the shift's sales (count, total) and payments (dinar drawer movement, dollars, card). */
+export async function shiftTotals(
+  tx: Tx,
+  shiftId: string,
+): Promise<{ salesCount: number; totalMinor: bigint; cashMinor: bigint; cardMinor: bigint; usdTenderedMinor: bigint; usdDinarMinor: bigint }> {
   const [sales, pays] = await Promise.all([
     tx.rtSale.aggregate({ where: { shiftId }, _count: { _all: true }, _sum: { totalMinor: true } }),
-    tx.rtPayment.groupBy({ by: ["method"], where: { shiftId }, _sum: { amountMinor: true } }),
+    tx.rtPayment.groupBy({
+      by: ["method", "tenderedCurrency"],
+      where: { shiftId },
+      _sum: { amountMinor: true, tenderedMinor: true, tenderedForeignMinor: true },
+    }),
   ]);
-  const sumOf = (m: "CASH" | "CARD") => pays.find((p) => p.method === m)?._sum.amountMinor ?? 0n;
-  return { salesCount: sales._count._all, totalMinor: sales._sum.totalMinor ?? 0n, cashMinor: sumOf("CASH"), cardMinor: sumOf("CARD") };
+  let cashMinor = 0n;
+  let cardMinor = 0n;
+  let usdTenderedMinor = 0n;
+  let usdDinarMinor = 0n;
+  for (const p of pays) {
+    const amount = p._sum.amountMinor ?? 0n;
+    if (p.method === "CARD") cardMinor += amount;
+    else if (p.tenderedCurrency === "USD") {
+      // Kept - handed over = minus the change given (from the dinar drawer) against this payment.
+      const tendered = p._sum.tenderedMinor ?? 0n;
+      cashMinor += amount - tendered;
+      usdDinarMinor += tendered;
+      usdTenderedMinor += p._sum.tenderedForeignMinor ?? 0n;
+    } else cashMinor += amount;
+  }
+  return { salesCount: sales._count._all, totalMinor: sales._sum.totalMinor ?? 0n, cashMinor, cardMinor, usdTenderedMinor, usdDinarMinor };
 }
 
 async function summaryOf(tx: Tx, shift: ShiftView): Promise<ShiftSummary> {
   const t = await shiftTotals(tx, shift.id);
-  return { shift, ...t, expectedCashMinor: shift.openingCashMinor + t.cashMinor };
+  return {
+    shift,
+    ...t,
+    expectedCashMinor: shift.openingCashMinor + t.cashMinor,
+    expectedUsdMinor: shift.usdRateMicro === null ? null : shift.openingUsdMinor + t.usdTenderedMinor,
+  };
 }
+
+/** IQD per 1 USD x 10^6: a bigint or a string of digits. Its range is checked by validRateMicro. */
+const rateInput = z.union([z.bigint(), z.string().regex(/^\d{1,19}$/).transform((v) => BigInt(v))]);
 
 const openInput = z
   .object({
     branchId: id,
     terminalId: id.nullish().transform((v) => v ?? null),
     openingCashMinor: money,
+    openingUsdMinor: money.optional(),
+    usdRateMicro: rateInput.optional(),
   })
   .strict();
 
@@ -131,7 +188,13 @@ export const openShift = defineAction({
     // Seen through the actor's branches only: a shift left open in a branch the actor lost access
     // to is caught by the partial unique index instead (an internal error; a manager closes it).
     if (await openShiftOf(tx, actor)) throw new RuleError("SHIFT_ALREADY_OPEN");
-    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true } });
+    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true, enabledCurrencies: true } });
+    const openingUsdMinor = input.openingUsdMinor ?? 0n;
+    if (input.usdRateMicro !== undefined) {
+      if (!biz.enabledCurrencies.includes("USD") || !validRateMicro(input.usdRateMicro)) throw new RuleError("INVALID_INPUT");
+    } else if (openingUsdMinor > 0n) {
+      throw new RuleError("INVALID_INPUT");
+    }
     return tx.rtShift.create({
       data: {
         businessId: actor.businessId,
@@ -141,6 +204,8 @@ export const openShift = defineAction({
         openedById: actor.userId,
         currency: biz.defaultCurrency,
         openingCashMinor: input.openingCashMinor,
+        openingUsdMinor,
+        usdRateMicro: input.usdRateMicro ?? null,
       },
       select: shiftSelect,
     });
@@ -148,7 +213,13 @@ export const openShift = defineAction({
   audit: (input, value) => ({
     entity: "RtShift",
     entityId: value.id,
-    changes: { branchId: value.branchId, terminalId: value.terminalId, openingCashMinor: input.openingCashMinor },
+    changes: {
+      branchId: value.branchId,
+      terminalId: value.terminalId,
+      openingCashMinor: input.openingCashMinor,
+      openingUsdMinor: value.openingUsdMinor,
+      usdRateMicro: value.usdRateMicro,
+    },
   }),
 });
 
@@ -156,6 +227,8 @@ const closeInput = z
   .object({
     shiftId: id,
     countedCashMinor: money,
+    /** Required when the shift has a dollar rate; refused when it has none. */
+    countedUsdMinor: money.optional(),
     note: z
       .string()
       .trim()
@@ -166,7 +239,7 @@ const closeInput = z
   })
   .strict();
 
-export type ClosedShift = ShiftSummary & { differenceMinor: bigint };
+export type ClosedShift = ShiftSummary & { differenceMinor: bigint; differenceUsdMinor: bigint | null };
 
 /** Closes a shift with the counted cash; returns the day summary and the difference (see the header). */
 export const closeShift = defineAction({
@@ -181,9 +254,15 @@ export const closeShift = defineAction({
     if (shift.openedById !== actor.userId && !can(actor.role, "shift.manage")) throw new ForbiddenError();
     if (shift.status !== "OPEN") throw new RuleError("SHIFT_NOT_OPEN");
     if (shift.version !== input.expectedVersion) throw new VersionConflictError();
+    if ((shift.usdRateMicro !== null) !== (input.countedUsdMinor !== undefined)) {
+      throw new RuleError("INVALID_INPUT", { field: "countedUsdMinor" });
+    }
     const t = await shiftTotals(tx, shift.id);
     const expectedCashMinor = shift.openingCashMinor + t.cashMinor;
     const differenceMinor = input.countedCashMinor - expectedCashMinor;
+    const countedUsdMinor = input.countedUsdMinor ?? null;
+    const expectedUsdMinor = countedUsdMinor === null ? null : shift.openingUsdMinor + t.usdTenderedMinor;
+    const differenceUsdMinor = countedUsdMinor === null ? null : countedUsdMinor - expectedUsdMinor!;
     const closedAt = new Date();
     await updateVersioned(tx.rtShift, { id: shift.id, status: "OPEN" }, input.expectedVersion, {
       status: "CLOSED",
@@ -192,6 +271,9 @@ export const closeShift = defineAction({
       countedCashMinor: input.countedCashMinor,
       expectedCashMinor,
       differenceMinor,
+      countedUsdMinor,
+      expectedUsdMinor,
+      differenceUsdMinor,
       closeNote: input.note,
     });
     const closed: ShiftView = {
@@ -201,9 +283,12 @@ export const closeShift = defineAction({
       countedCashMinor: input.countedCashMinor,
       expectedCashMinor,
       differenceMinor,
+      countedUsdMinor,
+      expectedUsdMinor,
+      differenceUsdMinor,
       version: shift.version + 1,
     };
-    return { shift: closed, ...t, expectedCashMinor, differenceMinor };
+    return { shift: closed, ...t, expectedCashMinor, differenceMinor, expectedUsdMinor, differenceUsdMinor };
   },
   audit: (_input, value) => ({
     entity: "RtShift",
@@ -212,8 +297,37 @@ export const closeShift = defineAction({
       countedCashMinor: value.shift.countedCashMinor,
       expectedCashMinor: value.expectedCashMinor,
       differenceMinor: value.differenceMinor,
+      countedUsdMinor: value.shift.countedUsdMinor,
+      expectedUsdMinor: value.expectedUsdMinor,
+      differenceUsdMinor: value.differenceUsdMinor,
       salesCount: value.salesCount,
     },
+  }),
+});
+
+const rateActionInput = z.object({ shiftId: id, usdRateMicro: rateInput, expectedVersion: z.number().int().min(1) }).strict();
+
+/** Changes the dollar rate of an OPEN shift (shift.manage). Past sales keep the rate they used. */
+export const setShiftRate = defineAction({
+  name: "shift.rate",
+  permission: "shift.manage",
+  input: rateActionInput,
+  writes: true,
+  async run({ tx, input, lockBusiness }): Promise<ShiftView> {
+    await lockBusiness(shiftLock(input.shiftId));
+    const shift = await tx.rtShift.findFirst({ where: { id: input.shiftId }, select: shiftSelect });
+    if (!shift) throw new NotFoundError();
+    if (shift.status !== "OPEN") throw new RuleError("SHIFT_NOT_OPEN");
+    if (shift.version !== input.expectedVersion) throw new VersionConflictError();
+    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { enabledCurrencies: true } });
+    if (!biz.enabledCurrencies.includes("USD") || !validRateMicro(input.usdRateMicro)) throw new RuleError("INVALID_INPUT");
+    await updateVersioned(tx.rtShift, { id: shift.id, status: "OPEN" }, input.expectedVersion, { usdRateMicro: input.usdRateMicro });
+    return { ...shift, usdRateMicro: input.usdRateMicro, version: shift.version + 1 };
+  },
+  audit: (input, value) => ({
+    entity: "RtShift",
+    entityId: value.id,
+    changes: { usdRateMicro: input.usdRateMicro, version: value.version },
   }),
 });
 
