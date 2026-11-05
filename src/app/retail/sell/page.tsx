@@ -1,5 +1,6 @@
 import { MAX_SELL_ITEMS, listSellCategories, listSellItems } from "@/server/sales/catalog";
 import { tillState } from "@/server/sales/shifts";
+import { FALLBACK_PACK, packById, packWords } from "@/packs";
 import { getI18n } from "../../_lib/i18n";
 import { RefusedPage } from "../catalog/_lib/state-pages";
 import { categoryDto, itemDto, shiftDto } from "./_lib/dto";
@@ -33,6 +34,8 @@ export default async function SellPage() {
 
   const open = till.value.open;
   const [cats, items] = await Promise.all([listSellCategories({}, meta), listSellItems({ locationId: open.shift.locationId }, meta)]);
+  const pack = shell.pack?.id ?? FALLBACK_PACK;
+  const departmentWords = packWords(packById(pack), locale).till;
   const businessName = shell.options?.ok ? shell.options.value.business.name : "";
   return (
     <main className="till-page">
@@ -46,6 +49,8 @@ export default async function SellPage() {
         categories={cats.ok ? cats.value.map(categoryDto) : []}
         initialItems={items.ok ? items.value.map(itemDto) : []}
         pageSize={MAX_SELL_ITEMS}
+        pack={pack}
+        departmentWords={departmentWords}
         heldKey={`till-held:${meta.businessId}:${meta.userId}`}
         business={businessName}
         branch={shell.branch?.name ?? ""}

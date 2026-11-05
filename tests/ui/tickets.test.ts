@@ -87,7 +87,7 @@ describe("parallel tickets", () => {
 
   it("the ar, ckb and en messages carry the new keys and no Hold key", () => {
     for (const t of [ar, ckb, en]) {
-      for (const k of ["newSale", "saleNo", "saleOf", "saleEmpty", "openSales", "ticketsLimit", "openCategory", "departments"] as const) expect(t.till[k].length).toBeGreaterThan(1);
+      for (const k of ["newSale", "saleNo", "saleOf", "saleEmpty", "openSales", "ticketsLimit"] as const) expect(t.till[k].length).toBeGreaterThan(1);
       expect(t.till.saleNo).toContain("{n}");
       expect(t.till.saleOf).toContain("{total}");
       expect(t.till.ticketsLimit).toContain("{max}");

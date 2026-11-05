@@ -1525,8 +1525,6 @@ export const ar = {
     saleEmpty: "فارغ",
     openSales: "المبيعات المفتوحة",
     ticketsLimit: "هناك {max} مبيعات مفتوحة بالفعل. أنهِ أحدها أو ألغِه قبل بدء بيع آخر.",
-    openCategory: "فتح",
-    departments: "الأقسام: {n}",
     nav: {
       label: "أقسام المتجر",
       sell: "البيع",

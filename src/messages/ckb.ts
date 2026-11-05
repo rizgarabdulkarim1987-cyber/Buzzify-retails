@@ -1526,8 +1526,6 @@ export const ckb: Messages = {
     saleEmpty: "بەتاڵ",
     openSales: "فرۆشتنە کراوەکان",
     ticketsLimit: "{max} فرۆشتن پێشتر کراوەتەوە. یەکێکیان تەواو بکە یان هەڵیبوەشێنەوە پێش دەستپێکردنی فرۆشتنێکی تر.",
-    openCategory: "کردنەوە",
-    departments: "بەشەکان: {n}",
     nav: {
       label: "بەشەکانی فرۆشگا",
       sell: "فرۆشتن",

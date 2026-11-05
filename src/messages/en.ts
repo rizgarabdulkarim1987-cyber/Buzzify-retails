@@ -1525,8 +1525,6 @@ export const en: Messages = {
     saleEmpty: "Empty",
     openSales: "Open sales",
     ticketsLimit: "{max} sales are already open. Finish or cancel one before starting another.",
-    openCategory: "Open",
-    departments: "Departments: {n}",
     nav: {
       label: "Shop sections",
       sell: "Sell",

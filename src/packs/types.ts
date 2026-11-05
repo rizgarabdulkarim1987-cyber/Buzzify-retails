@@ -37,6 +37,8 @@ export type PackWords = {
   /** The sign-in page heading. */
   loginTitle: string;
   nav: Readonly<Record<NavId | "more", string>>;
+  /** The department cards of the till: the count line of the All card, the item count of a card, the "open" label. */
+  till: { departments: string; categoryItems: string; open: string };
 };
 
 export type PackManifest = {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
+import type { PackId, PackWords } from "@/packs";
 import { fill, pickName } from "../../_lib/format";
 import { BarcodeIcon, CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, MinusIcon, PackageIcon, PlusIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon, UserIcon } from "../../_ui/icons";
 import { LocaleSwitcher } from "../../_ui/locale-switcher";
@@ -38,7 +39,7 @@ import { MAX_TICKETS, closeTicket, latestTicket, openTicket, orderTickets, saveT
 import { keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, textLength, type NumpadKey } from "./_lib/till";
 import { Numpad, Receipt, TicketPad, TicketRow, Tile, entryText, money } from "./_lib/views";
 import { accentFor, ACCENT } from "./_lib/category-accent";
-import { categoryKind } from "./_lib/category-kind";
+import { categoryKindFor } from "./_lib/category-kind";
 import { CategoryTile } from "./_lib/category-tile";
 import { ChevronIcon } from "./_lib/nav-icons";
 import { TillNav } from "./till-nav";
@@ -53,6 +54,10 @@ type Props = {
   initialItems: SellItemDto[];
   /** Items per page of the read model: a full page means there may be more. */
   pageSize: number;
+  /** The product the business uses: it decides which standard departments the cards recognise. */
+  pack: PackId;
+  /** The product's own words for the department cards. */
+  departmentWords: PackWords["till"];
   /** localStorage key of this device's held carts (per business and user). */
   heldKey: string;
   business: string;
@@ -129,7 +134,7 @@ const finePointer = () => typeof window !== "undefined" && window.matchMedia("(p
  * opens the cart as a sheet. A barcode scanner types into the search box and ends with Enter: a
  * single barcode hit goes straight into the cart. The numpad edits quantities and takes the cash.
  */
-export function SellScreen({ locale, t, currency, shift, locationId, categories, initialItems, pageSize, heldKey, business, branch, operator }: Props) {
+export function SellScreen({ locale, t, currency, shift, locationId, categories, initialItems, pageSize, pack, departmentWords, heldKey, business, branch, operator }: Props) {
   const ctx = { locale, t };
   const s = t.sell;
   const tl = t.till;
@@ -852,13 +857,13 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 kind="all"
                 accent={ACCENT.all}
                 index="00"
-                meta={fill(tl.departments, { n: formatNumber(locale, categories.length) })}
-                action={tl.openCategory}
+                meta={fill(departmentWords.departments, { n: formatNumber(locale, categories.length) })}
+                action={departmentWords.open}
                 onPick={() => void pickCategory(null)}
                 testId="sell-cat-all"
               />
               {categories.map((c, i) => {
-                const kind = categoryKind(c.nameAr, c.nameCkb, c.nameEn);
+                const kind = categoryKindFor(pack, c.nameAr, c.nameCkb, c.nameEn);
                 return (
                   <CategoryTile
                     key={c.id}
@@ -866,8 +871,8 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                     kind={kind}
                     accent={accentFor(kind, c.nameAr || c.id)}
                     index={String(i + 1).padStart(2, "0")}
-                    meta={fill(tl.itemCount, { n: formatNumber(locale, c.itemCount) })}
-                    action={tl.openCategory}
+                    meta={fill(departmentWords.categoryItems, { n: formatNumber(locale, c.itemCount) })}
+                    action={departmentWords.open}
                     onPick={() => void pickCategory(c.id)}
                   />
                 );

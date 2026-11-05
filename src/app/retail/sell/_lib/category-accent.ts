@@ -83,6 +83,33 @@ export const ACCENT: Record<Exclude<CategoryKind, "other">, string> = {
   stationery: PALETTE.violet,
   health: PALETTE.green,
   tobacco: PALETTE.orange,
+  // Buzzify Electronics
+  phones: PALETTE.sky,
+  phone_accessories: PALETTE.cyan,
+  computers: PALETTE.indigo,
+  computer_accessories: PALETTE.violet,
+  gaming: PALETTE.fuchsia,
+  tv_audio: PALETTE.pink,
+  smart_devices: PALETTE.teal,
+  cameras: PALETTE.amber,
+  networking: PALETTE.green,
+  power: PALETTE.yellow,
+  small_appliances: PALETTE.orange,
+  sim_credit: PALETTE.lime,
+  spare_parts: PALETTE.red,
+  // Buzzify Clothing
+  women: PALETTE.pink,
+  men: PALETTE.sky,
+  kids: PALETTE.amber,
+  infants: PALETTE.peach,
+  shoes: PALETTE.orange,
+  bags: PALETTE.fuchsia,
+  accessories: PALETTE.violet,
+  underwear: PALETTE.indigo,
+  sportswear: PALETTE.green,
+  outerwear: PALETTE.cyan,
+  perfumes: PALETTE.teal,
+  fabrics: PALETTE.lime,
 };
 
 /** Small stable string hash (FNV-1a). */

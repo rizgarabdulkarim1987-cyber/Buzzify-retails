@@ -1,0 +1,161 @@
+import type { DepartmentTree } from "../departments";
+
+/** The standard departments of Buzzify Electronics (docs/superpowers/specs/2026-11-05-electronics-clothing-standard-categories.md). */
+export const electronicsDepartments: DepartmentTree = Object.freeze([
+  {
+    key: "phones",
+    ar: "هواتف",
+    ckb: "مۆبایلەکان",
+    en: "Phones",
+    children: [
+      { ar: "هواتف ذكية", ckb: "مۆبایلی زیرەک", en: "Smartphones" },
+      { ar: "هواتف عادية", ckb: "مۆبایلی ئاسایی", en: "Feature phones" },
+      { ar: "تابلت", ckb: "تابلێت", en: "Tablets" },
+    ],
+  },
+  {
+    key: "phone_accessories",
+    ar: "ملحقات الهواتف",
+    ckb: "پێویستیەکانی مۆبایل",
+    en: "Phone accessories",
+    children: [
+      { ar: "أغطية وجرابات", ckb: "کەیس و کێس", en: "Cases" },
+      { ar: "واقيات الشاشة", ckb: "پارێزەری شاشە", en: "Screen protectors" },
+      { ar: "شواحن وكوابل", ckb: "شارژەر و کەیبڵ", en: "Chargers and cables" },
+      { ar: "بنوك الطاقة", ckb: "پاوەربانک", en: "Power banks" },
+      { ar: "سماعات", ckb: "هێدفۆن", en: "Earphones and headphones" },
+      { ar: "حوامل", ckb: "هۆڵدەر", en: "Holders" },
+    ],
+  },
+  {
+    key: "computers",
+    ar: "حواسيب",
+    ckb: "کۆمپیوتەر",
+    en: "Computers",
+    children: [
+      { ar: "لابتوبات", ckb: "لاپتۆپ", en: "Laptops" },
+      { ar: "حواسيب مكتبية", ckb: "کۆمپیوتەری مێز", en: "Desktops" },
+      { ar: "شاشات", ckb: "شاشە", en: "Monitors" },
+      { ar: "طابعات وأحبار", ckb: "پرینتەر و حیبر", en: "Printers and ink" },
+      { ar: "تخزين وذاكرة", ckb: "هەڵگر و بیرگە", en: "Storage and memory" },
+    ],
+  },
+  {
+    key: "computer_accessories",
+    ar: "ملحقات الحاسوب",
+    ckb: "پێویستیەکانی کۆمپیوتەر",
+    en: "Computer accessories",
+    children: [
+      { ar: "لوحات مفاتيح وماوس", ckb: "کیبۆرد و ماوس", en: "Keyboards and mice" },
+      { ar: "حقائب", ckb: "جانتا", en: "Bags" },
+      { ar: "كاميرات ويب", ckb: "وێبکام", en: "Webcams" },
+      { ar: "موزعات USB", ckb: "هەب USB", en: "USB hubs" },
+    ],
+  },
+  {
+    key: "gaming",
+    ar: "ألعاب فيديو",
+    ckb: "یاری ڤیدیۆ",
+    en: "Video games",
+    children: [
+      { ar: "أجهزة ألعاب", ckb: "کۆنسۆڵ", en: "Consoles" },
+      { ar: "أذرع تحكم", ckb: "دەستە", en: "Controllers" },
+      { ar: "ألعاب", ckb: "یاری", en: "Games" },
+      { ar: "ملحقات الألعاب", ckb: "پێویستیەکانی یاری", en: "Gaming accessories" },
+    ],
+  },
+  {
+    key: "tv_audio",
+    ar: "تلفزيونات وصوتيات",
+    ckb: "تەلەفزیۆن و دەنگ",
+    en: "TV and audio",
+    children: [
+      { ar: "تلفزيونات", ckb: "تەلەفزیۆن", en: "TVs" },
+      { ar: "مكبرات صوت وساوندبار", ckb: "بڵندگۆ و ساوندبار", en: "Speakers and soundbars" },
+      { ar: "ريسيفرات", ckb: "ڕیسیڤەر", en: "Receivers" },
+      { ar: "ريموتات", ckb: "ڕیمۆت", en: "Remotes" },
+    ],
+  },
+  {
+    key: "smart_devices",
+    ar: "أجهزة ذكية",
+    ckb: "ئامێری زیرەک",
+    en: "Smart devices",
+    children: [
+      { ar: "ساعات ذكية", ckb: "کاتژمێری زیرەک", en: "Smart watches" },
+      { ar: "أساور وتتبع", ckb: "بازنە و شوێنکەوتن", en: "Trackers" },
+      { ar: "المنزل الذكي", ckb: "ماڵی زیرەک", en: "Smart home" },
+    ],
+  },
+  {
+    key: "cameras",
+    ar: "كاميرات",
+    ckb: "کامێرا",
+    en: "Cameras",
+    children: [
+      { ar: "كاميرات تصوير", ckb: "کامێرای وێنە", en: "Cameras" },
+      { ar: "كاميرات مراقبة", ckb: "کامێرای چاودێری", en: "Security cameras" },
+      { ar: "طائرات درون", ckb: "درۆن", en: "Drones" },
+      { ar: "بطاقات الذاكرة", ckb: "کارتی بیرگە", en: "Memory cards" },
+    ],
+  },
+  {
+    key: "networking",
+    ar: "شبكات",
+    ckb: "تۆڕ",
+    en: "Networking",
+    children: [
+      { ar: "راوترات", ckb: "ڕاوتەر", en: "Routers" },
+      { ar: "مقويات الإشارة", ckb: "بەهێزکەری سیگناڵ", en: "Extenders" },
+      { ar: "كوابل", ckb: "کەیبڵ", en: "Cables" },
+      { ar: "سويتشات", ckb: "سویچ", en: "Switches" },
+    ],
+  },
+  {
+    key: "power",
+    ar: "طاقة وبطاريات",
+    ckb: "وزە و باتری",
+    en: "Power and batteries",
+    children: [
+      { ar: "بطاريات", ckb: "باتری", en: "Batteries" },
+      { ar: "يو بي إس ومنظمات", ckb: "یو پی ئێس و ڕێکخەر", en: "UPS and stabilizers" },
+      { ar: "شواحن شمسية", ckb: "شارژەری خۆر", en: "Solar chargers" },
+      { ar: "مشترك كهرباء", ckb: "فرە پریز", en: "Extension cords" },
+    ],
+  },
+  {
+    key: "small_appliances",
+    ar: "أجهزة منزلية صغيرة",
+    ckb: "ئامێری ماڵەوەی بچووک",
+    en: "Small appliances",
+    children: [
+      { ar: "مراوح", ckb: "پەنکە", en: "Fans" },
+      { ar: "مدافئ", ckb: "ڕەجاڵ", en: "Heaters" },
+      { ar: "غلايات", ckb: "کێتڵ", en: "Kettles" },
+      { ar: "مكاوي", ckb: "ئوتوو", en: "Irons" },
+    ],
+  },
+  {
+    key: "sim_credit",
+    ar: "شرائح ورصيد",
+    ckb: "سیمکارت و کرێدت",
+    en: "SIM cards and credit",
+    children: [
+      { ar: "شرائح", ckb: "سیمکارت", en: "SIM cards" },
+      { ar: "بطاقات رصيد", ckb: "کارتی کرێدت", en: "Top-up cards" },
+    ],
+  },
+  {
+    key: "spare_parts",
+    ar: "قطع غيار",
+    ckb: "پارچەی یەدەگ",
+    en: "Spare parts",
+    children: [
+      { ar: "شاشات", ckb: "شاشە", en: "Screens" },
+      { ar: "بطاريات", ckb: "باتری", en: "Batteries" },
+      { ar: "لوحات", ckb: "بۆرد", en: "Boards" },
+      { ar: "أدوات", ckb: "ئامراز", en: "Tools" },
+    ],
+  },
+  { key: "other", ar: "أخرى", ckb: "هیتر", en: "Other" },
+]);
