@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, formatMoney, pickName } from "../../../_lib/format";
-import { BackspaceIcon, CardIcon, CashIcon, MinusIcon, PlusIcon } from "../../../_ui/icons";
+import { BackspaceIcon, CardIcon, CashIcon, DollarIcon, MinusIcon, PlusIcon } from "../../../_ui/icons";
 import { lineTotal, type CartLine, type Currency, type PayState, type ReceiptDto, type SellItemDto, type ShiftDto } from "./cart";
 import { numpadKeys, type NumpadKey } from "./till";
 
@@ -15,6 +15,12 @@ type Ctx = { locale: Locale; t: Messages };
 
 export const money = (ctx: Ctx, currency: Currency, minor: bigint | string) =>
   formatMoney(ctx.locale, currency, minor, ctx.t.catalog.currencyShort[currency]);
+
+/** "1 $ = 1,450 د.ع": the shift's dollar rate in the interface's digits. */
+export function rateLine(ctx: Ctx, rateMicro: bigint | string): string {
+  const rate = formatNumber(ctx.locale, Number(BigInt(rateMicro)) / 1_000_000);
+  return fill(ctx.t.till.rateLine, { rate });
+}
 
 /** A quantity typed in ASCII ("0.25") in the interface's digits. */
 export function localQuantity(locale: Locale, q: string): string {
@@ -181,6 +187,69 @@ export function entryText(locale: Locale, text: string): string {
   return frac === undefined ? grouped : `${grouped}${DECIMAL[locale]}${localDigitsOf(locale, frac)}`;
 }
 
+/**
+ * The payment methods: Cash IQD | Cash USD | Card. Without a shift rate the dollars are not offered and
+ * the row is exactly the old one (Cash, Card). `target` is the cash the keypad types.
+ */
+export function PayMethods({
+  locale,
+  t,
+  target,
+  usd,
+  cardLabel,
+  cardDisabled,
+  disabled,
+  onTarget,
+  onCard,
+}: Ctx & {
+  target: "IQD" | "USD";
+  usd: boolean;
+  cardLabel: string;
+  cardDisabled: boolean;
+  disabled: boolean;
+  onTarget: (target: "IQD" | "USD") => void;
+  onCard: () => void;
+}) {
+  void locale;
+  return (
+    <div className="till-methods" role="group" aria-label={t.till.methods} data-count={usd ? 3 : 2}>
+      {usd ? (
+        <button type="button" className="till-method" aria-pressed={target === "IQD"} onClick={() => onTarget("IQD")} disabled={disabled} data-testid="pay-method-iqd">
+          <CashIcon />
+          {t.till.cashIqd}
+        </button>
+      ) : (
+        <span className="till-method" aria-current="true" data-testid="pay-method-iqd">
+          <CashIcon />
+          {t.till.payCash}
+        </span>
+      )}
+      {usd ? (
+        <button type="button" className="till-method" aria-pressed={target === "USD"} onClick={() => onTarget("USD")} disabled={disabled} data-testid="pay-method-usd">
+          <DollarIcon />
+          {t.till.cashUsd}
+        </button>
+      ) : null}
+      <button type="button" className="till-method" onClick={onCard} disabled={disabled || cardDisabled} data-testid="pay-card">
+        <CardIcon />
+        {cardLabel}
+      </button>
+    </div>
+  );
+}
+
+/** What is still due in dollars (rounded up to the cent that covers it) and the rate it is worked out at. */
+export function UsdDue({ locale, t, dueCents, rateMicro }: Ctx & { dueCents: bigint; rateMicro: string }) {
+  const ctx = { locale, t };
+  return (
+    <p className="till-usd-due" data-testid="pay-usd-due">
+      <span>{t.till.dueInDollars}</span>
+      <strong>{money(ctx, "USD", dueCents)}</strong>
+      <small data-testid="pay-rate">{rateLine(ctx, rateMicro)}</small>
+    </p>
+  );
+}
+
 /** The amount rows of the pay screen: due, received, remaining or change. */
 export function PaySummary({ locale, t, currency, state }: Ctx & { currency: Currency; state: PayState }) {
   const m = (v: bigint) => money({ locale, t }, currency, v);
@@ -212,7 +281,8 @@ export function PaySummary({ locale, t, currency, state }: Ctx & { currency: Cur
 /** The printed and shown receipt. */
 export function Receipt({ locale, t, receipt, business, branch, cashier }: Ctx & { receipt: ReceiptDto; business: string; branch: string; cashier: string }) {
   const m = (v: string) => money({ locale, t }, receipt.currency, v);
-  const cash = receipt.payments.find((p) => p.method === "CASH");
+  const cash = receipt.payments.find((p) => p.method === "CASH" && !p.usdMinor);
+  const usd = receipt.payments.find((p) => p.method === "CASH" && p.usdMinor);
   const card = receipt.payments.find((p) => p.method === "CARD");
   return (
     <article className="till-receipt" data-testid="receipt">
@@ -251,6 +321,18 @@ export function Receipt({ locale, t, receipt, business, branch, cashier }: Ctx &
             <dd>{m(cash.tenderedMinor)}</dd>
           </div>
         ) : null}
+        {usd ? (
+          <>
+            <div data-testid="receipt-usd">
+              <dt>{t.till.dollarsReceived}</dt>
+              <dd>{money({ locale, t }, "USD", usd.usdMinor!)}</dd>
+            </div>
+            <div>
+              <dt>{t.till.rate}</dt>
+              <dd>{rateLine({ locale, t }, usd.rateMicro ?? "0")}</dd>
+            </div>
+          </>
+        ) : null}
         {card ? (
           <div>
             <dt>{t.sell.receipt.card}</dt>
@@ -259,7 +341,7 @@ export function Receipt({ locale, t, receipt, business, branch, cashier }: Ctx &
         ) : null}
         {BigInt(receipt.changeMinor) > 0n ? (
           <div>
-            <dt>{t.sell.receipt.change}</dt>
+            <dt>{usd ? t.till.changeDinars : t.sell.receipt.change}</dt>
             <dd data-testid="receipt-change">{m(receipt.changeMinor)}</dd>
           </div>
         ) : null}
@@ -305,6 +387,28 @@ export function ShiftSummaryView({ locale, t, shift }: Ctx & { shift: ShiftDto }
           <dt>{t.sell.close.expected}</dt>
           <dd data-testid="summary-expected">{m(shift.expectedCashMinor)}</dd>
         </div>
+        {shift.usdRateMicro !== null ? (
+          <>
+            <div>
+              <dt>{t.till.rate}</dt>
+              <dd>{rateLine({ locale, t }, shift.usdRateMicro)}</dd>
+            </div>
+            <div>
+              <dt>
+                <DollarIcon /> {t.till.dollarsReceived}
+              </dt>
+              <dd data-testid="summary-usd">{money({ locale, t }, "USD", shift.usdTenderedMinor)}</dd>
+            </div>
+            <div>
+              <dt>{t.till.openingDollars}</dt>
+              <dd>{money({ locale, t }, "USD", shift.openingUsdMinor)}</dd>
+            </div>
+            <div className="till-summary-expected">
+              <dt>{t.till.dollarsInDrawer}</dt>
+              <dd data-testid="summary-expected-usd">{money({ locale, t }, "USD", shift.expectedUsdMinor ?? "0")}</dd>
+            </div>
+          </>
+        ) : null}
       </dl>
     </section>
   );

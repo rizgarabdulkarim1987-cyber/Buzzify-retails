@@ -13,6 +13,9 @@ import {
   cartTotal,
   exactCash,
   holdCart,
+  microToRateText,
+  quickUsdAmounts,
+  rateToMicro,
   lineTotal,
   parseAmount,
   parseHeld,
@@ -34,7 +37,7 @@ import { ACCENT, CARD, DIM, PALETTE, accentFor, contrast } from "../../src/app/r
 import { hasGlyph } from "../../src/app/retail/sell/_lib/category-icons";
 import { STANDARD_CATEGORY_KEYS, categoryKind } from "../../src/app/retail/sell/_lib/category-kind";
 import { CategoryTile } from "../../src/app/retail/sell/_lib/category-tile";
-import { Numpad, PaySummary, Receipt, ShiftSummaryView, TicketPad, TicketRow, Tile, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
+import { Numpad, PayMethods, PaySummary, Receipt, ShiftSummaryView, TicketPad, TicketRow, Tile, UsdDue, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
 import { offenders } from "../helpers/own-words";
 import { TillNav } from "../../src/app/retail/sell/till-nav";
 import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, textLength, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
@@ -416,6 +419,11 @@ describe("views", () => {
       cashMinor: "15000",
       cardMinor: "5000",
       expectedCashMinor: "65000",
+      usdRateMicro: null,
+      openingUsdMinor: "0",
+      usdTenderedMinor: "0",
+      usdDinarMinor: "0",
+      expectedUsdMinor: null,
     };
     const sm = html(createElement(ShiftSummaryView, { ...ctx, shift }));
     expect(sm).toContain("٦٥٬٠٠٠");
@@ -438,6 +446,164 @@ describe("views", () => {
     for (const t of [ar, ckb, en]) {
       const text = JSON.stringify([t.sell, t.till]);
       expect(text).not.toMatch(/release|إصدار|وەشان|Studio|Core|restaurant|pharmacy|cashier/i);
+    }
+  });
+});
+
+describe("dollars at the till", () => {
+  const ctx = { locale: "ar" as const, t: ar };
+  const RATE = "1450000000";
+
+  it("quick dollar chips: the exact amount first, then 20, 50 and 100 without repeats", () => {
+    expect(quickUsdAmounts(2018n)).toEqual([2018n, 2000n, 5000n, 10000n]);
+    expect(quickUsdAmounts(5000n)).toEqual([5000n, 2000n, 10000n]);
+    expect(quickUsdAmounts(0n)).toEqual([]);
+  });
+
+  it("a typed rate becomes micro-dinars per dollar, and only a believable rate is accepted", () => {
+    expect(rateToMicro("1450")).toBe(1450_000000n);
+    expect(rateToMicro("١٤٥٠٫٥")).toBe(1450_500000n);
+    expect(rateToMicro("")).toBeNull();
+    expect(rateToMicro("0")).toBeNull();
+    expect(rateToMicro("99")).toBeNull();
+    expect(rateToMicro("20000")).toBeNull();
+    expect(microToRateText(1450_000000n)).toBe("1450");
+    expect(microToRateText(1450_500000n)).toBe("1450.5");
+  });
+
+  it("dollars cover the due in dinars at the rate: exact dollars need no extra, one cent less is short", () => {
+    const covered = { cashMinor: 0n, cardMinor: 0n, usdMinor: 2018n, usdDinarMinor: 29_261n };
+    expect(payState(29_250n, covered)).toMatchObject({ ready: true, remaining: 0n, change: 11n });
+    const short = { cashMinor: 0n, cardMinor: 0n, usdMinor: 2017n, usdDinarMinor: 29_246n };
+    expect(payState(29_250n, short)).toMatchObject({ ready: false, remaining: 4n });
+  });
+
+  it("dollars first, the rest in dinars or by card; dinars that would all be change are not ready", () => {
+    const mixed = { cashMinor: 15_000n, cardMinor: 0n, usdMinor: 1000n, usdDinarMinor: 14_500n };
+    expect(payState(29_250n, mixed)).toMatchObject({ ready: true, change: 250n });
+    expect(exactCash(29_250n, { cashMinor: 0n, cardMinor: 0n, usdMinor: 1000n, usdDinarMinor: 14_500n }).cashMinor).toBe(14_750n);
+    const wasted = { cashMinor: 10_000n, cardMinor: 0n, usdMinor: 5000n, usdDinarMinor: 72_500n };
+    expect(payState(29_250n, wasted).ready).toBe(false);
+    const withCard = cardRest(29_250n, { cashMinor: 0n, cardMinor: 0n, usdMinor: 1000n, usdDinarMinor: 14_500n });
+    expect(withCard).toMatchObject({ cardMinor: 14_750n, usdMinor: 1000n });
+    expect(payState(29_250n, withCard).ready).toBe(true);
+  });
+
+  it("the sale action gets the dinars, the dollars with their dinar value, and the card", () => {
+    expect(paymentsOf({ cashMinor: 15_000n, cardMinor: 0n, usdMinor: 1000n, usdDinarMinor: 14_500n })).toEqual([
+      { method: "CASH", amountMinor: "15000" },
+      { method: "CASH", currency: "USD", usdMinor: "1000", amountMinor: "14500" },
+    ]);
+    expect(paymentsOf({ cashMinor: 0n, cardMinor: 14_750n, usdMinor: 1000n, usdDinarMinor: 14_500n })).toEqual([
+      { method: "CASH", currency: "USD", usdMinor: "1000", amountMinor: "14500" },
+      { method: "CARD", amountMinor: "14750" },
+    ]);
+  });
+
+  it("the keypad types dollars with two decimals", () => {
+    expect(["1", "2", ".", "5"].reduce((x, k) => numpadPress(x, k as NumpadKey, moneyDecimals("USD")), "")).toBe("12.5");
+    expect(parseAmount("12.5", "USD")).toBe(1250n);
+    expect(numpadKeys(moneyDecimals("USD"))).toContain(".");
+  });
+
+  it("the method row hides dollars without a rate; with one it shows Cash IQD, Cash USD and Card", () => {
+    const base = { ...ctx, target: "IQD" as const, onTarget: () => {}, onCard: () => {}, cardLabel: ar.till.payCard, cardDisabled: false, disabled: false };
+    const plain = html(createElement(PayMethods, { ...base, usd: false }));
+    expect(plain).toContain('data-testid="pay-method-iqd"');
+    expect(plain).toContain('data-testid="pay-card"');
+    expect(plain).not.toContain('data-testid="pay-method-usd"');
+    expect(plain).not.toContain(ar.till.cashUsd);
+    const withUsd = html(createElement(PayMethods, { ...base, usd: true, target: "USD" }));
+    expect(withUsd).toContain(ar.till.cashIqd);
+    expect(withUsd).toContain(ar.till.cashUsd);
+    expect(withUsd).toMatch(/data-testid="pay-method-usd"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*data-testid="pay-method-usd"/);
+  });
+
+  it("the dollar line shows the due in dollars and the rate, in Arabic and in English digits", () => {
+    const line = html(createElement(UsdDue, { ...ctx, dueCents: 2018n, rateMicro: RATE }));
+    expect(line).toContain('data-testid="pay-usd-due"');
+    expect(line).toContain("٢٠٫١٨");
+    expect(line).toContain("١٬٤٥٠");
+    const eng = html(createElement(UsdDue, { locale: "en", t: en, dueCents: 2018n, rateMicro: RATE }));
+    expect(eng).toContain("20.18");
+    expect(eng).toContain("1,450");
+  });
+
+  const receiptOf = (over: Partial<ReceiptDto>): ReceiptDto => ({
+    saleId: "s1",
+    number: 8,
+    saleKey: "k",
+    currency: "IQD",
+    totalMinor: "29250",
+    paidMinor: "72500",
+    changeMinor: "43250",
+    postedAt: "2026-11-05T08:00:00Z",
+    lines: [{ lineNo: 1, nameAr: "حليب", nameCkb: null, nameEn: "Milk", unitName: "حبة", quantity: "1", unitPriceMinor: "29250", lineTotalMinor: "29250" }],
+    payments: [{ method: "CASH", amountMinor: "29250", tenderedMinor: "72500", usdMinor: "5000", rateMicro: RATE }],
+    ...over,
+  });
+
+  it("the receipt shows the dollars taken, the rate and the change in dinars", () => {
+    const r = html(createElement(Receipt, { ...ctx, receipt: receiptOf({}), business: "دكان", branch: "المركز", cashier: "علي" }));
+    expect(r).toContain('data-testid="receipt-usd"');
+    expect(r).toContain("٥٠٫٠٠");
+    expect(r).toContain("١٬٤٥٠");
+    expect(r).toContain(ar.till.changeDinars);
+    expect(r).toContain("٤٣٬٢٥٠");
+  });
+
+  it("a dinar-only receipt shows nothing about dollars", () => {
+    const r = html(
+      createElement(Receipt, {
+        ...ctx,
+        receipt: receiptOf({ paidMinor: "30000", changeMinor: "750", payments: [{ method: "CASH", amountMinor: "29250", tenderedMinor: "30000" }] }),
+        business: "دكان",
+        branch: "المركز",
+        cashier: "علي",
+      }),
+    );
+    expect(r).not.toContain('data-testid="receipt-usd"');
+    expect(r).not.toContain(ar.till.changeDinars);
+  });
+
+  const shiftOf = (over: Partial<ShiftDto>): ShiftDto => ({
+    id: "sh",
+    version: 1,
+    openedAt: "2026-11-05T05:00:00Z",
+    currency: "IQD",
+    openingCashMinor: "50000",
+    salesCount: 3,
+    totalMinor: "87750",
+    cashMinor: "750",
+    cardMinor: "0",
+    expectedCashMinor: "50750",
+    usdRateMicro: null,
+    openingUsdMinor: "0",
+    usdTenderedMinor: "0",
+    usdDinarMinor: "0",
+    expectedUsdMinor: null,
+    ...over,
+  });
+
+  it("the shift summary shows the dollar drawer only when the shift has a rate", () => {
+    const plain = html(createElement(ShiftSummaryView, { ...ctx, shift: shiftOf({}) }));
+    expect(plain).not.toContain(ar.till.dollarsInDrawer);
+    const withUsd = html(
+      createElement(ShiftSummaryView, {
+        ...ctx,
+        shift: shiftOf({ usdRateMicro: RATE, openingUsdMinor: "10000", usdTenderedMinor: "6000", usdDinarMinor: "87000", expectedUsdMinor: "16000" }),
+      }),
+    );
+    expect(withUsd).toContain(ar.till.dollarsInDrawer);
+    expect(withUsd).toContain('data-testid="summary-expected-usd"');
+    expect(withUsd).toContain("١٦٠٫٠٠");
+  });
+
+  it("the new words exist in ar, ckb and en", () => {
+    for (const t of [ar, ckb, en]) {
+      for (const k of ["cashIqd", "cashUsd", "rate", "dollarsReceived", "changeDinars", "openingDollars", "dollarsInDrawer", "countedDollars"] as const) {
+        expect(t.till[k].length).toBeGreaterThan(1);
+      }
     }
   });
 });

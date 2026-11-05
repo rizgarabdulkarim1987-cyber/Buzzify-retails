@@ -462,7 +462,7 @@ describe("the till's catalog", () => {
     expect(await codeOf(currentUnitPrices({ unitIds: [milk.piece] }, s.as("stock")))).toBe("FORBIDDEN");
 
     const before = await tillState({}, s.as("cashier"));
-    expect(before.ok && before.value).toEqual({ currency: "IQD", open: null });
+    expect(before.ok && before.value).toEqual({ currency: "IQD", open: null, usdEnabled: false, lastUsdRateMicro: null });
     const shift = await open(s);
     const after = await tillState({}, s.as("cashier"));
     expect(after.ok && after.value.open?.shift.id).toBe(shift.id);

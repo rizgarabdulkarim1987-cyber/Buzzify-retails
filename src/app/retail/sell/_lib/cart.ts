@@ -1,4 +1,5 @@
 import { parseMoneyText, toAsciiDigits } from "@/server/domain/catalog";
+import { validRateMicro } from "@/server/domain/fx";
 import type { UiCode } from "../../catalog/_lib/types";
 
 /*
@@ -60,6 +61,14 @@ export type ShiftDto = {
   cashMinor: string;
   cardMinor: string;
   expectedCashMinor: string;
+  /** IQD per 1 USD x 10^6, or null: this shift takes no dollars. */
+  usdRateMicro: string | null;
+  openingUsdMinor: string;
+  /** USD cents handed over by the shift's sales, and their dinar value. */
+  usdTenderedMinor: string;
+  usdDinarMinor: string;
+  /** openingUsdMinor + usdTenderedMinor while the shift has a rate, else null. */
+  expectedUsdMinor: string | null;
 };
 
 export type ReceiptDto = {
@@ -72,7 +81,8 @@ export type ReceiptDto = {
   changeMinor: string;
   postedAt: string;
   lines: { lineNo: number; nameAr: string; nameCkb: string | null; nameEn: string | null; unitName: string; quantity: string; unitPriceMinor: string; lineTotalMinor: string }[];
-  payments: { method: "CASH" | "CARD"; amountMinor: string; tenderedMinor: string }[];
+  /** A dollar payment names the USD cents handed over (usdMinor) and the rate used; amountMinor / tenderedMinor stay dinars. */
+  payments: { method: "CASH" | "CARD"; amountMinor: string; tenderedMinor: string; usdMinor?: string; rateMicro?: string }[];
 };
 
 export const lineKey = (variantId: string, unitId: string) => `${variantId}:${unitId}`;
@@ -194,7 +204,17 @@ export function quickAmounts(due: bigint, currency: Currency): bigint[] {
   return [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, 6);
 }
 
-export type Tender = { cashMinor: bigint; cardMinor: bigint };
+/** The dollar chips: the exact amount (rounded up to the cent that covers the due), then 20, 50 and 100 dollars. */
+export function quickUsdAmounts(dueCents: bigint): bigint[] {
+  if (dueCents <= 0n) return [];
+  return [...new Set<bigint>([dueCents, 2_000n, 5_000n, 10_000n])];
+}
+
+/**
+ * What the customer hands over. cashMinor is dinars (IQD cash). usdMinor is USD cents and usdDinarMinor
+ * their dinar value at the shift rate (the client's number; the server recomputes it and refuses a mismatch).
+ */
+export type Tender = { cashMinor: bigint; cardMinor: bigint; usdMinor?: bigint; usdDinarMinor?: bigint };
 
 export type PayState = {
   due: bigint;
@@ -207,29 +227,63 @@ export type PayState = {
 };
 
 export function payState(due: bigint, t: Tender): PayState {
-  const paid = t.cashMinor + t.cardMinor;
+  const usd = t.usdDinarMinor ?? 0n;
+  const cash = t.cashMinor + usd;
+  const paid = cash + t.cardMinor;
   const remaining = paid >= due ? 0n : due - paid;
   const change = paid > due ? paid - due : 0n;
-  const ready = paid >= due && t.cardMinor <= due && !(t.cashMinor > 0n && t.cardMinor === due && due > 0n);
+  // Cash on top of a card that already covers the total is all change; so are dinars when the dollars cover it
+  // (the server refuses both: CASH_NOT_NEEDED).
+  const ready =
+    paid >= due &&
+    t.cardMinor <= due &&
+    !(cash > 0n && t.cardMinor === due && due > 0n) &&
+    !(t.cashMinor > 0n && usd > 0n && change >= t.cashMinor);
   return { due, paid, remaining, change, ready };
 }
 
 /** A note tapped: added to the cash handed over. */
 export const addCash = (t: Tender, amount: bigint): Tender => ({ ...t, cashMinor: t.cashMinor + amount });
 /** "Exact": cash covers exactly what the card does not. */
-export const exactCash = (due: bigint, t: Tender): Tender => ({ ...t, cashMinor: due > t.cardMinor ? due - t.cardMinor : 0n });
+export const exactCash = (due: bigint, t: Tender): Tender => {
+  const others = t.cardMinor + (t.usdDinarMinor ?? 0n);
+  return { ...t, cashMinor: due > others ? due - others : 0n };
+};
 /** Card pays what cash does not cover (all of it when no cash was given). */
 export function cardRest(due: bigint, t: Tender): Tender {
-  if (t.cashMinor >= due) return { cashMinor: 0n, cardMinor: due };
-  return { cashMinor: t.cashMinor, cardMinor: due - t.cashMinor };
+  const usd = t.usdDinarMinor ?? 0n;
+  const noDollars = t.usdMinor !== undefined ? { usdMinor: 0n, usdDinarMinor: 0n } : {};
+  if (t.cashMinor + usd >= due) return { cashMinor: 0n, cardMinor: due, ...noDollars };
+  return { ...t, cashMinor: t.cashMinor, cardMinor: due - t.cashMinor - usd };
 }
 
 /** The payments as the sale action takes them. */
-export function paymentsOf(t: Tender): { method: "CASH" | "CARD"; amountMinor: string }[] {
-  const out: { method: "CASH" | "CARD"; amountMinor: string }[] = [];
+export type WirePayment =
+  | { method: "CASH" | "CARD"; amountMinor: string }
+  | { method: "CASH"; currency: "USD"; usdMinor: string; amountMinor: string };
+
+export function paymentsOf(t: Tender): WirePayment[] {
+  const out: WirePayment[] = [];
   if (t.cashMinor > 0n) out.push({ method: "CASH", amountMinor: t.cashMinor.toString() });
+  if ((t.usdMinor ?? 0n) > 0n && (t.usdDinarMinor ?? 0n) > 0n) {
+    out.push({ method: "CASH", currency: "USD", usdMinor: t.usdMinor!.toString(), amountMinor: t.usdDinarMinor!.toString() });
+  }
   if (t.cardMinor > 0n) out.push({ method: "CARD", amountMinor: t.cardMinor.toString() });
   return out;
+}
+
+/** A typed rate ("1450", "1450.5", Arabic digits too) as IQD per 1 USD x 10^6, or null when empty or not 100 to 10,000. */
+export function rateToMicro(text: string): bigint | null {
+  const m = /^(\d{1,5})(?:[.٫](\d{1,6}))?$/.exec(toAsciiDigits(text).trim());
+  if (!m) return null;
+  const micro = BigInt(m[1]!) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0"));
+  return validRateMicro(micro) ? micro : null;
+}
+
+/** A rate as plain ASCII text for the numpad: "1450" or "1450.5". */
+export function microToRateText(micro: bigint): string {
+  const frac = (micro % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return frac ? `${micro / 1_000_000n}.${frac}` : `${micro / 1_000_000n}`;
 }
 
 /** A typed amount (Arabic digits and separators accepted) in minor units, or null. */

@@ -343,16 +343,24 @@ export const myOpenShift = defineAction({
   },
 });
 
-/** What the till page needs first: the business currency (sales are in it) and the actor's open shift summary, or null. */
+/**
+ * What the till page needs first: the business currency (sales are in it), the actor's open shift summary
+ * (or null), whether the business takes dollars, and the dollar rate of the business's last closed shift
+ * (the open-shift form pre-fills it; the server stores only what the form sends).
+ */
 export const tillState = defineAction({
   name: "shift.till",
   permission: "sale.create",
   input: z.object({}).strict(),
   writes: false,
-  async run({ actor, tx }): Promise<{ currency: Currency; open: ShiftSummary | null }> {
-    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true } });
+  async run({ actor, tx }): Promise<{ currency: Currency; open: ShiftSummary | null; usdEnabled: boolean; lastUsdRateMicro: bigint | null }> {
+    const biz = await tx.rtBusiness.findFirstOrThrow({ select: { defaultCurrency: true, enabledCurrencies: true } });
     const shift = await openShiftOf(tx, actor);
-    return { currency: biz.defaultCurrency, open: shift ? await summaryOf(tx, shift) : null };
+    const usdEnabled = biz.enabledCurrencies.includes("USD");
+    const last = usdEnabled
+      ? await tx.rtShift.findFirst({ where: { status: "CLOSED", usdRateMicro: { not: null } }, orderBy: { closedAt: "desc" }, select: { usdRateMicro: true } })
+      : null;
+    return { currency: biz.defaultCurrency, open: shift ? await summaryOf(tx, shift) : null, usdEnabled, lastUsdRateMicro: last?.usdRateMicro ?? null };
   },
 });
 

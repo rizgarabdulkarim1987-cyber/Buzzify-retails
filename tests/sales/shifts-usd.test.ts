@@ -28,7 +28,7 @@ async function shop(usdEnabled = true) {
   await db.rtSubscription.create({
     data: { businessId, planCode: "basic", status: "ACTIVE", currentPeriodStart: new Date(Date.now() - DAY), currentPeriodEnd: new Date(Date.now() + 30 * DAY) },
   });
-  const location = await db.rtLocation.create({ data: { businessId, branchId: w.branches.Main!.id, name: "المخزن" } });
+  await db.rtLocation.create({ data: { businessId, branchId: w.branches.Main!.id, name: "المخزن" } });
   const list = await db.rtPriceList.create({ data: { businessId, name: "الأسعار", kind: "DEFAULT" } });
   const as = (who: string, k = key()) => ({ userId: w.staff[who]!.user.id, businessId, idempotencyKey: k });
   const product = await db.rtProduct.create({ data: { businessId, nameAr: "حليب" } });
