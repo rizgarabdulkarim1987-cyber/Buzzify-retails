@@ -119,7 +119,7 @@ const KEYS: { k: string; label?: string; cls?: string }[] = [
   { k: "0", cls: "wide" }, { k: "." }, { k: "=", cls: "eq" },
 ];
 
-export function Calculator({ locale, t, onToPaid }: { locale: Locale; t: Messages; onToPaid: (value: number) => void }) {
+export function Calculator({ locale, t, onToPaid, onPay }: { locale: Locale; t: Messages; onToPaid: (value: number) => void; onPay: () => void }) {
   const [s, setS] = useState(initialCalc);
   const text = calcDisplay(s);
   const shown = (() => {
@@ -131,6 +131,9 @@ export function Calculator({ locale, t, onToPaid }: { locale: Locale; t: Message
   return (
     <section className="ot-card ot-calc-card" aria-label={t.till.one.calculator} data-testid="calculator">
       <div className="ot-body">
+        <button type="button" className="ot-tojoin ot-topay" onClick={onPay} data-testid="show-pay">
+          {t.sell.payScreen.title}
+        </button>
         <output className="ot-calc-out" dir="ltr" data-testid="calc-out">{shown}</output>
         <div className="ot-calc" dir="ltr">
           {KEYS.map((key) => (

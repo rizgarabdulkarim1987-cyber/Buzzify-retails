@@ -61,7 +61,9 @@ test("the till is one fixed screen: lines page instead of scrolling, X removes w
   await expect(page.getByTestId("product-card")).toBeVisible();
   await expect(page.getByTestId("shift-card")).toBeVisible();
   await expect(page.getByTestId("receipts-card")).toBeVisible();
-  await expect(page.getByTestId("calculator")).toBeVisible();
+  // The right column is the payment, always there (not after pressing Pay); the calculator is one tap away.
+  await expect(page.getByTestId("pay-panel")).toBeVisible();
+  await expect(page.getByTestId("calculator")).toHaveCount(0);
 
   // X removes the line and Undo puts it back.
   const before = await page.getByTestId("cart-total").first().textContent();
@@ -84,15 +86,17 @@ test("the till is one fixed screen: lines page instead of scrolling, X removes w
   await expect(page.getByTestId("fn-expense")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  // The calculator works in place.
+  // The calculator swaps in place, works, and swaps back.
+  await page.getByTestId("show-calc").click();
+  await expect(page.getByTestId("calculator")).toBeVisible();
   await page.getByTestId("calc-7").click();
   await page.getByTestId("calc-+").click();
   await page.getByTestId("calc-5").click();
   await page.getByTestId("calc-=").click();
   await expect(page.getByTestId("calc-out")).toContainText("١٢");
+  await page.getByTestId("show-pay").click();
 
   // Paying happens in the calculator's place: no popup, no scroll, and the keypad reads 7 8 9 from the left.
-  await page.getByTestId('cart-pay').first().click();
   await expect(page.getByTestId('pay-panel')).toBeVisible();
   await expect(page.getByTestId('calculator')).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -111,22 +115,22 @@ test("the till is one fixed screen: lines page instead of scrolling, X removes w
   await page.screenshot({ path: 'test-results/inline-pay-1366x768.png' });
   await page.setViewportSize({ width: 1280, height: 520 });
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('calculator')).toBeVisible();
+  await expect(page.getByTestId('pay-panel')).toBeVisible();
 
   // Phone width: two fixed panes, still no scroll.
   await page.setViewportSize({ width: 375, height: 667 });
   expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
   await page.getByTestId("pane-box").click();
-  await expect(page.getByTestId("calculator")).toBeVisible();
-  expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
-  await page.screenshot({ path: "test-results/one-screen-375-box.png" });
-  await page.getByTestId("pane-sell").click();
-  await page.screenshot({ path: "test-results/one-screen-375-sell.png" });
-  await page.getByTestId("cart-pay").first().click();
   await expect(page.getByTestId("pay-panel")).toBeVisible();
   expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
   await page.screenshot({ path: "test-results/inline-pay-375.png" });
-  await page.keyboard.press("Escape");
+  await page.getByTestId("show-calc").click();
+  await expect(page.getByTestId("calculator")).toBeVisible();
+  expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
+  await page.screenshot({ path: "test-results/one-screen-375-box.png" });
+  await page.getByTestId("show-pay").click();
+  await page.getByTestId("pane-sell").click();
+  await page.screenshot({ path: "test-results/one-screen-375-sell.png" });
 
   // Close the shift (nothing sold): the drawer holds the opening cash.
   await page.goto("/retail/sell/close");
