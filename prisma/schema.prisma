@@ -1195,26 +1195,33 @@ enum RtPaymentMethod {
 // (business, person); opening and counted cash >= 0; a CLOSED shift has closedAt, closedById,
 // countedCashMinor, expectedCashMinor and differenceMinor = counted - expected; an OPEN one has none.
 model RtShift {
-  id                String        @id @default(cuid())
-  businessId        String
-  branchId          String
-  locationId        String
+  id                 String        @id @default(cuid())
+  businessId         String
+  branchId           String
+  locationId         String
   // The terminal chosen in the workplace (checked to be of this branch), when there is one.
-  terminalId        String?
-  openedById        String
-  status            RtShiftStatus @default(OPEN)
-  currency          Currency
-  openingCashMinor  BigInt
-  openedAt          DateTime      @default(now())
-  closedAt          DateTime?
-  closedById        String?
-  countedCashMinor  BigInt?
-  expectedCashMinor BigInt?
-  differenceMinor   BigInt?
-  closeNote         String?
-  version           Int           @default(1)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  terminalId         String?
+  openedById         String
+  status             RtShiftStatus @default(OPEN)
+  currency           Currency
+  openingCashMinor   BigInt
+  openedAt           DateTime      @default(now())
+  closedAt           DateTime?
+  closedById         String?
+  countedCashMinor   BigInt?
+  expectedCashMinor  BigInt?
+  differenceMinor    BigInt?
+  // The dollar drawer. usdRateMicro: IQD per 1 USD x 10^6, typed for the shift (null = no dollars at this till).
+  // The three closing fields are all null or all set (and null while OPEN); difference = counted - expected.
+  usdRateMicro       BigInt?
+  openingUsdMinor    BigInt        @default(0)
+  countedUsdMinor    BigInt?
+  expectedUsdMinor   BigInt?
+  differenceUsdMinor BigInt?
+  closeNote          String?
+  version            Int           @default(1)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   business RtBusiness  @relation(fields: [businessId], references: [id])
   branch   RtBranch    @relation(fields: [businessId, branchId], references: [businessId, id])
@@ -1307,16 +1314,21 @@ model RtSaleLine {
 // tenderedMinor is what the customer handed over (cash only; equal to amountMinor for a card).
 // In the migration: amountMinor > 0; tenderedMinor >= amountMinor; a CARD has tendered = amount.
 model RtPayment {
-  id            String          @id @default(cuid())
-  businessId    String
-  branchId      String
-  saleId        String
-  shiftId       String
-  method        RtPaymentMethod
-  currency      Currency
-  amountMinor   BigInt
-  tenderedMinor BigInt
-  createdAt     DateTime        @default(now())
+  id                   String          @id @default(cuid())
+  businessId           String
+  branchId             String
+  saleId               String
+  shiftId              String
+  method               RtPaymentMethod
+  currency             Currency
+  amountMinor          BigInt
+  tenderedMinor        BigInt
+  // A dollar payment is a CASH row with these three set (all or none; never on a CARD): the USD cents handed
+  // over and the shift rate used. amountMinor / tenderedMinor stay in dinars (the value credited / handed over).
+  tenderedCurrency     Currency?
+  tenderedForeignMinor BigInt?
+  rateMicro            BigInt?
+  createdAt            DateTime        @default(now())
 
   business RtBusiness @relation(fields: [businessId], references: [id])
   sale     RtSale     @relation(fields: [businessId, branchId, saleId], references: [businessId, branchId, id])
