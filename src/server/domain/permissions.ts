@@ -25,6 +25,8 @@ const PERMISSION_LIST = [
   "sale.create",
   // R3: close (or look at) another person's shift in one's branches.
   "shift.manage",
+  // R3: record a cash expense paid from one's own open shift's drawer.
+  "expense.create",
 ] as const;
 
 export type Permission = (typeof PERMISSION_LIST)[number];
@@ -52,8 +54,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<RtRole, readonly Permission[]>> =
     "stock.view",
     "sale.create",
     "shift.manage",
+    "expense.create",
   ]),
-  CASHIER: frozen(["stock.view", "sale.create"]),
+  CASHIER: frozen(["stock.view", "sale.create", "expense.create"]),
   STOCK: frozen(["stock.receive", "stock.transfer", "catalog.manage", "stock.adjust", "stock.view"]),
   PURCHASING: frozen(["stock.receive", "ai.use", "stock.view"]),
   ACCOUNTANT: frozen(["cost.view", "data.export", "supplier.pay", "multiBranch.access", "stock.view"]),

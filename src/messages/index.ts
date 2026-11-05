@@ -58,6 +58,11 @@ export function formatDateTime(locale: Locale, value: Date): string {
   }).format(value);
 }
 
+/** The time of day of an instant in Baghdad, in the UI locale's digits. */
+export function formatTime(locale: Locale, value: Date): string {
+  return new Intl.DateTimeFormat(INTL_TAGS[locale], { timeZone: "Asia/Baghdad", hour: "numeric", minute: "2-digit" }).format(value);
+}
+
 /** A calendar date in Baghdad time, in the UI locale's digits. */
 export function formatDate(locale: Locale, value: Date): string {
   return new Intl.DateTimeFormat(INTL_TAGS[locale], {

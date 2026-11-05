@@ -24,7 +24,8 @@ import { updateVersioned } from "@/server/framework/versioned";
  *   (OWNER, MANAGER); FORBIDDEN otherwise. Under the lock `shift:<id>` (the same lock every sale
  *   on the shift takes, so a close and a sale never interleave): a CLOSED shift is SHIFT_NOT_OPEN;
  *   expectedVersion must match (VERSION_CONFLICT). expected = opening + the cash its sales took
- *   (cash payments net of change); difference = counted - expected (negative: cash is missing).
+ *   (cash payments net of change) - its expenses not voided (src/server/sales/expenses.ts);
+ *   difference = counted - expected (negative: cash is missing).
  *   A closed shift never changes.
  * - Dollars (spec 2026-11-05): a shift may carry a typed rate (usdRateMicro, IQD per 1 USD x 10^6; 100 to
  *   10,000, only when USD is in the business's enabled currencies) and opening dollars (which need a
@@ -80,7 +81,9 @@ export type ShiftSummary = {
   usdTenderedMinor: bigint;
   /** The dinar value of those dollars (sum of the dollar payments' tendered dinars). cashMinor + usdDinarMinor + cardMinor = totalMinor. */
   usdDinarMinor: bigint;
-  /** opening + cashMinor: what the dinar drawer should hold now (or held at close). */
+  /** The shift's expenses that are not voided (dinars, paid from the dinar drawer). */
+  expensesMinor: bigint;
+  /** opening + cashMinor - expensesMinor: what the dinar drawer should hold now (or held at close). */
   expectedCashMinor: bigint;
   /** openingUsdMinor + usdTenderedMinor while the shift has a rate, else null. */
   expectedUsdMinor: bigint | null;
@@ -144,12 +147,33 @@ export async function shiftTotals(
   return { salesCount: sales._count._all, totalMinor: sales._sum.totalMinor ?? 0n, cashMinor, cardMinor, usdTenderedMinor, usdDinarMinor };
 }
 
+/** The sum of the shift's expenses that are not voided (dinars). */
+export async function shiftExpensesTotal(tx: Tx, shiftId: string): Promise<bigint> {
+  const sum = await tx.rtExpense.aggregate({ where: { shiftId, voidedAt: null }, _sum: { amountMinor: true } });
+  return sum._sum.amountMinor ?? 0n;
+}
+
+/**
+ * What the dinar drawer holds (or should hold) now: opening + the cash the sales moved - the expenses not
+ * voided. The one place this is computed: recording an expense, the summary and the close all use it.
+ */
+export function expectedDinarMinor(openingCashMinor: bigint, cashMinor: bigint, expensesMinor: bigint): bigint {
+  return openingCashMinor + cashMinor - expensesMinor;
+}
+
+/** The dinar drawer of an open shift right now (see expectedDinarMinor). */
+export async function dinarDrawerNow(tx: Tx, shift: { id: string; openingCashMinor: bigint }): Promise<bigint> {
+  const [t, expensesMinor] = await Promise.all([shiftTotals(tx, shift.id), shiftExpensesTotal(tx, shift.id)]);
+  return expectedDinarMinor(shift.openingCashMinor, t.cashMinor, expensesMinor);
+}
+
 async function summaryOf(tx: Tx, shift: ShiftView): Promise<ShiftSummary> {
-  const t = await shiftTotals(tx, shift.id);
+  const [t, expensesMinor] = await Promise.all([shiftTotals(tx, shift.id), shiftExpensesTotal(tx, shift.id)]);
   return {
     shift,
     ...t,
-    expectedCashMinor: shift.openingCashMinor + t.cashMinor,
+    expensesMinor,
+    expectedCashMinor: expectedDinarMinor(shift.openingCashMinor, t.cashMinor, expensesMinor),
     expectedUsdMinor: shift.usdRateMicro === null ? null : shift.openingUsdMinor + t.usdTenderedMinor,
   };
 }
@@ -257,8 +281,8 @@ export const closeShift = defineAction({
     if ((shift.usdRateMicro !== null) !== (input.countedUsdMinor !== undefined)) {
       throw new RuleError("INVALID_INPUT", { field: "countedUsdMinor" });
     }
-    const t = await shiftTotals(tx, shift.id);
-    const expectedCashMinor = shift.openingCashMinor + t.cashMinor;
+    const [t, expensesMinor] = await Promise.all([shiftTotals(tx, shift.id), shiftExpensesTotal(tx, shift.id)]);
+    const expectedCashMinor = expectedDinarMinor(shift.openingCashMinor, t.cashMinor, expensesMinor);
     const differenceMinor = input.countedCashMinor - expectedCashMinor;
     const countedUsdMinor = input.countedUsdMinor ?? null;
     const expectedUsdMinor = countedUsdMinor === null ? null : shift.openingUsdMinor + t.usdTenderedMinor;
@@ -288,7 +312,7 @@ export const closeShift = defineAction({
       differenceUsdMinor,
       version: shift.version + 1,
     };
-    return { shift: closed, ...t, expectedCashMinor, differenceMinor, expectedUsdMinor, differenceUsdMinor };
+    return { shift: closed, ...t, expensesMinor, expectedCashMinor, differenceMinor, expectedUsdMinor, differenceUsdMinor };
   },
   audit: (_input, value) => ({
     entity: "RtShift",
@@ -301,6 +325,7 @@ export const closeShift = defineAction({
       expectedUsdMinor: value.expectedUsdMinor,
       differenceUsdMinor: value.differenceUsdMinor,
       salesCount: value.salesCount,
+      expensesMinor: value.expensesMinor,
     },
   }),
 });

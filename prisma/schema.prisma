@@ -92,6 +92,7 @@ model RtBusiness {
   sales        RtSale[]
   saleLines    RtSaleLine[]
   payments     RtPayment[]
+  expenses     RtExpense[]
   saleCounters RtSaleCounter[]
 }
 
@@ -1228,6 +1229,7 @@ model RtShift {
   location RtLocation  @relation(fields: [businessId, branchId, locationId], references: [businessId, branchId, id])
   sales    RtSale[]
   payments RtPayment[]
+  expenses RtExpense[]
 
   @@unique([businessId, id])
   // Target of the sale's and the payment's shift key: a sale is in its shift's branch.
@@ -1349,4 +1351,42 @@ model RtSaleCounter {
   branch   RtBranch   @relation(fields: [businessId, branchId], references: [businessId, id])
 
   @@unique([businessId, branchId])
+}
+
+enum RtExpenseCategory {
+  SUPPLIES
+  TRANSPORT
+  UTILITIES
+  CLEANING
+  MAINTENANCE
+  WAGES
+  MEALS
+  OTHER
+}
+
+// A cash expense paid from the dinar drawer of an OPEN shift. Never edited: a mistake is voided (all
+// three void fields set together) and entered again. expenseKey: the client's key for this save,
+// unique per business, so a double tap or a retry never records twice. In the migration: amountMinor
+// > 0; the void fields all null or all set; the OTHER category needs a non-empty note.
+model RtExpense {
+  id          String            @id @default(cuid())
+  businessId  String
+  branchId    String
+  shiftId     String
+  categoryKey RtExpenseCategory
+  amountMinor BigInt
+  currency    Currency
+  note        String?
+  expenseKey  String
+  createdById String
+  createdAt   DateTime          @default(now())
+  voidedAt    DateTime?
+  voidedById  String?
+  voidReason  String?
+
+  business RtBusiness @relation(fields: [businessId], references: [id])
+  shift    RtShift    @relation(fields: [businessId, branchId, shiftId], references: [businessId, branchId, id])
+
+  @@unique([businessId, expenseKey])
+  @@index([businessId, shiftId])
 }

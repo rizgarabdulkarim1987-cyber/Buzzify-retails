@@ -1,12 +1,14 @@
 "use server";
 
+import { listShiftExpenses, recordExpense, voidExpense } from "@/server/sales/expenses";
 import { currentUnitPrices, listSellItems } from "@/server/sales/catalog";
 import { createSale } from "@/server/sales/sales";
 import { closeShift, openShift } from "@/server/sales/shifts";
 import { loadShell } from "../_shell";
 import { call, fail } from "../catalog/_lib/call";
 import type { ReceiptDto, SellItemDto, SellResult } from "./_lib/cart";
-import { itemDto, receiptDto, shiftDto } from "./_lib/dto";
+import { expenseDto, itemDto, receiptDto, shiftDto } from "./_lib/dto";
+import type { ExpenseDto } from "./_lib/expenses";
 
 /*
  * The till's server actions. Who sells, in which business, branch and terminal comes from the
@@ -76,4 +78,21 @@ export async function createSaleAction(
 ): Promise<SellResult<ReceiptDto>> {
   if (!isText(key)) return fail("INVALID_INPUT");
   return call(key, (m) => createSale({ saleKey: key, lines: input.lines, payments: input.payments, expectedTotalMinor: input.expectedTotalMinor }, m), receiptDto);
+}
+
+/** Records a cash expense on the user's open shift. The attempt key is both the idempotency key and the expense key (a double tap records once). */
+export async function recordExpenseAction(key: unknown, input: { categoryKey: unknown; amountMinor: unknown; note: unknown }): Promise<SellResult<ExpenseDto>> {
+  if (!isText(key)) return fail("INVALID_INPUT");
+  const note = typeof input.note === "string" && input.note.trim() !== "" ? input.note : undefined;
+  return call(key, (m) => recordExpense({ expenseKey: key, categoryKey: input.categoryKey, amountMinor: input.amountMinor, note }, m), expenseDto);
+}
+
+/** Voids an expense of an open shift (managers and owners). */
+export async function voidExpenseAction(key: unknown, input: { expenseId: unknown; reason: unknown }): Promise<SellResult<ExpenseDto>> {
+  return call(key, (m) => voidExpense({ expenseId: input.expenseId, reason: input.reason }, m), expenseDto);
+}
+
+/** The shift's expenses, newest first (voided ones included). */
+export async function listExpensesAction(shiftId: unknown): Promise<SellResult<ExpenseDto[]>> {
+  return call("", (m) => listShiftExpenses({ shiftId }, m), (v) => v.map(expenseDto));
 }

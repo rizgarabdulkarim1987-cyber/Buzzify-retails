@@ -1,8 +1,9 @@
 import type { CSSProperties } from "react";
-import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
+import { formatDateTime, formatNumber, formatTime, type Locale, type Messages } from "@/messages";
 import { fill, formatMoney, pickName } from "../../../_lib/format";
 import { BackspaceIcon, CardIcon, CashIcon, DollarIcon, MinusIcon, PlusIcon } from "../../../_ui/icons";
 import { lineTotal, type CartLine, type Currency, type PayState, type ReceiptDto, type SellItemDto, type ShiftDto } from "./cart";
+import type { ExpenseDto } from "./expenses";
 import { numpadKeys, type NumpadKey } from "./till";
 
 /*
@@ -383,6 +384,12 @@ export function ShiftSummaryView({ locale, t, shift }: Ctx & { shift: ShiftDto }
           <dt>{t.sell.close.opening}</dt>
           <dd>{m(shift.openingCashMinor)}</dd>
         </div>
+        {BigInt(shift.expensesMinor) > 0n ? (
+          <div>
+            <dt>{t.expense.expenses}</dt>
+            <dd data-testid="summary-expenses">{m(shift.expensesMinor)}</dd>
+          </div>
+        ) : null}
         <div className="till-summary-expected">
           <dt>{t.sell.close.expected}</dt>
           <dd data-testid="summary-expected">{m(shift.expectedCashMinor)}</dd>
@@ -419,4 +426,110 @@ export function differenceText(ctx: Ctx, currency: Currency, diff: bigint): { to
   if (diff === 0n) return { tone: "good", text: ctx.t.sell.close.matches };
   if (diff > 0n) return { tone: "warn", text: `${ctx.t.sell.close.over} ${money(ctx, currency, diff)}` };
   return { tone: "bad", text: `${ctx.t.sell.close.short} ${money(ctx, currency, -diff)}` };
+}
+
+export type VoidDraft = { id: string; reason: string };
+
+/**
+ * The shift's expenses, newest first: time, category, note, amount. A voided one stays, struck through,
+ * with its reason. `who` is the person who rang the shift (only they record on it). With `onVoid` (managers
+ * and owners, an open shift) each live row has a Void button that opens a reason field under the row.
+ */
+export function ExpenseList({
+  locale,
+  t,
+  currency,
+  list,
+  who,
+  draft = null,
+  busy = false,
+  error = null,
+  onVoid,
+  onDraft,
+  onConfirm,
+  onCancel,
+}: Ctx & {
+  currency: Currency;
+  list: readonly ExpenseDto[];
+  who: string;
+  draft?: VoidDraft | null;
+  busy?: boolean;
+  error?: string | null;
+  onVoid?: (id: string) => void;
+  onDraft?: (reason: string) => void;
+  onConfirm?: () => void;
+  onCancel?: () => void;
+}) {
+  const x = t.expense;
+  const m = (v: string) => money({ locale, t }, currency, v);
+  if (list.length === 0) {
+    return (
+      <p className="till-x-empty" data-testid="expense-empty">
+        {x.listEmpty}
+      </p>
+    );
+  }
+  return (
+    <ul className="till-x-list" data-testid="expense-list">
+      {list.map((e) => {
+        const voided = e.voidedAt !== null;
+        return (
+          <li key={e.id} className="till-x-row" data-voided={voided || undefined} data-testid="expense-row">
+            <div className="till-x-main">
+              <strong>{x.categories[e.categoryKey]}</strong>
+              <b className="till-x-amount" data-testid="expense-amount">
+                {m(e.amountMinor)}
+              </b>
+              {e.note ? <span className="till-x-note">{e.note}</span> : null}
+              <small className="till-x-meta">
+                {formatTime(locale, new Date(e.createdAt))}
+                {who ? ` · ${fill(x.by, { name: who })}` : ""}
+              </small>
+            </div>
+            {voided ? (
+              <p className="till-x-void" data-testid="expense-voided">
+                <span className="till-x-badge">{x.voided}</span> {e.voidReason ? fill(x.voidedReason, { reason: e.voidReason }) : null}
+              </p>
+            ) : onVoid && draft?.id !== e.id ? (
+              <button type="button" className="till-x-voidbtn" onClick={() => onVoid(e.id)} disabled={busy} aria-label={`${x.voidTitle}: ${x.categories[e.categoryKey]} ${m(e.amountMinor)}`} data-testid="expense-void">
+                {x.void}
+              </button>
+            ) : null}
+            {draft?.id === e.id ? (
+              <div className="till-x-voidform" data-testid="expense-void-form">
+                <label className="visually-hidden" htmlFor="expense-void-reason">
+                  {x.voidReason}
+                </label>
+                <input
+                  id="expense-void-reason"
+                  className="input"
+                  type="text"
+                  maxLength={500}
+                  placeholder={x.voidReason}
+                  value={draft.reason}
+                  onChange={(ev) => onDraft?.(ev.target.value)}
+                  disabled={busy}
+                  autoFocus
+                  data-testid="expense-void-reason"
+                />
+                {error ? (
+                  <p className="till-x-error" role="alert">
+                    {error}
+                  </p>
+                ) : null}
+                <div className="till-x-voidacts">
+                  <button type="button" className="till-btn till-btn-quiet" onClick={onCancel} disabled={busy}>
+                    {x.cancel}
+                  </button>
+                  <button type="button" className="till-btn till-btn-danger" onClick={onConfirm} disabled={busy || draft.reason.trim() === ""} aria-busy={busy} data-testid="expense-void-confirm">
+                    {x.voidConfirm}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }

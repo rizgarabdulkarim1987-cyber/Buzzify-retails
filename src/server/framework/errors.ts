@@ -58,7 +58,10 @@ export type ErrorCode =
   | "PRICE_CHANGED"
   | "PAYMENT_SHORT"
   | "PAYMENT_RULE"
-  | "STOCK_EXPIRED";
+  | "STOCK_EXPIRED"
+  // Drawer expenses.
+  | "EXPENSE_EXCEEDS_DRAWER"
+  | "EXPENSE_VOIDED";
 
 /**
  * `details`: optional safe facts about a refusal, for the UI to show next to the message (e.g.
@@ -128,6 +131,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = Object.freeze
   PAYMENT_SHORT: "المبلغ المدفوع أقل من مجموع الفاتورة.",
   PAYMENT_RULE: "الدفع غير مقبول: مبلغ البطاقة لا يتجاوز المجموع، والباقي يُعاد من النقد فقط.",
   STOCK_EXPIRED: "الكمية المتوفرة غير المنتهية الصلاحية لا تكفي. الدفعات المنتهية لا تُباع.",
+  EXPENSE_EXCEEDS_DRAWER: "لا يوجد في الصندوق نقد يكفي لهذا المصروف.",
+  EXPENSE_VOIDED: "هذا المصروف أُلغي سابقاً.",
 });
 
 /** Shown when something unexpected fails; never carries internal detail. */

@@ -88,6 +88,8 @@ const SCOPE_RULES = {
   RtSaleLine: { business: "businessId", branch: "branchId" },
   RtPayment: { business: "businessId", branch: "branchId" },
   RtSaleCounter: { business: "businessId", branch: "branchId" },
+  // Drawer expenses: cash paid from a shift's drawer; branch-scoped like the shift they belong to.
+  RtExpense: { business: "businessId", branch: "branchId" },
 } as const satisfies { [M in ModelName]?: ScopeRule<M> };
 
 /**

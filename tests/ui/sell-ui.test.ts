@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -37,7 +38,9 @@ import { ACCENT, CARD, DIM, PALETTE, accentFor, contrast } from "../../src/app/r
 import { hasGlyph } from "../../src/app/retail/sell/_lib/category-icons";
 import { STANDARD_CATEGORY_KEYS, categoryKind } from "../../src/app/retail/sell/_lib/category-kind";
 import { CategoryTile } from "../../src/app/retail/sell/_lib/category-tile";
-import { Numpad, PayMethods, PaySummary, Receipt, ShiftSummaryView, TicketPad, TicketRow, Tile, UsdDue, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
+import { ExpensePanel, ExpenseSection } from "../../src/app/retail/sell/expense-panel";
+import { EXPENSE_CATEGORIES, activeTotal, expenseState, type ExpenseDto } from "../../src/app/retail/sell/_lib/expenses";
+import { ExpenseList, Numpad, PayMethods, PaySummary, Receipt, ShiftSummaryView, TicketPad, TicketRow, Tile, UsdDue, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
 import { offenders } from "../helpers/own-words";
 import { TillNav } from "../../src/app/retail/sell/till-nav";
 import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, textLength, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
@@ -419,6 +422,7 @@ describe("views", () => {
       cashMinor: "15000",
       cardMinor: "5000",
       expectedCashMinor: "65000",
+      expensesMinor: "0",
       usdRateMicro: null,
       openingUsdMinor: "0",
       usdTenderedMinor: "0",
@@ -577,6 +581,7 @@ describe("dollars at the till", () => {
     cashMinor: "750",
     cardMinor: "0",
     expectedCashMinor: "50750",
+    expensesMinor: "0",
     usdRateMicro: null,
     openingUsdMinor: "0",
     usdTenderedMinor: "0",
@@ -605,5 +610,137 @@ describe("dollars at the till", () => {
         expect(t.till[k].length).toBeGreaterThan(1);
       }
     }
+  });
+});
+
+describe("drawer expenses at the till", () => {
+  const exp = (over: Partial<ExpenseDto> = {}): ExpenseDto => ({
+    id: "e1",
+    categoryKey: "TRANSPORT",
+    amountMinor: "5000",
+    note: "سائق التوصيل",
+    createdAt: "2026-11-05T09:30:00Z",
+    voidedAt: null,
+    voidReason: null,
+    ...over,
+  });
+  const panel = (locale: "ar" | "ckb" | "en", props: Record<string, unknown> = {}) => {
+    const t = { ar, ckb, en }[locale];
+    return html(createElement(ExpensePanel, { locale, t, currency: "IQD", shiftId: "sh", canVoid: false, who: "علي", onClose: () => {}, initialList: [], ...props }));
+  };
+
+  it("Save is ready with an amount above zero and a category; Other also needs a note", () => {
+    const ok = (amountText: string, category: (typeof EXPENSE_CATEGORIES)[number] | null, note = "") => expenseState({ amountText, category, note }, "IQD");
+    expect(ok("", "SUPPLIES").ready).toBe(false);
+    expect(ok("0", "SUPPLIES").ready).toBe(false);
+    expect(ok("5000", null).ready).toBe(false);
+    expect(ok("5000", "SUPPLIES")).toMatchObject({ amount: 5000n, ready: true, needsNote: false });
+    expect(ok("5000", "OTHER")).toMatchObject({ ready: false, needsNote: true });
+    expect(ok("5000", "OTHER", "   ").ready).toBe(false);
+    expect(ok("5000", "OTHER", "ice").ready).toBe(true);
+  });
+
+  it("the eight categories are the plan's, and every one has a name in ar, ckb and en", () => {
+    expect([...EXPENSE_CATEGORIES]).toEqual(["SUPPLIES", "TRANSPORT", "UTILITIES", "CLEANING", "MAINTENANCE", "WAGES", "MEALS", "OTHER"]);
+    for (const t of [ar, ckb, en]) for (const c of EXPENSE_CATEGORIES) expect(t.expense.categories[c].length).toBeGreaterThan(1);
+  });
+
+  it("the empty panel: amount at zero, eight category cards, a note field, Save disabled, an empty list", () => {
+    const h = panel("ar");
+    expect(h).toContain('data-testid="expense-panel"');
+    expect(h).toContain('role="dialog"');
+    expect(h).toContain(ar.expense.title);
+    for (const c of EXPENSE_CATEGORIES) expect(h).toContain(`data-testid="expense-cat-${c}"`);
+    expect(h).toContain('data-testid="numpad"');
+    expect(h).toContain('data-testid="expense-note"');
+    expect(h).toMatch(/data-testid="expense-save"[^>]*disabled|disabled=""[^>]*data-testid="expense-save"/);
+    expect(h).toContain('data-testid="expense-empty"');
+    expect(h).toContain(ar.expense.today);
+    expect(h).not.toContain('data-testid="expense-void"');
+  });
+
+  it("while the list loads the panel says so", () => {
+    expect(panel("en", { initialList: null })).toContain(en.expense.loading);
+  });
+
+  it("the list shows time, category, note and amount, a voided row struck with its reason, a void button only for managers", () => {
+    const list = [exp(), exp({ id: "e2", categoryKey: "OTHER", note: "ice", amountMinor: "1000", voidedAt: "2026-11-05T10:00:00Z", voidReason: "typo" })];
+    const staff = html(createElement(ExpenseList, { locale: "en", t: en, currency: "IQD", list, who: "Ali" }));
+    expect(staff).toContain(en.expense.categories.TRANSPORT);
+    expect(staff).toContain("5,000");
+    expect(staff).toContain("سائق التوصيل");
+    expect(staff).toContain(en.expense.voided);
+    expect(staff).toContain("typo");
+    expect(staff).toContain("Ali");
+    expect(staff).toContain('data-voided="true"');
+    expect(staff).not.toContain('data-testid="expense-void"');
+    const manager = html(createElement(ExpenseList, { locale: "en", t: en, currency: "IQD", list, who: "Ali", onVoid: () => {} }));
+    // One live row: one void button; the voided row has none.
+    expect(manager.match(/data-testid="expense-void"/g)).toHaveLength(1);
+    const open = html(createElement(ExpenseList, { locale: "en", t: en, currency: "IQD", list, who: "Ali", onVoid: () => {}, draft: { id: "e1", reason: "" } }));
+    expect(open).toContain('data-testid="expense-void-form"');
+    expect(open).toMatch(/data-testid="expense-void-confirm"[^>]*disabled|disabled=""[^>]*data-testid="expense-void-confirm"/);
+  });
+
+  it("a manager's panel lists the void buttons, a cashier's does not", () => {
+    const list = [exp()];
+    expect(panel("ar", { initialList: list, canVoid: true })).toContain('data-testid="expense-void"');
+    expect(panel("ar", { initialList: list, canVoid: false })).not.toContain('data-testid="expense-void"');
+  });
+
+  it("the total counts only the expenses not voided", () => {
+    const list = [exp(), exp({ id: "e2", amountMinor: "1000" }), exp({ id: "e3", amountMinor: "9000", voidedAt: "2026-11-05T10:00:00Z", voidReason: "x" })];
+    expect(activeTotal(list)).toBe(6000n);
+  });
+
+  it("the close summary shows an Expenses line only when there are expenses, and the expected cash is the shift's", () => {
+    const shift: ShiftDto = {
+      id: "sh", version: 1, openedAt: "2026-11-05T05:00:00Z", currency: "IQD", openingCashMinor: "50000", salesCount: 1, totalMinor: "29250", cashMinor: "29250",
+      cardMinor: "0", expectedCashMinor: "64250", expensesMinor: "15000", usdRateMicro: null, openingUsdMinor: "0", usdTenderedMinor: "0", usdDinarMinor: "0", expectedUsdMinor: null,
+    };
+    const withExp = html(createElement(ShiftSummaryView, { locale: "en", t: en, shift }));
+    expect(withExp).toContain('data-testid="summary-expenses"');
+    expect(withExp).toContain("15,000 IQD");
+    expect(withExp).toContain("64,250 IQD");
+    const without = html(createElement(ShiftSummaryView, { locale: "en", t: en, shift: { ...shift, expensesMinor: "0", expectedCashMinor: "79250" } }));
+    expect(without).not.toContain('data-testid="summary-expenses"');
+  });
+
+  it("the close list is one collapsed line with the count and total; none without expenses", () => {
+    const list = Array.from({ length: 40 }, (_, i) => exp({ id: `e${i}`, amountMinor: "1000" }));
+    const h = html(createElement(ExpenseSection, { locale: "ar", t: ar, currency: "IQD", initial: list, canVoid: false, who: "علي" }));
+    expect(h).toContain("<details");
+    expect(h).not.toContain("<details open");
+    expect(h).toContain("٤٠ مصروفات");
+    expect(h).toContain("٤٠٬٠٠٠");
+    expect(h.match(/data-testid="expense-row"/g)).toHaveLength(40);
+    expect(html(createElement(ExpenseSection, { locale: "ar", t: ar, currency: "IQD", initial: [], canVoid: false, who: "" }))).toBe("");
+  });
+
+  it("the words exist in ar, ckb and en, with no empty string and a placeholder where the text takes one", () => {
+    const keys = Object.keys(ar.expense) as (keyof typeof ar.expense)[];
+    for (const t of [ar, ckb, en]) {
+      expect(Object.keys(t.expense).sort()).toEqual([...keys].sort());
+      for (const k of keys) if (typeof t.expense[k] === "string") expect((t.expense[k] as string).length).toBeGreaterThan(1);
+      expect(t.expense.count).toContain("{n}");
+      expect(t.expense.by).toContain("{name}");
+      expect(t.expense.voidedReason).toContain("{reason}");
+      expect(t.errors.EXPENSE_EXCEEDS_DRAWER.length).toBeGreaterThan(5);
+      expect(t.errors.EXPENSE_VOIDED.length).toBeGreaterThan(5);
+      expect(offenders(t.expense)).toEqual([]);
+    }
+  });
+
+  it("the Expense function key is on the till for anyone who can sell, not hidden behind a role", () => {
+    const src = readFileSync("src/app/retail/sell/sell-screen.tsx", "utf8");
+    expect(src).toContain('data-testid="fn-expense"');
+    expect(src).not.toMatch(/fn-expense[\s\S]{0,40}canVoid/);
+  });
+
+  it("Arabic renders the panel right-to-left: the panel adds no fixed left or right", () => {
+    const css = readFileSync("src/app/retail/sell/sell.css", "utf8");
+    const block = css.slice(css.indexOf("/* Expenses"));
+    expect(block.length).toBeGreaterThan(200);
+    expect(block).not.toMatch(/\b(margin|padding)-(left|right)\b|\b(left|right)\s*:/);
   });
 });

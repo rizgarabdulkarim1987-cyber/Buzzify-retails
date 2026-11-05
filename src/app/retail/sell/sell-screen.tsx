@@ -43,7 +43,8 @@ import { Numpad, PayMethods, Receipt, TicketPad, TicketRow, Tile, UsdDue, entryT
 import { accentFor, ACCENT } from "./_lib/category-accent";
 import { categoryKindFor } from "./_lib/category-kind";
 import { CategoryTile } from "./_lib/category-tile";
-import { ChevronIcon } from "./_lib/nav-icons";
+import { ChevronIcon, ExpensesIcon } from "./_lib/nav-icons";
+import { ExpensePanel } from "./expense-panel";
 import { TillNav } from "./till-nav";
 
 type Props = {
@@ -67,6 +68,8 @@ type Props = {
   business: string;
   branch: string;
   operator: string;
+  /** Managers and owners may void an expense (shift.manage). */
+  canVoidExpense?: boolean;
 };
 
 type Mode = "sell" | "pay" | "receipt";
@@ -138,7 +141,7 @@ const finePointer = () => typeof window !== "undefined" && window.matchMedia("(p
  * opens the cart as a sheet. A barcode scanner types into the search box and ends with Enter: a
  * single barcode hit goes straight into the cart. The numpad edits quantities and takes the cash.
  */
-export function SellScreen({ locale, t, currency, shift, usdEnabled = false, locationId, categories, initialItems, pageSize, pack, departmentWords, heldKey, business, branch, operator }: Props) {
+export function SellScreen({ locale, t, currency, shift, usdEnabled = false, locationId, categories, initialItems, pageSize, pack, departmentWords, heldKey, business, branch, operator, canVoidExpense = false }: Props) {
   const ctx = { locale, t };
   const s = t.sell;
   const tl = t.till;
@@ -160,6 +163,8 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
   const [ticketMsg, setTicketMsg] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("sell");
   const [menuOpen, setMenuOpen] = useState(false);
+  /** The Expense panel (cash paid from the drawer) is open. */
+  const [expenseOpen, setExpenseOpen] = useState(false);
   /** The line the keypad edits, and the digits typed for it so far. */
   const [selKey, setSelKey] = useState<string | null>(null);
   const [entry, setEntry] = useState("");
@@ -249,7 +254,7 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
     return () => window.clearTimeout(id);
   }, [query, fetchItems]);
 
-  const overlay = mode !== "sell" || menuOpen;
+  const overlay = mode !== "sell" || menuOpen || expenseOpen;
 
   // Any printable key typed outside a field goes to the search box: a scanner works without a tap first.
   useEffect(() => {
@@ -823,6 +828,10 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
                 {tl.fnNote}
                 <small>{tl.nav.soon}</small>
               </button>
+              <button type="button" className="till-fn-key till-fn-expense" onClick={() => setExpenseOpen(true)} aria-haspopup="dialog" aria-expanded={expenseOpen} data-testid="fn-expense">
+                <ExpensesIcon />
+                {t.expense.key}
+              </button>
             </div>
           </div>
           <button type="button" className="till-btn till-btn-go till-pay" onClick={openPay} disabled={noLines} data-testid="cart-pay">
@@ -1008,6 +1017,10 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
             </div>
           </div>
         </div>
+      ) : null}
+
+      {expenseOpen ? (
+        <ExpensePanel locale={locale} t={t} currency={currency} shiftId={shift.id} canVoid={canVoidExpense} who={operator} onClose={() => setExpenseOpen(false)} />
       ) : null}
 
       {mode === "pay" ? (
