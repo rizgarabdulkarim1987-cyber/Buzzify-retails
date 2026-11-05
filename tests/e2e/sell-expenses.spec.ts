@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { CASHIER, MANAGER, PASSWORD, TERMINAL_A } from "./fixtures";
+import { typeDigitsWhenReady } from "./keypad";
 
 async function signIn(page: Page, email: string) {
   await page.goto("/admin/login");
@@ -82,7 +83,7 @@ test("a cashier records expenses at 375px in Arabic, cannot void, and closes wit
   await expect(page.getByTestId("expense-row")).toHaveCount(2);
   await expect(page.getByTestId("expense-void")).toHaveCount(0);
   await page.getByTestId("close-expenses-toggle").click();
-  await page.keyboard.type("44000");
+  await typeDigitsWhenReady(page, "close-counted", "44000");
   await expect(page.getByTestId("close-difference")).toContainText("مطابق");
   await page.screenshot({ path: "test-results/expenses-close-375.png", fullPage: true });
   await page.getByTestId("close-submit").click();
@@ -112,15 +113,7 @@ test("a manager voids a mistaken expense with a reason; it stays struck through 
   await page.goto("/retail/sell/close");
   await expect(page.getByTestId("summary-expenses")).toHaveCount(0);
   await expect(page.getByTestId("summary-expected")).toContainText("٢٠٬٠٠٠");
-  // A keypad press before the page has hydrated does nothing (CI's cold dev server hydrates late), and Submit then
-  // stays disabled for ever. Press the first digit until the display shows it, then type the rest.
-  const counted = page.getByTestId("close-counted");
-  await expect(async () => {
-    // Never press twice: if the first press landed late, the display already shows it.
-    if (!(await counted.textContent())?.includes("٢")) await page.getByTestId("key-2").click();
-    await expect(counted).toContainText("٢", { timeout: 2000 });
-  }).toPass({ timeout: 30_000 });
-  await page.keyboard.type("0000");
+  await typeDigitsWhenReady(page, "close-counted", "20000");
   await expect(page.getByTestId("close-counted")).toContainText("٢٠٬٠٠٠");
   await page.getByTestId("close-submit").click();
   await expect(page.getByTestId("shift-closed")).toBeVisible();

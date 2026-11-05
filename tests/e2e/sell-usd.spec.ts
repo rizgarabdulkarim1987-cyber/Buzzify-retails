@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { CASHIER, PASSWORD, TERMINAL_A, USD_ITEM } from "./fixtures";
+import { typeDigitsWhenReady } from "./keypad";
 
 async function signIn(page: Page, email: string) {
   await page.goto("/admin/login");
@@ -57,7 +58,7 @@ test("a cashier opens a shift with dollars and a rate, takes 20.18 dollars for a
   await page.goto("/retail/sell/close");
   await expect(page.getByTestId("summary-expected")).toContainText("٤٩٬٩٨٩");
   await expect(page.getByTestId("summary-expected-usd")).toContainText("١٢٠٫١٨");
-  await page.keyboard.type("49989");
+  await typeDigitsWhenReady(page, "close-counted", "49989");
   await page.getByTestId("close-counted-usd-pick").click();
   await page.keyboard.type("120.18");
   await expect(page.getByTestId("close-difference")).toContainText("مطابق");
