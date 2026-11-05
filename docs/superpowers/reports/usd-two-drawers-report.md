@@ -34,7 +34,6 @@ Spec: `docs/superpowers/specs/2026-11-05-retail-usd-iqd-payment-design.md`. Loca
 ## Not verified
 
 - No iPad/Safari or real phone; Chromium only. No printed receipt.
-- A 15-line ticket with the mixed payment at 375px in Arabic was not captured (the screenshots use one line); the cart and pay panel are separate layers, the pay panel does not grow with lines.
 - The Next dev server printed a hydration warning pointing at the "opened at" time of the shift summary (server and browser time zones); the line is not part of this change, and I did not check it on the base commit.
 - The whole Playwright suite was not run to the end: it did not finish in over an hour on this machine under the webpack dev server (see the hand-off for which specs did run).
 - Turbopack: `next dev` fails on this worktree's `node_modules` junction, so all browser work used `next dev --webpack` through an untracked local config (deleted before committing). Production build (`next build`) was not run.
@@ -46,3 +45,12 @@ Spec: `docs/superpowers/specs/2026-11-05-retail-usd-iqd-payment-design.md`. Loca
 - `npx tsc --noEmit`: clean (exit 0).
 - `npx eslint src tests`: clean (exit 0). `npx eslint .` over the whole worktree reports 778 errors and 8910 warnings, coming from generated build output folders and not from files changed here; I did not clean them up.
 - Playwright: only `sell-usd.spec.ts` (2 tests) was confirmed passing; the full suite was not finished. One catalog.spec failure ("qe-added-item" count) was seen once under load and not investigated.
+
+## Fix: pay screen at 375px (after review)
+
+Defects seen in the first screenshots: the pay button covered the last keypad row, and the quick chips wrapped into 3 + 1.
+
+- On phones the pay panel is now a column: the head and the pay button stay fixed, only the amounts and keys scroll between them (`.till-pay-body`), so the button never covers a key. The quick chips are one even row of equal width (phone only; at 1280px the CSS is unchanged, including its 3 + 1 chip wrap, which I left alone because the request was that desktop not change).
+- Checked with a temporary Playwright script (deleted, with its extra seed products) on a real dev server: at 375x667 and 375x812, Arabic dark and English light, for dinar, dollar exact, mixed (still due) and a 15-line ticket paid in dollars, dinars and card, the last control (clear) ends above the pay button when the body is scrolled to its end, all chips share one top, and there is no sideways scroll. All 6 runs (including 1280x800) passed. I opened the screenshots myself: Arabic and English at both heights show no overlap, one chip row and the keypad reachable by scrolling; on the 15-line ticket the amounts, card line and zero change read correctly. At 667px the amounts scroll out of view while the keys are in view (by design). Saved as `assets/fix-*.png`.
+- The Next dev-tools badge sits over the pay button's corner in screenshots; it exists only in dev.
+- Re-run: tests/ui + tests/messages 16 files, 252 tests passed; `tsc --noEmit` clean; `eslint src tests` clean; `sell-usd.spec.ts` 2 passed (the first try failed on the login redirect during the dev server's first compile, the rerun passed).
