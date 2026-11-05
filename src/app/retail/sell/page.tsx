@@ -27,7 +27,13 @@ export default async function SellPage() {
           <h1>{t.sell.open.title}</h1>
           <p>{t.sell.open.intro}</p>
         </div>
-        <OpenShiftForm locale={locale} t={t} currency={till.value.currency} />
+        <OpenShiftForm
+          locale={locale}
+          t={t}
+          currency={till.value.currency}
+          usdEnabled={till.value.usdEnabled}
+          lastRateMicro={till.value.lastUsdRateMicro === null ? null : till.value.lastUsdRateMicro.toString()}
+        />
       </main>
     );
   }
@@ -45,6 +51,7 @@ export default async function SellPage() {
         t={t}
         currency={open.shift.currency}
         shift={shiftDto(open)}
+        usdEnabled={till.value.usdEnabled}
         locationId={open.shift.locationId}
         categories={cats.ok ? cats.value.map(categoryDto) : []}
         initialItems={items.ok ? items.value.map(itemDto) : []}

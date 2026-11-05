@@ -18,25 +18,35 @@ import { itemDto, receiptDto, shiftDto } from "./_lib/dto";
 const isText = (v: unknown, max = 200): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
 
 /** Opens the user's shift in the shell's branch (and terminal, when one is chosen). */
-export async function openShiftAction(key: unknown, openingCashMinor: unknown): Promise<SellResult<{ shiftId: string }>> {
+export async function openShiftAction(
+  key: unknown,
+  openingCashMinor: unknown,
+  dollars?: { openingUsdMinor: unknown; usdRateMicro: unknown },
+): Promise<SellResult<{ shiftId: string }>> {
   const shell = await loadShell();
   if (!shell?.branch) return fail("FORBIDDEN");
   if (typeof openingCashMinor !== "string") return fail("INVALID_INPUT");
+  // Dollars only when the form sent a rate; the server checks that USD is enabled and the rate is believable.
+  const usd = dollars && typeof dollars.usdRateMicro === "string" ? { openingUsdMinor: dollars.openingUsdMinor, usdRateMicro: dollars.usdRateMicro } : {};
   return call(
     key,
-    (m) => openShift({ branchId: shell.branch!.id, terminalId: shell.terminal?.id ?? null, openingCashMinor }, m),
+    (m) => openShift({ branchId: shell.branch!.id, terminalId: shell.terminal?.id ?? null, openingCashMinor, ...usd }, m),
     (v) => ({ shiftId: v.id }),
   );
 }
 
 export async function closeShiftAction(
   key: unknown,
-  input: { shiftId: unknown; countedCashMinor: unknown; note: unknown; expectedVersion: unknown },
-): Promise<SellResult<{ differenceMinor: string; shift: ReturnType<typeof shiftDto> }>> {
+  input: { shiftId: unknown; countedCashMinor: unknown; countedUsdMinor?: unknown; note: unknown; expectedVersion: unknown },
+): Promise<SellResult<{ differenceMinor: string; differenceUsdMinor: string | null; shift: ReturnType<typeof shiftDto> }>> {
   return call(
     key,
     (m) => closeShift(input, m),
-    (v) => ({ differenceMinor: v.differenceMinor.toString(), shift: shiftDto(v) }),
+    (v) => ({
+      differenceMinor: v.differenceMinor.toString(),
+      differenceUsdMinor: v.differenceUsdMinor === null ? null : v.differenceUsdMinor.toString(),
+      shift: shiftDto(v),
+    }),
   );
 }
 

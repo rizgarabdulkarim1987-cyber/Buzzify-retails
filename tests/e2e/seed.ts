@@ -26,6 +26,7 @@ import {
   OWNER,
   PASSWORD,
   STOCK_ITEM,
+  USD_ITEM,
   SUGAR,
   TERMINAL_A,
   E2E_SECRET,
@@ -190,6 +191,30 @@ async function main() {
     },
     "e2e-seed-intake-item",
   );
+
+  // A plain item with stock at branch A for the dollar-payment spec (opening stock posted through the real actions).
+  await seedProduct(
+    {
+      nameAr: USD_ITEM.nameAr,
+      baseUnit: { name: "قطعة", barcodes: [USD_ITEM.barcode] },
+      price: { currency: "IQD", amountMinor: USD_ITEM.priceIqd },
+    },
+    "e2e-seed-usd-item",
+  );
+  const usdProduct = await db.rtProduct.findFirstOrThrow({ where: { businessId, nameAr: USD_ITEM.nameAr }, select: { id: true } });
+  const usdVariant = await db.rtVariant.findFirstOrThrow({ where: { businessId, productId: usdProduct.id }, select: { id: true } });
+  const usdUnit = await db.rtUnit.findFirstOrThrow({ where: { businessId, variantId: usdVariant.id, isBase: true }, select: { id: true } });
+  const { saveStockDraft, postStockDocument } = await import("@/server/stock/documents");
+  const opening = await saveStockDraft(
+    { kind: "OPENING", lines: [{ variantId: usdVariant.id, unitId: usdUnit.id, quantity: "100", cost: { amount: "20000", currency: "IQD" } }] },
+    { userId: ownerId, businessId, idempotencyKey: "e2e-seed-usd-opening" },
+  );
+  if (!opening.ok) throw new Error(`usd item opening draft failed: ${JSON.stringify(opening)}`);
+  const openingPosted = await postStockDocument(
+    { documentId: opening.value.documentId, expectedVersion: opening.value.version },
+    { userId: ownerId, businessId, idempotencyKey: "e2e-seed-usd-opening-post" },
+  );
+  if (!openingPosted.ok) throw new Error(`usd item opening post failed: ${JSON.stringify(openingPosted)}`);
 
   await db.$disconnect();
   console.log("e2e seed ready");

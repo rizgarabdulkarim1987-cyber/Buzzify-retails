@@ -1859,12 +1859,27 @@ a.till-nav-item:hover {
   cursor: pointer;
 }
 
+/* Cash IQD | Cash USD | Card: three across; the words may take two lines on a phone. */
+.till-methods[data-count="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.till-methods[data-count="3"] .till-method {
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-inline: var(--space-2);
+  font-size: var(--t-b);
+  line-height: var(--leading-tight);
+  text-align: center;
+}
+
 .till-method .icon {
   width: 1.125rem;
   height: 1.125rem;
 }
 
-.till-method[aria-current="true"] {
+.till-method[aria-current="true"],
+.till-method[aria-pressed="true"] {
   border-color: var(--color-accent);
   background: var(--color-accent-soft);
   color: var(--color-accent);
@@ -1967,6 +1982,37 @@ a.till-nav-item:hover {
   outline-offset: -3px;
 }
 
+/* Dinars and dollars both shown: only the one the keypad types is outlined. */
+.till-pay-given[data-multi]:not([data-active]) {
+  outline-color: transparent;
+}
+
+/* What the dollars still have to cover, and the rate it is worked out at. */
+.till-usd-due {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 0 var(--space-3);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-accent-line);
+  border-radius: var(--radius);
+  background: var(--color-accent-soft);
+  color: var(--color-ink);
+  font-size: var(--t-b);
+}
+
+.till-usd-due strong {
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.till-usd-due small {
+  grid-column: 1 / -1;
+  color: var(--color-ink-2);
+  font-size: var(--t-b);
+}
+
 .till-pay-result dd {
   font-size: clamp(1.5rem, 3.5vw, 2rem);
   line-height: 1.15;
@@ -2052,10 +2098,37 @@ a.till-nav-item:hover {
     --till-key: var(--till-hit);
     gap: var(--space-2);
     padding-block: var(--space-3);
+    /* Head and the pay button stay put; only the amounts and keys scroll between them, so the
+       button never covers a key. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .till-pay-head,
+  .till-paypad > .till-offline,
+  .till-pay-confirm {
+    flex: none;
   }
 
   .till-pay-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     gap: var(--space-2);
+  }
+
+  /* Quick amounts: one even row whatever their number. */
+  .till-notes {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+
+  .till-note {
+    padding-inline: var(--space-1);
+    font-size: var(--text-sm);
   }
 
   .till-pay-summary {
@@ -2145,6 +2218,42 @@ a.till-nav-item:hover {
 .till-entry-label {
   font-size: var(--text-lg);
   font-weight: 700;
+}
+
+.till-entry-hint {
+  color: var(--color-ink-2);
+  font-size: var(--t-b);
+}
+
+/* A form with several amounts: each is a button that points the numpad at it. */
+.till-entry-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.till-entry-pick {
+  min-height: var(--till-hit);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.till-entry-pick[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.till-entry-pick .till-display {
+  min-height: 0;
+  padding-inline: var(--space-2);
+  font-size: 1.25rem;
 }
 
 .till-close {
@@ -2552,6 +2661,7 @@ body:has(.till-done) .shell-header {
 .till-tab[data-active],
 .till-newsale,
 .till-method[aria-current="true"],
+.till-method[aria-pressed="true"],
 .till-note {
   box-shadow: var(--glow-blue);
 }

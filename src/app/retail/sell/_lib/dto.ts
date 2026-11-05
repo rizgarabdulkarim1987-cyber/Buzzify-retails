@@ -35,6 +35,11 @@ export const shiftDto = (s: ShiftSummary): ShiftDto => ({
   cashMinor: s.cashMinor.toString(),
   cardMinor: s.cardMinor.toString(),
   expectedCashMinor: s.expectedCashMinor.toString(),
+  usdRateMicro: s.shift.usdRateMicro === null ? null : s.shift.usdRateMicro.toString(),
+  openingUsdMinor: s.shift.openingUsdMinor.toString(),
+  usdTenderedMinor: s.usdTenderedMinor.toString(),
+  usdDinarMinor: s.usdDinarMinor.toString(),
+  expectedUsdMinor: s.expectedUsdMinor === null ? null : s.expectedUsdMinor.toString(),
 });
 
 export const receiptDto = (s: SaleView): ReceiptDto => ({
@@ -56,5 +61,12 @@ export const receiptDto = (s: SaleView): ReceiptDto => ({
     unitPriceMinor: l.unitPriceMinor.toString(),
     lineTotalMinor: l.lineTotalMinor.toString(),
   })),
-  payments: s.payments.map((p) => ({ method: p.method, amountMinor: p.amountMinor.toString(), tenderedMinor: p.tenderedMinor.toString() })),
+  payments: s.payments.map((p) => ({
+    method: p.method,
+    amountMinor: p.amountMinor.toString(),
+    tenderedMinor: p.tenderedMinor.toString(),
+    ...(p.tenderedCurrency === "USD" && p.tenderedForeignMinor !== null && p.rateMicro !== null
+      ? { usdMinor: p.tenderedForeignMinor.toString(), rateMicro: p.rateMicro.toString() }
+      : {}),
+  })),
 });

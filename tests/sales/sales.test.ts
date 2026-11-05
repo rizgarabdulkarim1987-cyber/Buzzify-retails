@@ -198,7 +198,7 @@ describe("selling", () => {
       ["حبة", "2", 1250n, 2500n],
       ["كرتون", "1", 28_000n, 28_000n],
     ]);
-    expect(sale.payments).toEqual([{ method: "CASH", amountMinor: 30_500n, tenderedMinor: 35_000n }]);
+    expect(sale.payments).toEqual([{ method: "CASH", amountMinor: 30_500n, tenderedMinor: 35_000n, tenderedCurrency: null, tenderedForeignMinor: null, rateMicro: null }]);
     expect(await s.onHand(it1.variantId)).toBe(48n * U - 26n * U);
 
     const row = await db.rtSale.findUniqueOrThrow({ where: { id: sale.saleId } });
@@ -282,8 +282,8 @@ describe("selling", () => {
     expect(r.value.totalMinor).toBe(15_000n);
     expect(r.value.changeMinor).toBe(5000n);
     expect(r.value.payments).toEqual([
-      { method: "CASH", amountMinor: 5000n, tenderedMinor: 10_000n },
-      { method: "CARD", amountMinor: 10_000n, tenderedMinor: 10_000n },
+      { method: "CASH", amountMinor: 5000n, tenderedMinor: 10_000n, tenderedCurrency: null, tenderedForeignMinor: null, rateMicro: null },
+      { method: "CARD", amountMinor: 10_000n, tenderedMinor: 10_000n, tenderedCurrency: null, tenderedForeignMinor: null, rateMicro: null },
     ]);
     expect(await codeOf(sell(s, [pieces(it1, "1")], [card(8000n)]))).toBe("PAYMENT_RULE");
     expect(await codeOf(sell(s, [pieces(it1, "1")], [card(5000n), cash(2000n)]))).toBe("PAYMENT_SHORT");
@@ -462,10 +462,119 @@ describe("the till's catalog", () => {
     expect(await codeOf(currentUnitPrices({ unitIds: [milk.piece] }, s.as("stock")))).toBe("FORBIDDEN");
 
     const before = await tillState({}, s.as("cashier"));
-    expect(before.ok && before.value).toEqual({ currency: "IQD", open: null });
+    expect(before.ok && before.value).toEqual({ currency: "IQD", open: null, usdEnabled: false, lastUsdRateMicro: null });
     const shift = await open(s);
     const after = await tillState({}, s.as("cashier"));
     expect(after.ok && after.value.open?.shift.id).toBe(shift.id);
     expect(after.ok && after.value.open?.expectedCashMinor).toBe(50_000n);
+  });
+});
+
+describe("paying in dollars", () => {
+  const RATE = 1450_000000n;
+
+  /** A shift with a dollar rate (set directly: opening with a rate is the shifts' own test) and a 29,250 dinar item in stock. */
+  async function usdShop() {
+    const s = await shop();
+    const it1 = await s.item({ price: 29_250n });
+    await receive(s, [stockOf(it1, "50")]);
+    const shift = await open(s);
+    await db.rtShift.update({ where: { id: shift.id }, data: { usdRateMicro: RATE } });
+    return { s, it1, shift };
+  }
+  const usd = (usdMinor: bigint, amountMinor: bigint) => ({ method: "CASH" as const, currency: "USD" as const, usdMinor, amountMinor });
+  type Pay = { method: "CASH"; currency?: "IQD"; amountMinor: bigint } | { method: "CASH"; currency: "USD"; usdMinor: bigint; amountMinor: bigint } | { method: "CARD"; amountMinor: bigint };
+  const sellPay = (s: Shop, it1: Item, payments: Pay[], saleKey = key()) =>
+    createSale({ saleKey, lines: [pieces(it1, "1")], payments }, s.as("cashier", saleKey));
+  const rowsOf = (saleId: string) => db.rtPayment.findMany({ where: { saleId }, orderBy: [{ method: "asc" }, { id: "asc" }] });
+
+  it("dollars that exactly cover the due (the ceil chip) leave only a few dinars of change", async () => {
+    const { s, it1 } = await usdShop();
+    // 29,250 / 1450 = 20.172 dollars: 20.17 would be 29,246 (short), so the chip is 20.18 = 29,261.
+    const r = await sellPay(s, it1, [usd(2018n, 29_261n)]);
+    if (!r.ok) throw new Error(`${r.code} ${JSON.stringify(r.details ?? {})}`);
+    expect(r.value).toMatchObject({ totalMinor: 29_250n, paidMinor: 29_261n, changeMinor: 11n });
+    const [row] = await rowsOf(r.value.saleId);
+    expect(row).toMatchObject({ method: "CASH", amountMinor: 29_250n, tenderedMinor: 29_261n, tenderedCurrency: "USD", tenderedForeignMinor: 2018n, rateMicro: RATE });
+    expect(r.value.payments).toEqual([
+      { method: "CASH", amountMinor: 29_250n, tenderedMinor: 29_261n, tenderedCurrency: "USD", tenderedForeignMinor: 2018n, rateMicro: RATE },
+    ]);
+  });
+
+  it("20.17 dollars is a few dinars short and is refused as short", async () => {
+    const { s, it1 } = await usdShop();
+    expect(await codeOf(sellPay(s, it1, [usd(2017n, 29_246n)]))).toBe("PAYMENT_SHORT");
+  });
+
+  it("an overpay in dollars gives the change in dinars", async () => {
+    const { s, it1 } = await usdShop();
+    const r = await sellPay(s, it1, [usd(5000n, 72_500n)]);
+    if (!r.ok) throw new Error(r.code);
+    expect(r.value).toMatchObject({ paidMinor: 72_500n, changeMinor: 43_250n });
+    expect((await rowsOf(r.value.saleId))[0]).toMatchObject({ amountMinor: 29_250n, tenderedMinor: 72_500n, tenderedForeignMinor: 5000n });
+  });
+
+  it("dollars and dinars together: two cash rows, the change comes off the dinar row", async () => {
+    const { s, it1 } = await usdShop();
+    const r = await sellPay(s, it1, [usd(1000n, 14_500n), cash(20_000n)]);
+    if (!r.ok) throw new Error(r.code);
+    expect(r.value).toMatchObject({ paidMinor: 34_500n, changeMinor: 5250n });
+    const rows = await rowsOf(r.value.saleId);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((p) => p.tenderedCurrency === null)).toMatchObject({ amountMinor: 14_750n, tenderedMinor: 20_000n });
+    expect(rows.find((p) => p.tenderedCurrency === "USD")).toMatchObject({ amountMinor: 14_500n, tenderedMinor: 14_500n });
+  });
+
+  it("dollars and card", async () => {
+    const { s, it1 } = await usdShop();
+    const r = await sellPay(s, it1, [usd(1000n, 14_500n), card(14_750n)]);
+    if (!r.ok) throw new Error(r.code);
+    expect(r.value).toMatchObject({ paidMinor: 29_250n, changeMinor: 0n });
+    const rows = await rowsOf(r.value.saleId);
+    expect(rows.find((p) => p.method === "CARD")).toMatchObject({ amountMinor: 14_750n, tenderedForeignMinor: null, rateMicro: null });
+    expect(rows.find((p) => p.method === "CASH")).toMatchObject({ amountMinor: 14_500n, tenderedForeignMinor: 1000n });
+  });
+
+  it("dollars that overpay plus dinars that are not needed: refused, the dinars would all be change", async () => {
+    const { s, it1 } = await usdShop();
+    const r = await sellPay(s, it1, [usd(5000n, 72_500n), cash(10_000n)]);
+    expect(r.ok ? "ok" : [r.code, r.details?.reason]).toEqual(["PAYMENT_RULE", "CASH_NOT_NEEDED"]);
+  });
+
+  it("a wrong dinar value for the dollars is refused and nothing is written", async () => {
+    const { s, it1 } = await usdShop();
+    const r = await sellPay(s, it1, [usd(2018n, 40_000n)]);
+    expect(r.ok ? "ok" : [r.code, r.details?.reason]).toEqual(["PAYMENT_RULE", "RATE_MISMATCH"]);
+    expect(await db.rtSale.count()).toBe(0);
+    expect(await db.rtPayment.count()).toBe(0);
+  });
+
+  it("no rate on the shift: dollars are not available", async () => {
+    const s = await shop();
+    const it1 = await s.item({ price: 29_250n });
+    await receive(s, [stockOf(it1, "5")]);
+    await open(s);
+    const r = await sellPay(s, it1, [usd(2018n, 29_261n)]);
+    expect(r.ok ? "ok" : [r.code, r.details?.reason]).toEqual(["PAYMENT_RULE", "USD_NOT_AVAILABLE"]);
+    expect(await db.rtSale.count()).toBe(0);
+  });
+
+  it("a retry with the same saleKey returns the posted sale and writes no second dollar row", async () => {
+    const { s, it1 } = await usdShop();
+    const k = key();
+    const a = await sellPay(s, it1, [usd(2018n, 29_261n)], k);
+    const b = await createSale({ saleKey: k, lines: [pieces(it1, "1")], payments: [usd(2018n, 29_261n)] }, s.as("cashier"));
+    if (!a.ok || !b.ok) throw new Error("refused");
+    expect(b.value.saleId).toBe(a.value.saleId);
+    expect(b.value.replayed).toBe(true);
+    expect(await db.rtPayment.count({ where: { tenderedCurrency: "USD" } })).toBe(1);
+    expect(await db.rtSale.count()).toBe(1);
+  });
+
+  it("more than one dollar entry is refused; a dinar entry may name its currency", async () => {
+    const { s, it1 } = await usdShop();
+    expect(await codeOf(sellPay(s, it1, [usd(1000n, 14_500n), usd(1000n, 14_500n)]))).toBe("INVALID_INPUT");
+    const r = await sellPay(s, it1, [{ method: "CASH", currency: "IQD", amountMinor: 29_250n }]);
+    expect(r.ok && r.value.payments[0]).toMatchObject({ tenderedCurrency: null, tenderedForeignMinor: null, rateMicro: null });
   });
 });

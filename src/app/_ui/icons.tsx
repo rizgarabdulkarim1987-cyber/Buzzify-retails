@@ -240,3 +240,10 @@ export const EyeOffIcon = () => (
     <path d="M3 3l18 18" />
   </Icon>
 );
+
+export const DollarIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M14.5 9.2c-.4-.8-1.3-1.2-2.5-1.2-1.5 0-2.5.8-2.5 1.9 0 2.6 5 1.3 5 4.1 0 1.1-1 2-2.5 2-1.3 0-2.2-.5-2.6-1.4M12 6.5V8m0 8v1.5" />
+  </Icon>
+);

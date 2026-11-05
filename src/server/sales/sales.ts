@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { Currency, RtPaymentMethod } from "@/generated/prisma/enums";
 import { money, resolvePrice } from "@/server/catalog/price-core";
 import { can } from "@/server/domain/permissions";
+import { usdToDinar } from "@/server/domain/fx";
 import { pickFefo, settlePayments, type Allocation, type StockRow } from "@/server/domain/sale";
 import { businessToday, lineValueMinor, unitCostMinor } from "@/server/domain/stock";
 import type { Actor } from "@/server/framework/actor";
@@ -33,7 +34,13 @@ import { openShiftOf, shiftLock } from "./shifts";
  *   discount.override only (OWNER, MANAGER), FORBIDDEN otherwise. expectedTotalMinor, when given,
  *   must equal the computed total (PRICE_CHANGED with the new total otherwise): the till never
  *   charges a total the cashier did not see.
- * - Payments: settlePayments (cash, card, mixed; change from cash only).
+ * - Payments: settlePayments (cash, card, mixed; change from cash only). Part or all of the cash may be
+ *   dollars (one entry at most): the shift's rate (usdRateMicro, typed at opening) turns the dollars
+ *   into dinars, the client's dinar value must equal the server's (RATE_MISMATCH otherwise), and a
+ *   shift without a rate refuses dollars (USD_NOT_AVAILABLE). Settling happens in dinars only. Change
+ *   is always in dinars, taken off the dinar cash row when there is one, else off the dollar row's kept
+ *   amount; dinars that would all be change are CASH_NOT_NEEDED. A dollar row keeps the dollars handed
+ *   over, the rate used, the dinar value kept (amountMinor) and the dinar value handed over (tenderedMinor).
  * - Stock: never negative; FEFO across batches for a BATCH item, expired batches never sold
  *   (STOCK_EXPIRED when only expired stock would cover it); the no-batch row for any other item.
  *   The stock is read under the variants' locks, so two tills on the last piece serialize and the
@@ -65,13 +72,18 @@ const lineInput = z
   })
   .strict();
 
+/** Cash in dinars (currency optional), cash in dollars (usdMinor cents; amountMinor is the dinar value the client computed), or card. */
+const paymentInput = z.union([
+  z.object({ method: z.literal("CASH"), currency: z.literal("IQD").optional(), amountMinor: money }).strict(),
+  z.object({ method: z.literal("CASH"), currency: z.literal("USD"), usdMinor: money, amountMinor: money }).strict(),
+  z.object({ method: z.literal("CARD"), amountMinor: money }).strict(),
+]);
+
 const createInput = z
   .object({
     saleKey: z.string().min(1).max(200),
     lines: z.array(lineInput).min(1).max(MAX_SALE_LINES),
-    payments: z
-      .array(z.object({ method: z.enum(["CASH", "CARD"]), amountMinor: money }).strict())
-      .max(MAX_PAYMENTS),
+    payments: z.array(paymentInput).max(MAX_PAYMENTS),
     expectedTotalMinor: money.optional(),
   })
   .strict();
@@ -102,7 +114,19 @@ export type SaleView = {
   changeMinor: bigint;
   postedAt: Date;
   lines: SaleLineView[];
-  payments: { method: RtPaymentMethod; amountMinor: bigint; tenderedMinor: bigint }[];
+  payments: SalePaymentView[];
+};
+
+export type SalePaymentView = {
+  method: RtPaymentMethod;
+  amountMinor: bigint;
+  tenderedMinor: bigint;
+  /** "USD" for a dollar payment, else null. */
+  tenderedCurrency: Currency | null;
+  /** USD cents handed over, or null. */
+  tenderedForeignMinor: bigint | null;
+  /** IQD per 1 USD x 10^6 used, or null. */
+  rateMicro: bigint | null;
 };
 
 export type CreatedSale = SaleView & { replayed: boolean };
@@ -146,7 +170,7 @@ export async function readSale(tx: Tx, where: { id: string } | { saleKey: string
     tx.rtPayment.findMany({
       where: { saleId: sale.id },
       orderBy: [{ method: "asc" }, { id: "asc" }],
-      select: { method: true, amountMinor: true, tenderedMinor: true },
+      select: { method: true, amountMinor: true, tenderedMinor: true, tenderedCurrency: true, tenderedForeignMinor: true, rateMicro: true },
     }),
   ]);
   const { id: saleId, ...rest } = sale;
@@ -210,7 +234,7 @@ async function postSale(tx: Tx, actor: Actor, input: CreateInput, lockBusiness: 
   const found = await openShiftOf(tx, actor);
   if (!found) throw new RuleError("SHIFT_NOT_OPEN");
   await lockBusiness(shiftLock(found.id));
-  const shift = await tx.rtShift.findFirst({ where: { id: found.id, status: "OPEN" }, select: { id: true, branchId: true, locationId: true, currency: true } });
+  const shift = await tx.rtShift.findFirst({ where: { id: found.id, status: "OPEN" }, select: { id: true, branchId: true, locationId: true, currency: true, usdRateMicro: true } });
   if (!shift) throw new RuleError("SHIFT_NOT_OPEN");
 
   // A sale already posted under this key: return it, write nothing.
@@ -281,7 +305,21 @@ async function postSale(tx: Tx, actor: Actor, input: CreateInput, lockBusiness: 
   if (input.expectedTotalMinor !== undefined && input.expectedTotalMinor !== totalMinor) {
     throw new RuleError("PRICE_CHANGED", { totalMinor: totalMinor.toString() });
   }
-  const settled = settlePayments(totalMinor, input.payments);
+  // Dollars: at most one entry, converted at the shift's rate; the client's dinar value must match.
+  const usdEntries = input.payments.filter((p): p is Extract<typeof p, { currency: "USD" }> => p.method === "CASH" && p.currency === "USD");
+  if (usdEntries.length > 1) throw new RuleError("INVALID_INPUT");
+  const usdEntry = usdEntries[0];
+  let usdDinar = 0n;
+  if (usdEntry) {
+    if (shift.usdRateMicro === null) throw new RuleError("PAYMENT_RULE", { reason: "USD_NOT_AVAILABLE" });
+    usdDinar = usdToDinar(usdEntry.usdMinor, shift.usdRateMicro);
+    if (usdDinar <= 0n) throw new RuleError("INVALID_INPUT");
+    if (usdDinar !== usdEntry.amountMinor) throw new RuleError("PAYMENT_RULE", { reason: "RATE_MISMATCH" });
+  }
+  const settled = settlePayments(
+    totalMinor,
+    input.payments.map((p) => ({ method: p.method, amountMinor: p.amountMinor })),
+  );
 
   // Stock: FEFO per line, in line order, from what the earlier lines left.
   const today = businessToday(now, biz.timezone);
@@ -388,8 +426,28 @@ async function postSale(tx: Tx, actor: Actor, input: CreateInput, lockBusiness: 
       costMinor: costOf.get(stockLineIds[i]!) ?? 0n,
     })),
   });
-  const payments: { method: RtPaymentMethod; amountMinor: bigint; tenderedMinor: bigint }[] = [];
-  if (settled.cashKeptMinor > 0n) payments.push({ method: "CASH", amountMinor: settled.cashKeptMinor, tenderedMinor: settled.cashTenderedMinor });
+  // The change is paid from the dinar drawer: off the dinar cash row, else off the dollar row's kept amount.
+  const iqdTendered = settled.cashTenderedMinor - usdDinar;
+  if (iqdTendered > 0n && settled.changeMinor >= iqdTendered) throw new RuleError("PAYMENT_RULE", { reason: "CASH_NOT_NEEDED" });
+  const payments: {
+    method: RtPaymentMethod;
+    amountMinor: bigint;
+    tenderedMinor: bigint;
+    tenderedCurrency?: Currency;
+    tenderedForeignMinor?: bigint;
+    rateMicro?: bigint;
+  }[] = [];
+  if (iqdTendered > 0n) payments.push({ method: "CASH", amountMinor: iqdTendered - settled.changeMinor, tenderedMinor: iqdTendered });
+  if (usdEntry) {
+    payments.push({
+      method: "CASH",
+      amountMinor: usdDinar - (iqdTendered > 0n ? 0n : settled.changeMinor),
+      tenderedMinor: usdDinar,
+      tenderedCurrency: "USD",
+      tenderedForeignMinor: usdEntry.usdMinor,
+      rateMicro: shift.usdRateMicro!,
+    });
+  }
   if (settled.cardMinor > 0n) payments.push({ method: "CARD", amountMinor: settled.cardMinor, tenderedMinor: settled.cardMinor });
   if (payments.length > 0) {
     await tx.rtPayment.createMany({

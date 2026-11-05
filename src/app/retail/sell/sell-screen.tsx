@@ -4,8 +4,9 @@ import Link from "next/link";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import type { PackId, PackWords } from "@/packs";
+import { dinarToUsdCentsCeil, usdToDinar } from "@/server/domain/fx";
 import { fill, pickName } from "../../_lib/format";
-import { BarcodeIcon, CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, MinusIcon, PackageIcon, PlusIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon, UserIcon } from "../../_ui/icons";
+import { BarcodeIcon, CardIcon, CartIcon, CashIcon, CloseIcon, DollarIcon, DrawerIcon, GridIcon, MenuIcon, MinusIcon, PackageIcon, PlusIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon, UserIcon } from "../../_ui/icons";
 import { LocaleSwitcher } from "../../_ui/locale-switcher";
 import { Notice } from "../../_ui/state";
 import { signOut } from "../../session-actions";
@@ -23,6 +24,7 @@ import {
   payState,
   paymentsOf,
   quickAmounts,
+  quickUsdAmounts,
   removeLine,
   repriceLines,
   setQuantity,
@@ -37,7 +39,7 @@ import {
 } from "./_lib/cart";
 import { MAX_TICKETS, closeTicket, latestTicket, openTicket, orderTickets, saveTicket, ticketLines, ticketTotals, touchTicket } from "./_lib/tickets";
 import { keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, textLength, type NumpadKey } from "./_lib/till";
-import { Numpad, Receipt, TicketPad, TicketRow, Tile, entryText, money } from "./_lib/views";
+import { Numpad, PayMethods, Receipt, TicketPad, TicketRow, Tile, UsdDue, entryText, money } from "./_lib/views";
 import { accentFor, ACCENT } from "./_lib/category-accent";
 import { categoryKindFor } from "./_lib/category-kind";
 import { CategoryTile } from "./_lib/category-tile";
@@ -49,6 +51,8 @@ type Props = {
   t: Messages;
   currency: Currency;
   shift: ShiftDto;
+  /** The business takes dollars: with the shift's rate, the pay screen offers Cash USD. */
+  usdEnabled?: boolean;
   locationId: string;
   categories: CategoryDto[];
   initialItems: SellItemDto[];
@@ -134,7 +138,7 @@ const finePointer = () => typeof window !== "undefined" && window.matchMedia("(p
  * opens the cart as a sheet. A barcode scanner types into the search box and ends with Enter: a
  * single barcode hit goes straight into the cart. The numpad edits quantities and takes the cash.
  */
-export function SellScreen({ locale, t, currency, shift, locationId, categories, initialItems, pageSize, pack, departmentWords, heldKey, business, branch, operator }: Props) {
+export function SellScreen({ locale, t, currency, shift, usdEnabled = false, locationId, categories, initialItems, pageSize, pack, departmentWords, heldKey, business, branch, operator }: Props) {
   const ctx = { locale, t };
   const s = t.sell;
   const tl = t.till;
@@ -163,6 +167,9 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const [padOpen, setPadOpen] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
   const [cashText, setCashText] = useState("");
+  /** Dollars typed (ASCII, two decimals); the keypad types these when the target is USD. */
+  const [usdText, setUsdText] = useState("");
+  const [target, setTarget] = useState<"IQD" | "USD">("IQD");
   const [cardMinor, setCardMinor] = useState(0n);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -186,8 +193,14 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const total = useMemo(() => cartTotal(lines), [lines]);
   const count = useMemo(() => cartCount(lines), [lines]);
   const cashMinor = parseAmount(cashText.replace(/\.$/, "") || "0", currency) ?? 0n;
-  const tender = { cashMinor, cardMinor };
+  /** Dollars are offered only with the business switch and the open shift's rate; otherwise the till is as it always was. */
+  const rateMicro = usdEnabled && shift.usdRateMicro !== null ? BigInt(shift.usdRateMicro) : null;
+  const usdMinor = rateMicro === null ? 0n : (parseAmount(usdText.replace(/\.$/, "") || "0", "USD") ?? 0n);
+  const usdDinar = rateMicro === null ? 0n : usdToDinar(usdMinor, rateMicro);
+  const tender = rateMicro === null ? { cashMinor, cardMinor } : { cashMinor, cardMinor, usdMinor, usdDinarMinor: usdDinar };
   const pay = payState(total, tender);
+  /** What the dollars still have to cover (the due less the card and the dinars typed), as the cent that covers it. */
+  const usdDueCents = rateMicro === null ? 0n : dinarToUsdCentsCeil(total > cardMinor + cashMinor ? total - cardMinor - cashMinor : 0n, rateMicro);
   /** The selected line; with none picked, the last one (so the keypad always has a target). */
   const selLine = lines.find((l) => l.key === selKey) ?? lines[lines.length - 1] ?? null;
   const m = (v: bigint | string) => money(ctx, currency, v);
@@ -202,7 +215,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   useEffect(() => {
     keyRef.current = null;
-  }, [lines, cashText, cardMinor]);
+  }, [lines, cashText, usdText, cardMinor]);
 
   const fetchItems = useCallback(
     async (q: string, cat: string | null, offset = 0): Promise<SellItemDto[] | null> => {
@@ -504,21 +517,31 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     if (lines.length === 0) return;
     setError(null);
     setCashText("");
+    setUsdText("");
+    setTarget("IQD");
     setCardMinor(0n);
     setMode("pay");
     setProductsOpen(false);
   };
 
-  const pressCash = (k: NumpadKey) => setCashText((x) => numpadPress(x, k, moneyDecimals(currency)));
+  const pressCash = (k: NumpadKey) =>
+    target === "USD" ? setUsdText((x) => numpadPress(x, k, moneyDecimals("USD"))) : setCashText((x) => numpadPress(x, k, moneyDecimals(currency)));
   const setCash = (v: bigint) => setCashText(minorToEntry(currency, v));
-  const exact = () => setCash(total > cardMinor ? total - cardMinor : 0n);
+  const setUsd = (v: bigint) => setUsdText(minorToEntry("USD", v));
+  /** Exact: the dinars (or the dollars) that cover what the card and the other cash leave. */
+  const exact = () => {
+    if (target === "USD") return setUsd(usdDueCents);
+    setCash(total > cardMinor + usdDinar ? total - cardMinor - usdDinar : 0n);
+  };
   const byCard = () => {
     const r = cardRest(total, tender);
     setCardMinor(r.cardMinor);
     setCash(r.cashMinor);
+    if (rateMicro !== null) setUsd(r.usdMinor ?? 0n);
   };
   const resetPay = () => {
     setCashText("");
+    setUsdText("");
     setCardMinor(0n);
   };
 
@@ -552,6 +575,14 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
         setError(s.payScreen.cashNotNeeded);
         return;
       }
+      if (r.code === "PAYMENT_RULE" && r.details?.reason === "RATE_MISMATCH") {
+        setError(s.failures.rateMismatch);
+        return;
+      }
+      if (r.code === "PAYMENT_RULE" && r.details?.reason === "USD_NOT_AVAILABLE") {
+        setError(s.failures.usdNotAvailable);
+        return;
+      }
       setError(failureMessage(t, r));
     } catch {
       // The request may or may not have reached the server: the same key makes a retry safe.
@@ -577,12 +608,13 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
       const k = keyFromKeyboard(e.key);
       if (k) {
         e.preventDefault();
-        setCashText((x) => numpadPress(x, k, moneyDecimals(currency)));
+        if (target === "USD") setUsdText((x) => numpadPress(x, k, moneyDecimals("USD")));
+        else setCashText((x) => numpadPress(x, k, moneyDecimals(currency)));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mode, sending, currency]);
+  }, [mode, sending, currency, target]);
 
   const afterReceipt = () => {
     setReceipt(null);
@@ -602,7 +634,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
           <p className="till-done-total">{m(receipt.totalMinor)}</p>
           {change > 0n ? (
             <p className="till-done-change">
-              <span>{tl.changeDue}</span>
+              <span>{receipt.payments.some((p) => p.usdMinor) ? tl.changeDinars : tl.changeDue}</span>
               <strong data-testid="done-change">{m(change)}</strong>
             </p>
           ) : null}
@@ -995,14 +1027,24 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                     {totalText}
                   </dd>
                 </div>
-                <div className="till-pay-given">
+                <div className="till-pay-given" data-multi={rateMicro !== null || undefined} data-active={target === "IQD" || undefined}>
                   <dt>
-                    <CashIcon /> {tl.cashReceived}
+                    <CashIcon /> {rateMicro === null ? tl.cashReceived : tl.cashIqd}
                   </dt>
                   <dd className="till-display" data-testid="pay-given" data-placeholder={cashText === "" || undefined}>
                     {cashText === "" ? m(0n) : `${entryText(locale, cashText)} ${t.catalog.currencyShort[currency]}`}
                   </dd>
                 </div>
+                {rateMicro !== null ? (
+                  <div className="till-pay-given" data-multi data-active={target === "USD" || undefined}>
+                    <dt>
+                      <DollarIcon /> {tl.dollarsReceived}
+                    </dt>
+                    <dd className="till-display" data-testid="pay-given-usd" data-placeholder={usdText === "" || undefined}>
+                      {usdText === "" ? money(ctx, "USD", 0n) : `${entryText(locale, usdText)} ${t.catalog.currencyShort.USD}`}
+                    </dd>
+                  </div>
+                ) : null}
                 {cardMinor > 0n ? (
                   <div>
                     <dt>
@@ -1018,33 +1060,49 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                   </div>
                 ) : (
                   <div className="till-pay-result" data-tone="good">
-                    <dt>{tl.changeDue}</dt>
+                    <dt>{usdMinor > 0n ? tl.changeDinars : tl.changeDue}</dt>
                     <dd data-testid="pay-change">{m(pay.change)}</dd>
                   </div>
                 )}
               </dl>
               <div className="till-pay-keys">
-                <div className="till-methods" role="group" aria-label={tl.methods}>
-                  <span className="till-method" aria-current="true">
-                    <CashIcon />
-                    {tl.payCash}
-                  </span>
-                  <button type="button" className="till-method" onClick={byCard} disabled={sending || pay.remaining === 0n} data-testid="pay-card">
-                    <CardIcon />
-                    {cashMinor > 0n ? s.payScreen.cardRest : tl.payCard}
-                  </button>
-                </div>
+                <PayMethods
+                  locale={locale}
+                  t={t}
+                  target={target}
+                  usd={rateMicro !== null}
+                  cardLabel={cashMinor + usdDinar > 0n ? s.payScreen.cardRest : tl.payCard}
+                  cardDisabled={pay.remaining === 0n}
+                  disabled={sending}
+                  onTarget={setTarget}
+                  onCard={byCard}
+                />
+                {rateMicro !== null && target === "USD" ? <UsdDue locale={locale} t={t} dueCents={usdDueCents} rateMicro={rateMicro.toString()} /> : null}
                 <div className="till-notes">
-                  {quickAmounts(total > cardMinor ? total - cardMinor : 0n, currency).map((v, i) => (
-                    <button key={v.toString()} type="button" className="till-note" onClick={() => (i === 0 ? exact() : setCash(v))} disabled={sending} style={lenStyle(m(v))} data-testid="pay-note">
-                      {i === 0 ? <span className="till-note-tag">{tl.exact}</span> : null}
-                      <span className="till-note-amount">{m(v)}</span>
-                    </button>
-                  ))}
+                  {target === "USD" && rateMicro !== null
+                    ? quickUsdAmounts(usdDueCents).map((v, i) => (
+                        <button key={v.toString()} type="button" className="till-note" onClick={() => setUsd(v)} disabled={sending} style={lenStyle(money(ctx, "USD", v))} data-testid="pay-note-usd">
+                          {i === 0 && v === usdDueCents ? <span className="till-note-tag">{tl.exact}</span> : null}
+                          <span className="till-note-amount">{money(ctx, "USD", v)}</span>
+                        </button>
+                      ))
+                    : quickAmounts(total > cardMinor + usdDinar ? total - cardMinor - usdDinar : 0n, currency).map((v, i) => (
+                        <button key={v.toString()} type="button" className="till-note" onClick={() => (i === 0 ? exact() : setCash(v))} disabled={sending} style={lenStyle(m(v))} data-testid="pay-note">
+                          {i === 0 ? <span className="till-note-tag">{tl.exact}</span> : null}
+                          <span className="till-note-amount">{m(v)}</span>
+                        </button>
+                      ))}
                 </div>
-                <Numpad locale={locale} t={t} label={tl.cashReceived} decimals={moneyDecimals(currency)} onPress={pressCash} disabled={sending} />
+                <Numpad
+                  locale={locale}
+                  t={t}
+                  label={target === "USD" ? tl.dollarsReceived : tl.cashReceived}
+                  decimals={moneyDecimals(target === "USD" ? "USD" : currency)}
+                  onPress={pressCash}
+                  disabled={sending}
+                />
                 <div className="till-pay-row">
-                  <button type="button" className="till-btn till-btn-quiet" onClick={resetPay} disabled={sending || (cashText === "" && cardMinor === 0n)} data-testid="pay-reset">
+                  <button type="button" className="till-btn till-btn-quiet" onClick={resetPay} disabled={sending || (cashText === "" && usdText === "" && cardMinor === 0n)} data-testid="pay-reset">
                     {tl.clearEntry}
                   </button>
                 </div>

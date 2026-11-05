@@ -57,6 +57,8 @@ export const STOCK_ITEM = { nameAr: "حليب طويل الأجل ١ لتر", ba
  * fail the retail checksum), sold by the piece, not batch-tracked, so a receipt draft posts as read.
  */
 export const INTAKE_ITEM = { nameAr: "طحين صفر ١ كغم", barcode: "6291041500213", piece: "قطعة" };
+/** tests/e2e/sell-usd.spec.ts: a plain item (not batch-tracked) in stock at branch A, priced 29,250 dinars. */
+export const USD_ITEM = { nameAr: "زيت طبخ ٣ لتر", barcode: "6281000000048", priceIqd: "29250" };
 /** The seeded plan's monthly AI reads (the shop's quota is twice this in half units). */
 export const AI_MONTHLY = 20;
 /** The fake provider's scenario file for the e2e dev server (INTAKE_PROVIDER=fake reads it on every call). */
