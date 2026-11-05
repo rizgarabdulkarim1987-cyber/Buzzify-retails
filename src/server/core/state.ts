@@ -1,5 +1,5 @@
 import { z, type ZodType } from "zod";
-import type { Prisma, RtBusinessStatus, SubscriptionStatus } from "@/generated/prisma/client";
+import type { Prisma, RtActivityType, RtBusinessStatus, SubscriptionStatus } from "@/generated/prisma/client";
 import { AI_INTAKE_FEATURE, featureEnabled } from "@/server/framework/features";
 
 /*
@@ -39,7 +39,17 @@ export type CoreState = {
   };
   aiIntake: boolean;
   owner: { coreUserId: string; email: string; emailVerified: boolean; name: string };
+  /**
+   * The shop's Retail product as Studio names it for Retails (MARKET, ELECTRONICS or CLOTHING). Studio is the only
+   * source for a linked shop's type: a newer snapshot moves it (a shop provisioned as MIXED becomes MARKET). Absent
+   * from an older Studio's snapshot: then the stored type is left as it is.
+   */
+  activityType?: CoreActivityType;
 };
+
+/** The activity types Studio's three products map to (Studio's SUPERMARKET is MARKET). */
+export const CORE_ACTIVITY_TYPES = ["MARKET", "ELECTRONICS", "CLOTHING"] as const satisfies readonly RtActivityType[];
+export type CoreActivityType = (typeof CORE_ACTIVITY_TYPES)[number];
 
 const isoDate = z.iso.datetime({ offset: true }).transform((s) => new Date(s));
 const limit = z.number().int().min(0).max(1_000_000_000);
@@ -78,6 +88,7 @@ export const coreStateSchema: ZodType<CoreState> = z.object({
     emailVerified: z.boolean(),
     name: z.string().trim().max(200),
   }),
+  activityType: z.enum(CORE_ACTIVITY_TYPES).optional(),
 });
 
 /** Creates the "core:"-prefixed plan or overwrites its name and limits with the snapshot's; re-activates it. */
@@ -94,8 +105,10 @@ export async function upsertCorePlan(tx: Prisma.TransactionClient, coreBusinessI
  */
 export async function applyCoreState(tx: Prisma.TransactionClient, businessId: string, state: CoreState): Promise<{ applied: boolean }> {
   // Row lock: concurrent snapshots for this business queue here and re-read the version after.
-  const locked = await tx.$queryRaw<{ coreStateVersion: number | null; status: RtBusinessStatus; coreOwnerUserId: string | null }[]>`
-    SELECT "coreStateVersion", "status", "coreOwnerUserId" FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
+  const locked = await tx.$queryRaw<
+    { coreStateVersion: number | null; status: RtBusinessStatus; coreOwnerUserId: string | null; activityType: RtActivityType }[]
+  >`
+    SELECT "coreStateVersion", "status", "coreOwnerUserId", "activityType" FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
   if (locked.length === 0) throw new Error("applyCoreState: unknown business");
   if (state.version <= (locked[0]!.coreStateVersion ?? 0)) return { applied: false };
   await demotePreviousOwner(tx, businessId, locked[0]!.coreOwnerUserId, state);
@@ -113,10 +126,31 @@ export async function applyCoreState(tx: Prisma.TransactionClient, businessId: s
 
   // Snapshots are state, not transitions: a first snapshot may take SETUP straight to SUSPENDED or ARCHIVED.
   // SETUP becomes ACTIVE with the first ACTIVE snapshot; afterwards Studio's status is taken as is.
+  // The product type follows Studio (only when the snapshot carries one): MIXED -> MARKET, and any later change.
+  const fromType = locked[0]!.activityType;
+  const toType = state.activityType ?? fromType;
   await tx.rtBusiness.update({
     where: { id: businessId },
-    data: { status: state.status, coreOwnerUserId: state.owner.coreUserId, coreStateVersion: state.version, version: { increment: 1 } },
+    data: {
+      status: state.status,
+      activityType: toType,
+      coreOwnerUserId: state.owner.coreUserId,
+      coreStateVersion: state.version,
+      version: { increment: 1 },
+    },
   });
+  if (toType !== fromType) {
+    await tx.rtAuditLog.create({
+      data: {
+        businessId,
+        actorId: CORE_SYNC_ACTOR,
+        action: "core.business.activity",
+        entity: "RtBusiness",
+        entityId: businessId,
+        changes: { from: fromType, to: toType, version: state.version },
+      },
+    });
+  }
 
   const sub = state.subscription;
   const subData = {

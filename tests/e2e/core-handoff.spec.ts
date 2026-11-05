@@ -61,14 +61,15 @@ async function arabicPhone(page: Page) {
   await page.setViewportSize({ width: 375, height: 812 });
 }
 
-test("the Studio button sends the browser to Studio's handoff with state and nonce", async ({ page }) => {
+// The browser handoff still starts at /api/core/v1/handoff/start (Studio's "Open Retails" goes there);
+// /login itself is Retails' own form (tests/e2e/login.spec.ts).
+const START = "/api/core/v1/handoff/start";
+
+test("the handoff start sends the browser to Studio's handoff with state and nonce", async ({ page }) => {
   await arabicPhone(page);
   const studio = await fakeStudio(page, () => `http://localhost:${E2E_PORT}/login?stopped=studio`);
 
-  await page.goto("/login");
-  const button = page.getByTestId("handoff-sign-in");
-  await expect(button).toHaveText(ar.auth.signIn);
-  await button.click();
+  await page.goto(START);
   await expect(page).toHaveURL(/stopped=studio/);
 
   const url = studio.handoffUrl()!;
@@ -89,10 +90,13 @@ test("a Studio-signed token completes the sign-in and lands in the shop", async 
   await arabicPhone(page);
   await fakeStudio(page, (url) => backToApp(url.searchParams, url.searchParams.get("nonce")!));
 
-  await page.goto("/login");
-  await page.getByTestId("handoff-sign-in").click();
-  await expect(page).toHaveURL(/\/retail\/home/);
+  await page.goto(START);
+  // Whoever sells lands straight in the till (/retail/home sends them on to /retail/sell), or first in the
+  // workplace chooser when no branch is chosen yet in this browser.
+  await expect(page).toHaveURL(/\/retail\/(sell|select)/);
   await expect(page.getByText(CORE_SHOP.name).first()).toBeVisible();
+  // The shop page may settle (a refresh after the workplace is chosen) before it can be measured.
+  await page.waitForLoadState("networkidle");
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
@@ -100,8 +104,7 @@ test("a Studio-signed token completes the sign-in and lands in the shop", async 
 test("a token that is not bound to this browser's handoff is refused", async ({ page }) => {
   await arabicPhone(page);
   await fakeStudio(page, (url) => backToApp(url.searchParams, "some-other-browsers-nonce"));
-  await page.goto("/login");
-  await page.getByTestId("handoff-sign-in").click();
+  await page.goto(START);
   await expect(page).toHaveURL(/\/login\?error=core/);
   await expect(page.getByText(ar.auth.coreFailed)).toBeVisible();
 });

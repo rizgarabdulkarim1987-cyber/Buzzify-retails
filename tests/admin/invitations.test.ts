@@ -152,6 +152,40 @@ describe("acceptInvitation", () => {
   });
 });
 
+describe("invitation links use the shop's product address", () => {
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.PACK_HOSTS;
+    // Test values only.
+    process.env.PACK_HOSTS = "supermarket.localhost=SUPERMARKET,clothing.localhost=CLOTHING";
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.PACK_HOSTS;
+    else process.env.PACK_HOSTS = saved;
+  });
+
+  it("a CLOTHING shop's link is on the clothing address (APP_URL's scheme and port)", async () => {
+    const w = await world();
+    expect(mailer.messages.at(-1)!.text).toContain(`http://clothing.localhost:3000/invite#token=${w.token}`);
+    expect(mailer.messages.at(-1)!.text).not.toContain("http://localhost:3000/invite");
+  });
+
+  it("the mail names the shop's product, not Buzzify Retails", async () => {
+    await world();
+    const mail = mailer.messages.at(-1)!;
+    expect(mail.subject).toContain("Buzzify ملابس");
+    expect(mail.text).toContain("Buzzify ملابس");
+    expect(`${mail.subject}
+${mail.text}`).not.toContain("Retails");
+  });
+
+  it("a product without an address falls back to APP_URL", async () => {
+    process.env.PACK_HOSTS = "supermarket.localhost=SUPERMARKET";
+    const w = await world();
+    expect(mailer.messages.at(-1)!.text).toContain(`http://localhost:3000/invite#token=${w.token}`);
+  });
+});
+
 describe("inviteOwner and resendInvitation", () => {
   it("the token is stored only as its sha256; the mail carries the APP_URL link", async () => {
     const w = await world();

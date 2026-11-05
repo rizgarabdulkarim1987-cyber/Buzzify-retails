@@ -293,3 +293,80 @@ describe("owner change in Studio", () => {
     expect((await db.rtBusiness.findUniqueOrThrow({ where: { id } })).coreOwnerUserId).toBe("core-user-2");
   });
 });
+
+describe("activity type from Studio", () => {
+  /** A shop provisioned before Studio named its product: MIXED, and a snapshot without activityType. */
+  async function mixedShop(): Promise<string> {
+    const text = JSON.stringify({
+      coreBusinessId: "core-biz-1",
+      name: "Rizgar",
+      activityType: "MIXED",
+      branches: [{ name: "A" }],
+      currencies: ["IQD"],
+      state: state(),
+    });
+    const res = await provisionPOST(
+      new Request(`http://localhost${PROVISION}`, { method: "POST", body: text, headers: signRequest("POST", PROVISION, text, SECRET) }),
+    );
+    expect(res.status).toBe(200);
+    const { businessId } = (await res.json()) as { businessId: string };
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id: businessId } })).toMatchObject({ activityType: "MIXED" });
+    return businessId;
+  }
+
+  it("a newer snapshot turns a MIXED shop into MARKET, with an audit row", async () => {
+    const id = await mixedShop();
+    expect(await (await POST(post(state({ version: 2, activityType: "MARKET" })))).json()).toEqual({ applied: true, version: 2 });
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ activityType: "MARKET", coreStateVersion: 2 });
+    const audit = await db.rtAuditLog.findMany({ where: { businessId: id, action: "core.business.activity" } });
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.changes).toEqual({ from: "MIXED", to: "MARKET", version: 2 });
+  });
+
+  it("is idempotent and versioned: a repeat writes nothing, an older snapshot cannot move it back", async () => {
+    const id = await mixedShop();
+    await POST(post(state({ version: 3, activityType: "MARKET" })));
+    const before = await counts();
+    expect(await (await POST(post(state({ version: 3, activityType: "MARKET" })))).json()).toEqual({ applied: false, version: 3 });
+    expect(await (await POST(post(state({ version: 2, activityType: "CLOTHING" })))).json()).toEqual({ applied: false, version: 3 });
+    expect(await counts()).toEqual(before);
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ activityType: "MARKET" });
+    // The same type again in a newer snapshot: applied, but no second audit row for the type.
+    await POST(post(state({ version: 4, activityType: "MARKET" })));
+    expect(await db.rtAuditLog.count({ where: { businessId: id, action: "core.business.activity" } })).toBe(1);
+  });
+
+  it("later changes in Studio follow; a snapshot without activityType keeps the stored one", async () => {
+    const id = await mixedShop();
+    await POST(post(state({ version: 2, activityType: "MARKET" })));
+    await POST(post(state({ version: 3, activityType: "ELECTRONICS" })));
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ activityType: "ELECTRONICS" });
+    expect(await (await POST(post(state({ version: 4 })))).json()).toEqual({ applied: true, version: 4 });
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ activityType: "ELECTRONICS" });
+  });
+
+  it("a type Studio never sends (MIXED, BEAUTY) is a 400 and changes nothing", async () => {
+    const id = await mixedShop();
+    for (const activityType of ["MIXED", "BEAUTY", "SUPERMARKET"]) {
+      expect((await POST(post(state({ version: 2, activityType })))).status).toBe(400);
+    }
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ activityType: "MIXED", coreStateVersion: 1 });
+  });
+
+  it("a provision repeat with a newer snapshot moves the existing shop's type too", async () => {
+    const id = await mixedShop();
+    const text = JSON.stringify({
+      coreBusinessId: "core-biz-1",
+      name: "Rizgar",
+      activityType: "MARKET",
+      branches: [{ name: "A" }],
+      currencies: ["IQD"],
+      state: state({ version: 2, activityType: "MARKET" }),
+    });
+    const res = await provisionPOST(
+      new Request(`http://localhost${PROVISION}`, { method: "POST", body: text, headers: signRequest("POST", PROVISION, text, SECRET) }),
+    );
+    expect(res.status).toBe(200);
+    expect(await db.rtBusiness.findUniqueOrThrow({ where: { id } })).toMatchObject({ activityType: "MARKET", coreStateVersion: 2 });
+  });
+});

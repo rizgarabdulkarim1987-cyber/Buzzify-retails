@@ -201,7 +201,12 @@ async function saveBranches(tx: Tx, actor: Actor, d: z.infer<typeof branchesData
 
 async function saveActivity(tx: Tx, actor: Actor, d: z.infer<typeof activityData>) {
   if (!validateCapabilities(d.capabilities).ok) throw new RuleError("CAPABILITY_CONFLICT");
-  await updateVersioned(tx.rtBusiness, { id: actor.businessId }, d.expectedVersion, { activityType: d.activityType });
+  // A shop linked to Studio gets its activity type (its product: src/packs) from Studio's snapshot
+  // only: a submitted value is ignored, so a crafted form cannot move the shop to another product.
+  // A shop not linked to Studio (dev, tests, platform-provisioned) keeps choosing it here.
+  const shop = await tx.rtBusiness.findFirstOrThrow({ select: { activityType: true, coreBusinessId: true } });
+  const activityType = shop.coreBusinessId !== null ? shop.activityType : d.activityType;
+  await updateVersioned(tx.rtBusiness, { id: actor.businessId }, d.expectedVersion, { activityType });
   const rows = await tx.rtCapability.findMany({ select: { capability: true, enabled: true } });
   const current = new Map(rows.map((r) => [r.capability, r.enabled]));
   for (const capability of CAPABILITIES) {
@@ -325,7 +330,8 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
  * Completes (or re-saves) one wizard step for meta.businessId: `{ step, data }`.
  * - 1: `{ name, defaultCurrency, enabledCurrencies, timezone?, expectedVersion }` (the business's version)
  * - 2: `{ branches: [{ id, name, expectedVersion } | { name, storeName? }] }` (rename or add; a new branch gets one store)
- * - 3: `{ activityType, capabilities, expectedVersion }` (the business's version; replaces the enabled set)
+ * - 3: `{ activityType, capabilities, expectedVersion }` (the business's version; replaces the enabled set;
+ *   activityType is ignored for a shop linked to Studio, which sets it)
  * - 4: `{}` (checks the catalog: CATALOG_EMPTY until a real product or a real import exists)
  * - 5: `{ staff: [{ email, role, branchIds }] }` (adds existing accounts as staff; may be empty)
  * - 6: `{ skip: true }` (optional step: marks it SKIPPED; it becomes DONE by itself with the first posted opening)

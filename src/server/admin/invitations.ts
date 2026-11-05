@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
+import { getPack, packWords } from "@/packs";
+import { shopOrigin } from "@/packs/urls";
 import { getMailer } from "@/server/email/mailer";
 import { ForbiddenError, NotFoundError, RuleError } from "@/server/framework/errors";
 import { definePlatformAction } from "@/server/framework/platform-action";
@@ -40,16 +42,17 @@ export function hashInvitationToken(token: string): string {
  * The accept link. The token travels in the URL fragment, which browsers never send to a server,
  * so it stays out of access logs and Referer headers; the accept page posts it to acceptInvitation.
  */
-export function invitationLink(token: string): string {
-  const base = process.env.APP_URL;
+export function invitationLink(token: string, activityType?: string | null): string {
+  // The shop's own product address when PACK_HOSTS has one (src/packs/urls.ts), else APP_URL.
+  const base = activityType === undefined ? process.env.APP_URL?.trim().replace(/\/+$/, "") : shopOrigin(activityType);
   if (!base) throw new Error("APP_URL is required to build invitation links");
-  return `${base.replace(/\/+$/, "")}/invite#token=${token}`;
+  return `${base}/invite#token=${token}`;
 }
 
 async function lockBusiness(tx: Tx, businessId: string) {
   // Row lock: serializes every invitation write (invite, resend, accept) of this business.
   await tx.$executeRaw`SELECT 1 FROM "RtBusiness" WHERE "id" = ${businessId} FOR UPDATE`;
-  return tx.rtBusiness.findUnique({ where: { id: businessId }, select: { id: true, name: true, status: true, coreBusinessId: true } });
+  return tx.rtBusiness.findUnique({ where: { id: businessId }, select: { id: true, name: true, status: true, coreBusinessId: true, activityType: true } });
 }
 
 async function hasActiveOwner(tx: Tx, businessId: string): Promise<boolean> {
@@ -96,16 +99,18 @@ export async function createOwnerInvitation(
     select: { id: true },
   });
 
+  // The shop's own product name ("Buzzify سوبرماركت"), the same one its address and sign-in page show.
+  const product = packWords(getPack(business.activityType), "ar").productName;
   await getMailer().send({
     to: args.email,
-    subject: "دعوة لإدارة منشأتك على Buzzify Retails",
+    subject: `دعوة لإدارة منشأتك على ${product}`,
     text: [
       "مرحباً،",
       "",
-      `تمت دعوتك لتكون مالك المنشأة "${business.name}" على Buzzify Retails.`,
+      `تمت دعوتك لتكون مالك المنشأة "${business.name}" على ${product}.`,
       `لقبول الدعوة افتح الرابط التالي وسجّل الدخول بهذا البريد الإلكتروني. الرابط صالح لمدة ${INVITATION_TTL_DAYS} أيام ولمرة واحدة فقط:`,
       "",
-      invitationLink(token),
+      invitationLink(token, business.activityType),
       "",
       "إذا لم تكن تتوقع هذه الرسالة فيمكنك تجاهلها.",
     ].join("\n"),

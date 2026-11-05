@@ -88,8 +88,9 @@ test("an 80-character business name does not overflow the header at 375px width"
   expect(layout.nameStyle).toBe("ellipsis");
   expect(layout.branchTruncated).toBe(true);
   expect(layout.everyHeaderPartInside).toBe(true);
-  // Still a compact two-row bar, not a wrapped wall of text.
-  expect(layout.headerHeight).toBeLessThan(140);
+  // Still a compact bar, not a wrapped wall of text: the product wordmark's small line over the business name
+  // (packs) plus the icon row and the branch row measure about 140px in Arabic at 375px.
+  expect(layout.headerHeight).toBeLessThan(150);
   await expect(page.getByRole("button", { name: ar.common.signOut })).toBeInViewport();
 });
 

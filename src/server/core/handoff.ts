@@ -116,11 +116,17 @@ export function safeReturnTo(raw: string | null | undefined): string {
 }
 
 /**
- * The href of the login page's single "Sign in" button (the handoff start), or null when the
- * handoff is not configured; the page then falls back to the email + password form.
+ * Where /login's "Forgot your password?" goes: the password reset of the account system the
+ * sign-in is checked by, with the marker that makes it speak Retails' neutral words (Studio reads
+ * next=/studio/retail/continue as "this person came from Retail"). Null when it is not configured
+ * (then local passwords are used and there is nowhere to reset them).
  */
-export function studioSignInHref(): string | null {
-  return process.env.CORE_BASE_URL?.trim() ? HANDOFF_START_PATH : null;
+export const RESET_PASSWORD_PATH = "/studio/forgot";
+export const RETAIL_ENTRY_MARKER = "/studio/retail/continue";
+export function resetPasswordHref(): string | null {
+  const base = process.env.CORE_BASE_URL?.trim().replace(/\/+$/, "");
+  if (!base) return null;
+  return `${base}${RESET_PASSWORD_PATH}?next=${encodeURIComponent(RETAIL_ENTRY_MARKER)}`;
 }
 
 function stateCookieHeader(value: string, maxAge: number, secure: boolean): string {
@@ -142,9 +148,13 @@ export function clearStateCookie(secure: boolean): string {
  * nonce is not the hash of the state in this browser's cookie, so a token minted for one browser's
  * handoff cannot be redeemed with another browser's state/cookie pair (login CSRF, token injection).
  */
-export function startHandoff(returnTo: string | null | undefined, opts: { secure: boolean }): { redirectTo: string; stateCookie: string } {
+export function startHandoff(
+  returnTo: string | null | undefined,
+  opts: { secure: boolean; appUrl?: string | null },
+): { redirectTo: string; stateCookie: string } {
   const studio = coreConfig().baseUrl;
-  const app = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  // appUrl: the trusted origin of the address this browser is on (src/packs/hosts.ts); APP_URL otherwise.
+  const app = (opts.appUrl ?? process.env.APP_URL)?.trim().replace(/\/+$/, "");
   if (!app) throw new CoreConfigError("APP_URL");
 
   const state = randomBytes(32).toString("base64url");
