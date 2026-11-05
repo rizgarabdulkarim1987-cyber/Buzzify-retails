@@ -13,6 +13,7 @@
   --till-hit: 2.5rem;
   --till-key: 3.25rem;
   --till-pay-h: 3.5rem;
+  --till-pad-key: 3.5rem;
   /* A calm type scale: body 13px, names 14px, prices 15px, one large number (the total). */
   --t-s: 0.75rem;
   --t-b: 0.8125rem;
@@ -26,45 +27,6 @@
   --till-cart-w: clamp(18rem, 26vw, 22rem);
   --till-rail-w: 4.5rem;
   --till-tile-min: 7.75rem;
-
-  /* Category tones: a strong colour (white text on it passes 4.5:1), a deeper one and a soft tint. */
-  --till-hue-0: 25;
-  --till-hue-1: 60;
-  --till-hue-2: 100;
-  --till-hue-3: 172;
-  --till-hue-4: 222;
-  --till-hue-5: 262;
-  --till-hue-6: 305;
-  --till-hue-7: 348;
-}
-
-[data-tone="0"] { --tone-h: var(--till-hue-0); }
-[data-tone="1"] { --tone-h: var(--till-hue-1); }
-[data-tone="2"] { --tone-h: var(--till-hue-2); }
-[data-tone="3"] { --tone-h: var(--till-hue-3); }
-[data-tone="4"] { --tone-h: var(--till-hue-4); }
-[data-tone="5"] { --tone-h: var(--till-hue-5); }
-[data-tone="6"] { --tone-h: var(--till-hue-6); }
-[data-tone="7"] { --tone-h: var(--till-hue-7); }
-
-[data-tone] {
-  --tone-strong: oklch(0.52 0.15 var(--tone-h));
-  --tone-deep: oklch(0.4 0.12 var(--tone-h));
-  --tone-soft: oklch(0.955 0.03 var(--tone-h));
-  --tone-mid: oklch(0.86 0.06 var(--tone-h));
-}
-
-/* Yellow-green needs a darker base to keep white text readable. */
-[data-tone="2"] {
-  --tone-strong: oklch(0.5 0.12 var(--tone-h));
-  --tone-deep: oklch(0.39 0.1 var(--tone-h));
-}
-
-[data-tone="all"] {
-  --tone-strong: var(--till-dark);
-  --tone-deep: var(--till-dark);
-  --tone-soft: var(--color-panel);
-  --tone-mid: var(--color-line-strong);
 }
 
 /* The shell header is for the back office; on the sale screen the shop frame replaces it. */
@@ -185,48 +147,37 @@ body:has(.till-app) .shell-header {
   min-width: 0;
 }
 
+/*
+ * Three columns on a tablet and wider: the slim rail, the TICKET (the big panel, half the width) and
+ * the products. Grid flow follows the page direction, so in Arabic and Sorani the rail and the ticket
+ * sit on the right and the products on the left. Below 48rem the ticket is the whole screen and the
+ * products are a sheet.
+ */
 .till-app {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr);
-  grid-template-areas:
-    "top"
-    "cats"
-    "products";
-  min-height: 100dvh;
-  padding-block-end: calc(var(--till-pay-h) + var(--space-5));
+  grid-template-areas: "ticket";
+  height: 100dvh;
+  overflow: hidden;
   background: var(--color-panel);
 }
 
+.till-ticket {
+  grid-area: ticket;
+}
+
+.till-side {
+  grid-area: side;
+}
+
 .till-top {
-  grid-area: top;
-  position: sticky;
-  inset-block-start: 0;
-  z-index: 5;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
-  padding: var(--space-2) var(--gutter);
+  padding: var(--space-2) var(--space-3);
   border-block-end: 1px solid var(--color-line);
   background: var(--color-surface);
-}
-
-.till-top-id {
-  display: none;
-  min-width: 0;
-  max-width: 14rem;
-  flex: 0 1 auto;
-  line-height: var(--leading-tight);
-}
-
-.till-top-id strong {
-  font-size: var(--t-n);
-}
-
-.till-top-id span {
-  color: var(--color-ink-2);
-  font-size: var(--t-s);
 }
 
 .till-search {
@@ -291,10 +242,13 @@ body:has(.till-app) .shell-header {
   cursor: pointer;
 }
 
-.till-menu-btn {
+/* Quiet header buttons: Options, Products. */
+.till-menu-btn,
+.till-products-btn {
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
   flex: none;
   min-width: var(--till-hit);
@@ -308,15 +262,29 @@ body:has(.till-app) .shell-header {
   font-size: var(--t-n);
   font-weight: 600;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
-.till-menu-btn:hover {
+.till-menu-btn:hover,
+.till-products-btn:hover {
   background: var(--color-panel);
 }
 
-.till-menu-btn .icon {
+.till-menu-btn .icon,
+.till-products-btn .icon {
   width: 1.125rem;
   height: 1.125rem;
+}
+
+.till-products-btn {
+  display: none;
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.till-products-btn:hover {
+  background: var(--color-accent-soft);
 }
 
 .till-menu-label {
@@ -336,7 +304,15 @@ body:has(.till-app) .shell-header {
   background: var(--color-accent);
   color: var(--color-surface);
   font-size: 0.6875rem;
-  font-weight: 800;
+  font-weight: 700;
+}
+
+.till-side-close {
+  display: none;
+}
+
+.till-back-bar {
+  display: none;
 }
 
 /* The shop's sections: a slim dark rail on wide screens, a plain list in the options drawer. -------- */
@@ -453,14 +429,6 @@ a.till-nav-item:hover {
   overflow-wrap: anywhere;
 }
 
-.till-dot {
-  flex: none;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--tone-strong);
-}
-
 .till-cat:hover {
   background: var(--color-surface);
 }
@@ -473,9 +441,6 @@ a.till-nav-item:hover {
   font-weight: 600;
 }
 
-.till-cat[aria-pressed="true"] .till-dot {
-  background: var(--color-surface);
-}
 
 /* Product grid ---------------------------------------------------------------------------------- */
 
@@ -495,12 +460,6 @@ a.till-nav-item:hover {
   align-content: start;
 }
 
-.till-tile:not([data-tone]) {
-  --tone-strong: var(--color-line-strong);
-  --tone-deep: var(--color-ink-2);
-  --tone-soft: var(--color-panel);
-}
-
 .till-tile {
   position: relative;
   display: grid;
@@ -509,7 +468,6 @@ a.till-nav-item:hover {
   min-width: 0;
   min-height: 4.25rem;
   padding: var(--space-2) var(--space-3);
-  padding-inline-start: calc(var(--space-3) + 3px);
   border: 1px solid var(--color-line);
   border-radius: var(--radius);
   background: var(--color-surface);
@@ -524,16 +482,6 @@ a.till-nav-item:hover {
   /* 2000 items stay smooth: tiles off screen are not laid out or painted. */
   content-visibility: auto;
   contain-intrinsic-size: auto 4.25rem;
-}
-
-/* The category colour: a thin bar on the leading edge. */
-.till-tile::before {
-  content: "";
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 0;
-  width: 3px;
-  background: var(--tone-strong);
 }
 
 .till-tile:hover:not(:disabled) {
@@ -576,8 +524,8 @@ a.till-nav-item:hover {
 
 .till-tile-flag {
   position: absolute;
-  inset-block-start: var(--space-1);
-  inset-inline-end: var(--space-1);
+  inset-block-end: var(--space-2);
+  inset-inline-end: var(--space-2);
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--color-danger-soft);
@@ -607,10 +555,6 @@ a.till-nav-item:hover {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   animation: till-pop 200ms var(--ease-out);
-}
-
-.till-tile:not([data-tone]) .till-tile-qty {
-  background: var(--color-ink-2);
 }
 
 @keyframes till-pop {
@@ -688,31 +632,35 @@ a.till-nav-item:hover {
   font-weight: 600;
 }
 
-/* Cart -------------------------------------------------------------------------------------------- */
+/* The ticket: receipt-style lines, the total, the keypad and PAY ---------------------------------------- */
 
-.till-cart {
-  display: none;
+.till-ticket {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--color-surface);
+  container-type: inline-size;
 }
 
-.till-cart-head {
+.till-ticket-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
-  min-height: 2.75rem;
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-4);
+  flex: none;
+  min-height: 3.25rem;
+  padding-inline: var(--space-4) var(--space-3);
   border-block-end: 1px solid var(--color-line);
 }
 
-.till-cart-head h2 {
+.till-ticket-head h2 {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   margin: 0;
-  font-size: var(--t-p);
+  margin-inline-end: auto;
+  font-size: 1.0625rem;
+  font-weight: 700;
 }
 
 .till-count {
@@ -729,8 +677,143 @@ a.till-nav-item:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.till-ticket > .till-offline,
+.till-ticket > .notice {
+  margin: var(--space-2) var(--space-3) 0;
+}
+
+/* The column heads and every line share one grid, so the numbers line up. */
+.till-cols,
+.till-row-btn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 3.25rem minmax(5.5rem, 0.9fr);
+  align-items: center;
+  column-gap: var(--space-3);
+}
+
+.till-cols {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-block-end: 1px solid var(--color-line);
+  background: var(--color-panel);
+  color: var(--color-ink-2);
+  font-size: var(--t-s);
+  font-weight: 600;
+}
+
+.till-cols span:not(:first-child),
+.till-row-qty,
+.till-row-price,
+.till-row-total {
+  text-align: end;
+}
+
+.till-col-price,
+.till-row-price {
+  display: none;
+}
+
+.till-lines {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.till-row-btn {
+  width: 100%;
+  min-height: 3.5rem;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-block-end: 1px solid var(--color-line);
+  border-inline-start: 3px solid transparent;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.till-row-btn:hover {
+  background: var(--color-panel);
+}
+
+.till-row-btn:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: -3px;
+}
+
+.till-row[data-selected] .till-row-btn {
+  border-inline-start-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.till-row[data-last] .till-row-btn {
+  animation: till-flash 700ms var(--ease-out);
+}
+
+@keyframes till-flash {
+  from {
+    background: oklch(0.96 0.06 92);
+  }
+}
+
+.till-row-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.till-row-sub {
+  display: block;
+  color: var(--color-ink-2);
+  font-size: var(--t-s);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.till-row-qty,
+.till-row-price,
+.till-row-total {
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.till-row-qty {
+  font-weight: 700;
+}
+
+.till-row-qty small {
+  display: block;
+  color: var(--color-ink-2);
+  font-size: 0.6875rem;
+  font-weight: 400;
+}
+
+.till-row-price {
+  color: var(--color-ink-2);
+}
+
+.till-row-total {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+
 .till-cart-empty {
   display: grid;
+  flex: 1 1 0;
   align-content: center;
   justify-items: center;
   gap: var(--space-2);
@@ -740,214 +823,40 @@ a.till-nav-item:hover {
 }
 
 .till-cart-empty .icon {
-  width: 2rem;
-  height: 2rem;
+  width: 2.5rem;
+  height: 2.5rem;
   color: var(--color-line-strong);
 }
 
 .till-cart-empty strong {
   color: var(--color-ink);
-  font-size: var(--t-p);
+  font-size: 1.0625rem;
 }
 
-.till-lines {
+.till-ticket-foot {
   display: grid;
-  align-content: start;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  list-style: none;
+  flex: none;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-block-start: 1px solid var(--color-line-strong);
+  background: var(--color-surface);
 }
 
-/* A line: the name across the top; below it the quantity stepper, the line total and the remove button. */
-.till-line {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    "name name name"
-    "step total del";
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
-  padding: var(--space-2) var(--space-4);
-  border-block-end: 1px solid var(--color-line);
-}
-
-.till-line[data-last] {
-  animation: till-flash 900ms var(--ease-out);
-}
-
-@keyframes till-flash {
-  from {
-    background: oklch(0.96 0.06 92);
-  }
-}
-
-.till-line-main {
-  grid-area: name;
+.till-total {
+  container-type: inline-size;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
   min-width: 0;
-}
-
-.till-line-name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  font-size: var(--t-n);
-  font-weight: 500;
-  line-height: var(--leading-tight);
-  overflow-wrap: anywhere;
-}
-
-.till-line-meta {
-  flex: none;
-  color: var(--color-ink-2);
-  font-size: var(--t-s);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.till-line-total {
-  grid-area: total;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: var(--t-p);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: end;
-  white-space: nowrap;
-}
-
-.till-line-controls {
-  display: contents;
-}
-
-.till-stepper {
-  grid-area: step;
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-1);
-}
-
-.till-line-controls > .till-qty {
-  grid-area: step;
-}
-
-.till-remove {
-  grid-area: del;
-}
-
-.till-step,
-.till-remove {
-  display: grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  color: var(--color-ink);
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: scale 90ms var(--ease-out), background-color var(--duration) var(--ease-out);
-  border-color: var(--color-line);
-  position: relative;
-}
-
-/* The buttons look 36px; the tap area reaches 44px. */
-.till-step::after,
-.till-remove::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-}
-
-.till-step:hover,
-.till-remove:hover {
-  background: var(--color-panel);
-}
-
-.till-step:active,
-.till-remove:active {
-  scale: 0.93;
-}
-
-.till-step .icon,
-.till-remove .icon {
-  width: 1rem;
-  height: 1rem;
-}
-
-.till-remove {
-  border-color: transparent;
-  background: transparent;
-  color: var(--color-danger);
-}
-
-.till-remove:hover {
-  background: var(--color-danger-soft);
-}
-
-.till-qty {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  min-width: 2.5rem;
-  min-height: 2.25rem;
-  padding-inline: var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: var(--color-panel);
-  color: var(--color-ink);
-  font: inherit;
-  font-size: var(--t-p);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-
-.till-stepper .till-qty {
-  min-width: 2.5rem;
-}
-
-.till-qty-unit {
-  color: var(--color-ink-2);
-  font-size: var(--t-s);
-  font-weight: 600;
-}
-
-.till-cart-foot {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  border-block-start: 1px solid var(--color-line);
-  background: var(--color-surface);
-}
-
-/* The total: a dark box with amber digits, the one big number. It shrinks with its length, so even 9,999,999,999 fits. */
-.till-total {
-  container-type: inline-size;
-  display: grid;
-  min-width: 0;
-  color: var(--color-ink);
+  padding-block-end: var(--space-1);
 }
 
 .till-total span {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
+  display: grid;
   color: var(--color-ink-2);
-  font-size: var(--t-b);
-  font-weight: 500;
+  font-size: 0.9375rem;
+  font-weight: 600;
 }
 
 .till-total small {
@@ -958,200 +867,261 @@ a.till-nav-item:hover {
 .till-total strong {
   min-width: 0;
   color: var(--color-ink);
-  font-size: min(2rem, calc(100cqw / (var(--len, 8) * 0.6)));
+  font-size: min(2rem, 8cqw);
   font-weight: 700;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
-  text-align: end;
   white-space: nowrap;
 }
 
-/* The cart's one small menu: hold and clear live behind the three dots. */
-.till-more-wrap {
-  position: relative;
-  margin-inline-start: auto;
-}
-
-.till-more-btn {
-  position: relative;
-}
-
-.till-more-btn::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-}
-
-.till-more-btn:hover,
-.till-more-btn[aria-expanded="true"] {
-  background: var(--color-panel);
-}
-
-.till-popover {
-  position: absolute;
-  inset-block-start: calc(100% + var(--space-1));
-  inset-inline-end: 0;
-  z-index: 9;
-  display: grid;
-  min-width: 11rem;
-  padding: var(--space-1);
+.till-pad-toggle {
+  display: none;
+  min-height: 2.25rem;
+  padding-inline: var(--space-3);
   border: 1px solid var(--color-line);
   border-radius: var(--radius);
-  background: var(--color-surface);
-  box-shadow: 0 6px 20px oklch(0.22 0.03 225 / 0.14);
-}
-
-.till-pop-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 2.75rem;
-  padding-inline: var(--space-3);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-ink);
+  background: var(--color-panel);
+  color: var(--color-ink-2);
   font: inherit;
-  font-size: var(--t-n);
-  text-align: start;
+  font-size: var(--t-b);
+  font-weight: 500;
   cursor: pointer;
 }
 
-.till-pop-item .icon {
-  width: 1.125rem;
-  height: 1.125rem;
-  flex: none;
+/* Keypad (4 x 4) and the function keys. */
+.till-keys {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
 }
 
-.till-pop-item:hover:not(:disabled) {
+.till-pad {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.till-pad .till-key {
+  min-height: var(--till-pad-key);
+  font-size: 1.25rem;
+}
+
+.till-pad .till-key[data-wide] {
+  grid-column: span 2;
+}
+
+.till-pad .till-key-mode {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--t-b) !important;
+  font-weight: 700;
+}
+
+.till-pad .till-key-op {
   background: var(--color-panel);
 }
 
-.till-pop-item:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
+.till-fn {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
-.till-pop-danger {
-  color: var(--color-danger);
+.till-fn-key {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--t-b);
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.till-fn-key:last-child {
+  grid-column: 1 / -1;
+}
+
+.till-fn-key .icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.till-fn-key small {
+  color: var(--color-ink-3);
+  font-size: 0.625rem;
+}
+
+.till-fn-key:hover:not(:disabled) {
+  background: var(--color-panel);
+}
+
+.till-fn-key:active:not(:disabled) {
+  scale: 0.97;
+}
+
+.till-fn-key:disabled {
+  border-color: var(--color-line);
+  color: var(--color-ink-3);
+  cursor: not-allowed;
+}
+
+.till-fn-key:focus-visible,
+.till-pad-toggle:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.till-fn-key.till-clear[data-armed] {
+  border-color: var(--color-danger);
+  background: var(--color-danger);
+  color: var(--color-surface);
 }
 
 .till-pay {
   width: 100%;
   min-height: var(--till-pay-h);
-  font-size: 1.125rem;
+  font-size: 1.25rem;
   font-weight: 700;
 }
 
-/* Phone and portrait tablet: the bottom bar and the cart sheet ---------------------------------------- */
+/* Ticket wider than 30rem (desktop, tablet on its side): price column, keypad beside the function keys. */
+@container (min-width: 30rem) {
+  .till-cols,
+  .till-row-btn {
+    grid-template-columns: minmax(0, 2fr) 4rem 6rem minmax(0, 1.3fr);
+  }
 
-.till-bar {
-  position: fixed;
-  inset-inline: 0;
-  inset-block-end: 0;
-  z-index: 6;
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-  gap: var(--space-2);
-  padding: var(--space-2) var(--gutter) calc(var(--space-2) + env(safe-area-inset-bottom));
-  border-block-start: 1px solid var(--color-line);
-  background: var(--color-surface);
-  box-shadow: none;
+  .till-col-price,
+  .till-row-price {
+    display: block;
+  }
+
+  .till-row-sub {
+    display: none;
+  }
+
+  .till-keys {
+    grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr);
+  }
 }
 
-.till-bar-cart {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  min-width: 0;
-  min-height: var(--till-pay-h);
-  padding-inline: var(--space-3);
-  border: 0;
-  border-radius: var(--radius);
-  background: var(--color-panel);
-  color: var(--color-ink);
-  font: inherit;
-  cursor: pointer;
+/* A narrow ticket (phone, tablet portrait): function keys in one row above the keypad; the keypad can fold away. */
+@container (max-width: 29.99rem) {
+  .till-fn {
+    order: -1;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: auto;
+  }
+
+  .till-fn-key:last-child {
+    grid-column: auto;
+  }
+
+  .till-fn-key {
+    min-height: 3rem;
+    font-size: 0.6875rem;
+  }
+
+  .till-pad-toggle {
+    display: block;
+  }
+
+  .till-app[data-pad-closed] .till-pad {
+    display: none;
+  }
 }
 
-.till-bar-cart .till-count {
-  background: var(--color-surface);
-  color: var(--color-ink-2);
-}
+/* The products side ----------------------------------------------------------------------------- */
 
-.till-bar-cart strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--t-p);
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 700;
-}
-
-.till-bar-pay {
-  min-height: var(--till-pay-h);
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.till-sheet-scrim {
+.till-side {
   display: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-panel);
 }
 
-.till-app[data-cart-open] .till-sheet-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 7;
-  display: block;
-  background: oklch(0.22 0.03 225 / 0.5);
+.till-products {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.till-app[data-cart-open] .till-cart {
-  position: fixed;
-  inset-inline: 0;
-  inset-block-end: 0;
-  z-index: 8;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  max-height: 88dvh;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  overflow: hidden;
-  box-shadow: 0 -8px 32px oklch(0.22 0.03 225 / 0.25);
-  animation: till-sheet 220ms var(--ease-out);
-}
+/* Phone and narrow: ticket first; the products open as a full sheet. */
+@media (max-width: 47.99rem) {
+  .till-products-btn {
+    display: inline-flex;
+  }
 
-@keyframes till-sheet {
-  from {
-    translate: 0 30%;
-    opacity: 0.4;
+  .till-app[data-products-open] .till-side {
+    position: fixed;
+    inset: 0;
+    z-index: 12;
+    display: flex;
+    animation: till-fade 140ms var(--ease-out);
+  }
+
+  .till-side-close {
+    display: inline-grid;
+  }
+
+  .till-back-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex: none;
+    min-height: var(--till-pay-h);
+    margin: 0;
+    padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom));
+    border: 0;
+    border-block-start: 1px solid var(--color-line-strong);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .till-back-bar strong {
+    min-width: 0;
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
-/* Portrait tablets: the sheet is a centred panel, the grid has more columns. */
-@media (min-width: 40rem) and (max-width: 55.99rem) {
-  .till-app[data-cart-open] .till-cart {
-    inset-inline: 12%;
-  }
-}
-
-/* Tablets and wider: the shop's sections stay in view as a dark rail (the cart is still a sheet below 56rem). */
+/* Tablet and wider: rail | ticket | products. */
 @media (min-width: 48rem) {
   .till-app {
-    grid-template-columns: var(--till-rail-w) minmax(0, 1fr);
-    grid-template-areas:
-      "nav top"
-      "nav cats"
-      "nav products";
+    grid-template-columns: var(--till-rail-w) minmax(0, 1.1fr) minmax(0, 1fr);
+    grid-template-areas: "nav ticket side";
   }
 
-  .till-bar,
-  .till-app[data-cart-open] .till-cart {
-    inset-inline: var(--till-rail-w) 0;
+  .till-side {
+    display: flex;
+    border-inline-start: 1px solid var(--color-line);
   }
 
-  /* The rail: light, the section's icon above its short name; the open one is tinted with the accent. */
+  .till-menu-label {
+    display: inline;
+  }
+
   .till-app > .till-nav {
     grid-area: nav;
     display: block;
@@ -1196,74 +1166,32 @@ a.till-nav-item:hover {
   .till-menu .till-nav {
     display: none;
   }
-}
-
-/* Wide screens: rail, products and the cart full height ------------------------------------------ */
-
-@media (min-width: 56rem) {
-  .till-app {
-    grid-template-columns: var(--till-rail-w) minmax(0, 1fr) var(--till-cart-w);
-    grid-template-rows: auto auto minmax(0, 1fr);
-    grid-template-areas:
-      "nav top cart"
-      "nav cats cart"
-      "nav products cart";
-    height: 100dvh;
-    min-height: 0;
-    padding-block-end: 0;
-    overflow: hidden;
-  }
-
-  .till-top-id {
-    display: grid;
-  }
-
-  .till-menu-label {
-    display: inline;
-  }
 
   .till-cats {
     flex-wrap: wrap;
     overflow: visible;
   }
+}
 
-  .till-products {
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding-block: var(--space-3) var(--space-5);
-  }
-
-  .till-cart,
-  .till-app[data-cart-open] .till-cart {
-    position: static;
-    grid-area: cart;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    max-height: none;
-    border-inline-start: 1px solid var(--color-line);
-    border-radius: 0;
-    box-shadow: none;
-    animation: none;
-  }
-
-  .till-sheet-close,
-  .till-bar,
-  .till-app[data-cart-open] .till-sheet-scrim {
-    display: none;
+/* Wide: the ticket takes a little over half. */
+@media (min-width: 80rem) {
+  .till-app {
+    grid-template-columns: var(--till-rail-w) minmax(0, 1.2fr) minmax(0, 1fr);
   }
 }
 
-/* Short wide screens (a tablet on its side, a small till): tighter so the pay button stays in view. */
-@media (min-width: 56rem) and (max-height: 48rem) {
+/* Short screens (a tablet on its side, a small till): tighter keys so PAY stays in view. */
+@media (max-height: 50rem) {
   :root {
-    --till-pay-h: 3.5rem;
+    --till-pad-key: 2.75rem;
+    --till-pay-h: 3.25rem;
   }
 
-  .till-line {
-    padding-block: var(--space-1) var(--space-2);
+  .till-row-btn {
+    min-height: 3.25rem;
   }
 
-  .till-cart-foot {
+  .till-ticket-foot {
     padding-block: var(--space-2) var(--space-3);
   }
 }
@@ -1547,7 +1475,52 @@ a.till-nav-item:hover {
 }
 
 .till-pay-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Payment methods: Cash first (the one in use), Card takes the rest. */
+.till-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.till-method {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--till-hit);
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--t-n);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.till-method .icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.till-method[aria-current="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  cursor: default;
+}
+
+.till-method:disabled {
+  color: var(--color-ink-3);
+  cursor: not-allowed;
+}
+
+.till-tile[data-incart] .till-tile-flag {
+  display: none;
 }
 
 /* Payment: the amounts on one side (dark, like the cart's total), quick cash and the numpad on the other. */
@@ -2079,34 +2052,27 @@ body:has(.till-done) .shell-header {
 @media (prefers-reduced-motion: reduce) {
   .till-btn,
   .till-tile,
-  .till-note,
   .till-cat,
   .till-key,
-  .till-step,
-  .till-remove {
+  .till-fn-key,
+  .till-note {
     transition: none;
   }
 
   .till-btn:active:not(:disabled),
   .till-cat:active,
   .till-tile:active:not(:disabled),
-  .till-note:active:not(:disabled),
-  .till-step:active,
-  .till-remove:active {
+  .till-fn-key:active:not(:disabled),
+  .till-key:active:not(:disabled),
+  .till-note:active:not(:disabled) {
     scale: none;
   }
 
-  .till-btn-go:active:not(:disabled),
-  .till-key:active:not(:disabled) {
-    translate: none;
-  }
-
-  .till-line[data-last],
+  .till-row[data-last] .till-row-btn,
   .till-tile-qty,
   .till-tile-skel,
-  .till-cat-skel,
   .till-layer,
-  .till-app[data-cart-open] .till-cart {
+  .till-app[data-products-open] .till-side {
     animation: none;
   }
 }

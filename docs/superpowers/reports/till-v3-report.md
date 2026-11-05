@@ -1,54 +1,54 @@
 # Sales screen v3 (touch till): report
 
-Branch `retail-till-v3` (from main 488ff88). UI only: no sale logic, no service, no Prisma change.
+Branch `retail-till-v3`. UI only: no sale logic, no service, no Prisma change.
 
-## What changed
+History: pass 1 (dark bar, picture cards) and pass 2 (calm, small, cart on the side) were both rejected by the owner. The owner's point: the ticket is where most work happens, so it must be the largest area, in the layout used by Odoo POS, Square and Lightspeed. This is pass 3.
 
-The first v3 pass (dark bar, picture cards, big controls) was rejected by the owner as too loud and too big. This is the third direction: calm, text first, small.
+## Layout (what is built)
 
-- **App frame.** A slim light rail of shop sections at the side from 768px up (a list inside the Options drawer on phones): Sell (open), Shift and cash, Stock, Items, Shop setup link to existing screens; Expenses, Suppliers, Customers and credit, Reports are disabled and say "soon" (no fake data). Words come from the message files in ar, ckb, en.
-- **Tiles.** Text only: name (14px), price (15px bold) and a 3px bar in the category colour. No photo area, no big letters. A small round badge shows how many are in the cart. 68px tall, about 124px wide.
-- **Type scale.** 12 / 13 / 14 / 15px everywhere in the till; the only large number is the total (up to 32px, shrinks to fit any length). Pay is 18px.
-- **Chips.** One row of small chips (36px), one accent colour for the chosen one; the category colour is only a small dot.
-- **Cart.** Rows with a 36px stepper (tap area grows to 44px through padding), line total 15px, no heavy borders. Hold and Clear moved into one three-dot menu in the cart header (new key `till.cartActions`); the cart footer is now: total, Pay.
-- **Less decoration.** No dark total box, no amber, no dark rail, no 3D button edges, no shadows except one on the popover and the dialogs. One accent (the shop's teal) plus green for Pay and money received.
-- **Payment panel.** Light, same scale. Quick cash (exact first), keypad, change due (soft green) or still due (soft amber), green Complete sale.
-- **States.** Empty cart, no match, skeleton tiles while a category loads, offline strip (cart is kept), error notice, loading page shaped like the till.
+- **Ticket = the big panel**, about 52 to 57% of the width, full height. Receipt-style table: Item (two lines allowed), Qty, Price, Total (the Price column appears when the ticket is wider than 30rem; below that the unit price sits under the name). Rows are 56px (52px on short screens), 15px type. The selected line is tinted with an accent bar on its start edge (no layout shift). The list scrolls on its own and keeps the touched line in view. Empty state: icon plus a hint.
+- **Total block** under the lines: "Total", the item count and the total in large type (it shrinks to fit any length). The app has no discount and no tax, so no such rows are shown.
+- **Keypad under the ticket**, always there: a 4 x 4 grid, 56px keys (44px on short screens): `7 8 9 Qty / 4 5 6 + / 1 2 3 - / 0 . back C`. It edits the selected line: digits type the new quantity (shown at once in the row), `.` only for weighed items, `+` and `-` add or take one, backspace, C starts the entry over. **Qty is the only mode**: the app has no price override and no discount, so no Price or Disc keys (no dead keys).
+- **Function keys** beside the keypad: Hold, Void line, Clear (asks twice within 3 seconds), Customer and Note (disabled, marked "soon").
+- **Big green PAY** across the keypad width. It opens the full payment panel: Cash first (active) and Card, quick-cash chips (exact first), keypad, "Change" large in soft green or "Still due" in soft amber, Complete sale.
+- **Products side** (about 43 to 48%): search and scan field on top, department chips, a grid of compact text tiles (name and price). All tiles share one neutral style; the department is shown only by the chip filter; a small round badge shows how many of the item are in the ticket.
+- **Rail**: the slim module rail stays (Sell open; Shift and cash, Stock, Items, Shop setup link to existing screens; Expenses, Suppliers, Customers and credit, Reports are disabled and marked "soon").
+- **Narrow** (below 48rem, phones): the ticket is the whole screen. A "Products" button opens the products as a full sheet with a bar to go back (count and total). The keypad folds away (a "Show keypad" bar); the function keys stay in one row. **Tablet portrait** (768 wide): rail, ticket and products side by side, the ticket slightly wider; its function keys sit in a row above the keypad. **Tablet landscape and desktop**: as described above.
+- RTL: grid flow puts the rail and the ticket on the right and the products on the left in Arabic and Sorani; English mirrors. Logical properties only.
+- Motion: row flash, badge pop, sheet fade, all short and off under reduced motion.
+- Words: all from the ar, ckb, en message files; new keys under `till` (`ticket`, `colItem`, `colQty`, `colPrice`, `fnHold`, `fnVoid`, `fnClear`, `fnCustomer`, `fnNote`, `productsTab`, `backToTicket`, `padShow`, `padHide`, `methods`). Word guard and key-parity tests pass.
 
-## Files
+## Screenshots (`docs/superpowers/reports/assets/till-v3-*.png`, real Chrome, full resolution)
 
-`src/app/retail/sell/sell.css`, `sell-screen.tsx`, `till-nav.tsx` (new), `_lib/views.tsx`, `_lib/till.ts` (`textLength` only added), `_lib/nav-icons.tsx` (new), `loading.tsx`, `src/messages/{ar,ckb,en}.ts`, `tests/ui/sell-ui.test.ts`.
+Data: 45 realistic supermarket items (milk, rice, tea, sugar, oil, water, biscuits, cheese, bread and so on, 250 to 11,500 IQD) in 8 departments; the ticket has 6 lines (rice, milk x2, tea, sugar x3, oil, water x6), total 29,250 IQD. The Next.js dev badge is hidden in the shots.
 
-## Screenshots (real Chrome, full resolution, `docs/superpowers/reports/assets/`)
+- Normal: desktop-ar, desktop-en, desktop-empty-ar, desktop-15lines-ar (1380x900); landscape-ar, landscape-en (1024x768); tablet-ar, tablet-en, tablet-15lines-ar (768x1024); phone-ticket-ar, phone-ticket-en, phone-padopen-ar, phone-products-ar, phone-products-en, phone-pay-ar, phone-empty-en, phone-offline-ar (390x844); desktop-pay-en, desktop-change-ar (payment panel, with change), desktop-nomatch-ar.
+- Stress (kept apart): desktop-stress-ar and phone-stress-ar (an unbreakable 80-character name, a very long Arabic name, a 9,999,999,999 price, total 10,000,131,499).
 
-till-v3-desktop-ar, desktop-en, desktop-empty-ar, desktop-menu-en (the three-dot menu open), desktop-pay-en, desktop-change-en, desktop-nomatch-ar, landscape-ar (1024x768), tablet-ar, tablet-en (768x1024), phone-grid-ar, phone-grid-en, phone-cart-ar, phone-cart-en, phone-empty-cart-en, phone-pay-ar, phone-offline-ar (all 375x812). Data: the 30-item sample plus about 2,000 generated items and worst-case rows (a name with no break, a price of 9,999,999,999). The small round "N" at the bottom corner is the Next.js dev indicator, not the app.
+I opened every one of these and fixed what I found: pay methods row unstyled, out-of-stock flag overlapping the price, qty and mode keys losing their style to a later rule, keypad open by default on a phone eating the ticket, loose Clear button in the payment panel.
 
 ## Judgement
 
-It now reads as clean, not crowded: on desktop the screen has one search box, one chip row, the grid, and a cart with a total and one button. Compared with the references (58, 59, 60) it is as dense in products but with fewer controls and lighter lines. I have not shown it to the owner; this is my own reading of the screenshots.
+Against the Odoo-style standard it now has the same structure: big ticket with a table, totals, keypad with function keys and a large Pay under it, products on the other side with search and chips, separate payment screen. Against references 58, 59 and 60 it is comparable in order and density; the ticket is clearly the largest area. Things that are plainer than Odoo: no customer or note (disabled), no price or discount mode (the app has none), no per-line delete swipe, product names in English fall back to Arabic. This is my own reading; the owner has not seen it yet.
 
-## Verified
+## Checks
 
-- `npx tsc --noEmit`: no errors.
-- `eslint src/app/retail/sell tests/ui/sell-ui.test.ts src/messages`: no findings.
-- `vitest run tests/ui tests/sales tests/messages` on an embedded Postgres (own port): 202 passed, 3 failed on the first run, all three in `tests/sales/sales.test.ts` with "timed out in 5000ms" (the machine was busy with the dev server). Re-running that file with `--testTimeout=30000`: 20 of 20 passed. The word guard and message parity tests (tests/messages) passed. I did not run the whole suite or the Playwright e2e specs.
-- Looked at live in Chrome: desktop, 1024x768, 768x1024, 375x812 in Arabic and English; pay panel with change; offline strip; no-match; empty cart; the three-dot menu.
-- Earlier in this task (before the calm pass): 2,037 items, tap response and DOM size measured in dev mode (78 to 166 ms per tap with 2,000 tiles against about 20 ms with 60). Not re-measured after the calm pass.
+- `tsc --noEmit`: clean. `eslint` on `src/app/retail/sell`, `tests/ui/sell-ui.test.ts`, `src/messages`: clean.
+- `vitest run tests/ui tests/messages`: 12 files, 184 tests passed (new tests: ticket row, ticket keypad, neutral tile, key parity for the new words).
+- `vitest run tests/sales` (embedded Postgres, own port): 20 of 20 passed with a 30 s timeout. With the default 5 s timeout three DB-heavy tests timed out earlier while the dev server was busy; they are not UI tests.
+- Not run: the whole suite and the Playwright e2e specs.
 
-## Not verified / still weak
+## Not verified / weak
 
-- The Kurdish (ckb) screen was not looked at, only its key parity is tested.
-- A real touch device, a barcode scanner and a printer were not used (emulated touch only).
-- Dev-mode speed with 2,000 tiles is above 100 ms; tiles use content-visibility, a production build was not measured.
-- Hold and Clear are one tap each inside the menu; Clear has no second confirmation any more (the old double-tap guard was on the removed button). Held carts are still listed in Options.
-- No discount, price override or notes exist in the app, so none appear; the menu holds only Hold and Clear.
-- A line total of 9,999,999,999 is cut with an ellipsis on a narrow cart (about 1024px); the full figure is in the unit-price line and the footer total.
-- Quick cash offers only amounts at or above what is due.
-- The offline strip follows the browser's online flag only (no real request check).
-- English names fall back to the Arabic name when no English one exists.
-- 21st-ui-review CLI is not installed here; the review and the break-ui pass were done by hand against the screenshots and the worst-case rows.
-- Swipe to delete a cart line is not built.
+- Kurdish (ckb) was not looked at; only parity is tested.
+- No real touch device, barcode scanner or printer.
+- The keypad is on screen only; a hardware keyboard types into the search box (scanner behaviour kept), not into the quantity.
+- Backspacing a quantity to empty keeps the old quantity until a digit is typed (use Void line to remove).
+- The line total column cuts a very large amount with an ellipsis (stress shots); the full figure is in the unit price and the total block.
+- Quick cash offers amounts at or above what is due. The offline strip follows the browser's online flag only.
+- Dev-mode speed with thousands of tiles was measured only in the first pass (78 to 166 ms per tap with 2,000 tiles); this pass was checked with 45 items, and not in a production build.
+- Two items in the sample show "out" because their opening stock is zero in this local data.
 
 ## Photo feature (not built)
 
-A real product-photo feature would need: an upload control in the item editor; object storage (a bucket or the VPS disk) with a per-business folder; resizing on upload (for example 320px wide, WebP, 20 to 40 KB) so 2,000 tiles stay light; a nullable image path on the item (a schema change, which this task did not allow); lazy-loaded images in tiles; and a text fallback when there is none, as now. Photos are left out on purpose: the owner asked for text-first tiles.
+A real product-photo feature would need an upload control in the item editor, object storage per business, resizing on upload (for example 320px wide WebP, 20 to 40 KB), a nullable image path on the item (a schema change, not allowed here), lazy-loaded images in the tiles and a text fallback as now. Left out on purpose: the owner asked for text-first tiles.
