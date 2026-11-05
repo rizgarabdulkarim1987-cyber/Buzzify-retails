@@ -1073,3 +1073,33 @@ body:has(.ot) {
     align-content: center;
   }
 }
+
+/* New sale and the Calculator / Pay swap sit together at the top of the right column, bigger to hit. */
+.ot-head-btns {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.ot-calc-top {
+  flex: 0 0 auto;
+  margin-block-end: var(--space-2);
+}
+
+.ot-head-btns button {
+  min-height: 2.875rem;
+  padding-inline: var(--space-4);
+  border-radius: 10px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.ot-calc-top button {
+  flex: 1;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  cursor: pointer;
+}
+
+.ot-paycard .till-pay-head {
+  flex-wrap: wrap;
+}

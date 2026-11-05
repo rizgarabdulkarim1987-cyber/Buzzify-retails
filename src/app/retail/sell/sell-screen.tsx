@@ -679,9 +679,6 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
               +{formatNumber(locale, hiddenTabs.length)}
             </button>
           ) : null}
-          <button type="button" className="ot-tab" data-new onClick={newSale} data-testid="new-sale">
-            + {tl.newSale}
-          </button>
         </div>
         <button type="button" className="ot-menu-btn" onClick={() => setMenuOpen(true)} aria-haspopup="dialog" aria-expanded={menuOpen} data-testid="till-menu">
           {tl.menu}
@@ -827,9 +824,14 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
 <section className="ot-card ot-calc-card ot-paycard" aria-labelledby="pay-title" data-testid="pay-panel">
             <div className="till-pay-head">
               <h2 id="pay-title">{s.payScreen.title}</h2>
-              <button type="button" className="till-btn till-btn-quiet" onClick={() => setSide("calc")} disabled={sending} data-testid="show-calc">
-                {one.calculator}
-              </button>
+              <div className="ot-head-btns">
+                <button type="button" className="till-btn till-btn-quiet" onClick={newSale} disabled={sending} data-testid="new-sale">
+                  + {tl.newSale}
+                </button>
+                <button type="button" className="till-btn till-btn-quiet" onClick={() => setSide("calc")} disabled={sending} data-testid="show-calc">
+                  {one.calculator}
+                </button>
+              </div>
             </div>
             <div className="till-pay-body">
               <dl className="till-pay-summary" data-testid="pay-summary">
@@ -931,7 +933,7 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
             </button>
           </section>
           ) : (
-            <Calculator locale={locale} t={t} onToPaid={calcToPaid} onPay={() => setSide("pay")} />
+            <Calculator locale={locale} t={t} onToPaid={calcToPaid} onPay={() => setSide("pay")} onNewSale={newSale} newSaleLabel={tl.newSale} />
           )}
         </aside>
       </div>
