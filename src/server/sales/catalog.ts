@@ -47,6 +47,10 @@ export type SellItem = {
   matchedBarcode: string | null;
   /** The product's top-level category (what the till colours the tile by), or null. */
   categoryId: string | null;
+  /** Batches that still hold stock at the location (base units x 1000), earliest expiry first, no expiry last; [] when stock was not read. */
+  batches: { expiryDate: string | null; qty: bigint }[];
+  /** The earliest expiry among those batches, or null. */
+  earliestExpiry: string | null;
 };
 
 /** The active top-level categories, by Arabic name. */
@@ -210,6 +214,24 @@ export const listSellItems = defineAction({
         })
       : null;
     const onHandOf = new Map((stock ?? []).map((s) => [s.variantId, s._sum.qty ?? 0n]));
+    // Batches with stock: one read of the balances, one of their batches (no per-item queries).
+    const batchesOf = new Map<string, { expiryDate: string | null; qty: bigint }[]>();
+    if (input.locationId) {
+      const rows = await tx.rtStockBalance.findMany({
+        where: { locationId: input.locationId, variantId: { in: variantIds }, batchId: { not: null }, qty: { gt: 0n } },
+        select: { variantId: true, batchId: true, qty: true },
+      });
+      const batchRows = await tx.rtBatch.findMany({ where: { id: { in: rows.map((r) => r.batchId!) } }, select: { id: true, expiryDate: true } });
+      const expiryOf = new Map(batchRows.map((b) => [b.id, b.expiryDate ? b.expiryDate.toISOString().slice(0, 10) : null]));
+      for (const r of rows) {
+        const list = batchesOf.get(r.variantId) ?? [];
+        list.push({ expiryDate: expiryOf.get(r.batchId!) ?? null, qty: r.qty });
+        batchesOf.set(r.variantId, list);
+      }
+      for (const list of batchesOf.values()) {
+        list.sort((a, b) => (a.expiryDate === b.expiryDate ? 0 : a.expiryDate === null ? 1 : b.expiryDate === null ? -1 : a.expiryDate < b.expiryDate ? -1 : 1));
+      }
+    }
 
     return chosen.map(({ p, unit, v }) => ({
       variantId: v.id,
@@ -226,6 +248,8 @@ export const listSellItems = defineAction({
       onHand: stock ? (onHandOf.get(v.id) ?? 0n) : null,
       matchedBarcode: p.matchedBarcode ?? null,
       categoryId: rootOf(cats, v.product.categoryId),
+      batches: batchesOf.get(v.id) ?? [],
+      earliestExpiry: (batchesOf.get(v.id) ?? []).find((b) => b.expiryDate !== null)?.expiryDate ?? null,
     }));
   },
 });

@@ -24,6 +24,8 @@ export const itemDto = (i: SellItem): SellItemDto => ({
   onHand: i.onHand === null ? null : i.onHand.toString(),
   matchedBarcode: i.matchedBarcode,
   categoryId: i.categoryId,
+  batches: i.batches.map((b) => ({ expiryDate: b.expiryDate, qty: b.qty.toString() })),
+  earliestExpiry: i.earliestExpiry,
 });
 
 export const shiftDto = (s: ShiftSummary): ShiftDto => ({

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RtTrackingMode } from "@/generated/prisma/client";
 import { businessToday } from "@/server/domain/stock";
 import { currentUnitPrices, listSellCategories, listSellItems } from "@/server/sales/catalog";
+import { listRecentSales } from "@/server/sales/recent";
 import { createSale, getSale } from "@/server/sales/sales";
 import { closeShift, myOpenShift, openShift, shiftSummary, tillState } from "@/server/sales/shifts";
 import { rebuildBalances } from "@/server/stock/ledger";
@@ -576,5 +577,66 @@ describe("paying in dollars", () => {
     expect(await codeOf(sellPay(s, it1, [usd(1000n, 14_500n), usd(1000n, 14_500n)]))).toBe("INVALID_INPUT");
     const r = await sellPay(s, it1, [{ method: "CASH", currency: "IQD", amountMinor: 29_250n }]);
     expect(r.ok && r.value.payments[0]).toMatchObject({ tenderedCurrency: null, tenderedForeignMinor: null, rateMicro: null });
+  });
+});
+
+describe("till item batches and expiry", () => {
+  it("lists batches with stock, earliest expiry first; none for an unbatched item or when stock is not read", async () => {
+    const s = await shop();
+    await open(s);
+    const it1 = await s.item({ tracksExpiry: true });
+    const plain = await s.item({ name: "ماء" });
+    await receive(s, [
+      stockOf(it1, "36", { expiryDate: isoDay(53), batchCode: "LATE" }),
+      stockOf(it1, "12", { expiryDate: isoDay(15), batchCode: "SOON" }),
+      stockOf(plain, "5"),
+    ]);
+    const r = await listSellItems({ locationId: s.locations.Main }, s.as("cashier"));
+    if (!r.ok) throw new Error(r.code);
+    const milk = r.value.find((i) => i.variantId === it1.variantId)!;
+    expect(milk.batches).toEqual([
+      { expiryDate: isoDay(15), qty: 12n * U },
+      { expiryDate: isoDay(53), qty: 36n * U },
+    ]);
+    expect(milk.earliestExpiry).toBe(isoDay(15));
+    const water = r.value.find((i) => i.variantId === plain.variantId)!;
+    expect(water.batches).toEqual([]);
+    expect(water.earliestExpiry).toBeNull();
+    const noStock = await listSellItems({}, s.as("cashier"));
+    expect(noStock.ok && noStock.value.every((i) => i.batches.length === 0 && i.earliestExpiry === null)).toBe(true);
+  });
+
+  it("a sold-out batch is left out and the till row carries no cost", async () => {
+    const s = await shop();
+    await open(s);
+    const it1 = await s.item({ tracksExpiry: true });
+    await receive(s, [stockOf(it1, "2", { expiryDate: isoDay(10), batchCode: "A" }), stockOf(it1, "4", { expiryDate: isoDay(30), batchCode: "B" })]);
+    const sold = await sell(s, [pieces(it1, "2")], [cash(10_000n)]);
+    expect(sold.ok).toBe(true);
+    const r = await listSellItems({ locationId: s.locations.Main }, s.as("cashier"));
+    if (!r.ok) throw new Error(r.code);
+    const row = r.value.find((i) => i.variantId === it1.variantId)!;
+    expect(row.batches).toEqual([{ expiryDate: isoDay(30), qty: 4n * U }]);
+    expect(JSON.stringify(row, (_k, v) => (typeof v === "bigint" ? v.toString() : v))).not.toMatch(/cost/i);
+  });
+});
+
+describe("recent sales of the shift", () => {
+  it("lists the actor's own open shift's sales newest first with lines; limit works; others and closed shifts are not shown", async () => {
+    const s = await shop();
+    const it1 = await s.item();
+    await receive(s, [stockOf(it1, "50")]);
+    await open(s);
+    await open(s, "cashier2");
+    for (const q of ["1", "2", "3"]) expect((await sell(s, [pieces(it1, q)], [cash(10_000n)])).ok).toBe(true);
+    expect((await sell(s, [pieces(it1, "1")], [cash(10_000n)], "cashier2")).ok).toBe(true);
+    const r = await listRecentSales({}, s.as("cashier"));
+    if (!r.ok) throw new Error(r.code);
+    expect(r.value.map((v) => v.lines[0]!.enteredQuantity)).toEqual(["3", "2", "1"]);
+    expect(r.value[0]!.payments.length).toBeGreaterThan(0);
+    const two = await listRecentSales({ limit: 2 }, s.as("cashier"));
+    expect(two.ok && two.value.length).toBe(2);
+    const none = await listRecentSales({}, s.as("manager"));
+    expect(none.ok && none.value).toEqual([]);
   });
 });
