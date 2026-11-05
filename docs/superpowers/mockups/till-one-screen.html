@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>شاشة الكاشير في شاشة واحدة ثابتة (محاكاة)</title>
+<style>
+:root{
+  --bg:#e9ecf3; --card:#fff; --ink:#151a24; --mute:#5a6478; --line:#dadfe9;
+  --brand:#1a45bd; --brand-ink:#fff; --ok:#0f6b50; --warn:#8f4106; --bad:#a81f26;
+  --ok-bg:#e1f4ec; --warn-bg:#fdefd9; --bad-bg:#fde6e6; --sel:#e3eaff; --chip:#eef1f7; --head:#f4f6fb;
+}
+:root[data-theme="dark"]{
+  --bg:#080a0f; --card:#141822; --ink:#eef0f6; --mute:#9aa2b4; --line:#262d3b;
+  --brand:#5b86ff; --brand-ink:#0b0d12; --ok:#3ccf9e; --warn:#f0a43a; --bad:#ff7b80;
+  --ok-bg:#12332a; --warn-bg:#392a10; --bad-bg:#3b1618; --sel:#1b2540; --chip:#1e2330; --head:#191e2a;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#080a0f; --card:#141822; --ink:#eef0f6; --mute:#9aa2b4; --line:#262d3b;
+    --brand:#5b86ff; --brand-ink:#0b0d12; --ok:#3ccf9e; --warn:#f0a43a; --bad:#ff7b80;
+    --ok-bg:#12332a; --warn-bg:#392a10; --bad-bg:#3b1618; --sel:#1b2540; --chip:#1e2330; --head:#191e2a;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden}
+body{display:flex;flex-direction:column;background:var(--bg);color:var(--ink);font:14px/1.35 "Segoe UI","Noto Sans Arabic",Tahoma,sans-serif}
+button,input{font:inherit;color:inherit}
+.viewer{flex:0 0 auto;display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--card)}
+.viewer h1{font-size:14px;margin:0}
+.viewer .seg{display:flex;gap:6px}
+.viewer button{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:4px 12px;min-height:34px;cursor:pointer}
+.viewer button[aria-pressed="true"]{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.stage{flex:1;min-height:0;position:relative;overflow:hidden}
+.frame{container-type:inline-size;position:absolute;top:8px;left:50%;transform-origin:top left;border:1px solid var(--line);border-radius:14px;background:var(--bg);overflow:hidden}
+.till{height:100%;display:flex;flex-direction:column}
+.topbar{flex:0 0 auto;display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--card);border-bottom:1px solid var(--line);overflow:hidden;white-space:nowrap;min-height:46px}
+.topbar b{font-size:15px}.topbar .meta{color:var(--mute);font-size:12.5px}
+.pill{background:var(--chip);border-radius:999px;padding:3px 10px;font-size:12.5px;white-space:nowrap}
+.pill.rate{background:var(--sel);color:var(--brand);font-weight:700}
+.tabs{display:flex;gap:6px;margin-inline-start:auto}
+.tab{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:2px 12px;font-size:12.5px;min-height:32px;cursor:pointer;white-space:nowrap}
+.tab[aria-current="true"]{border-color:var(--brand);background:var(--sel);font-weight:700}
+
+.grid{flex:1;min-height:0;display:grid;gap:8px;padding:8px;grid-template-columns:minmax(0,1fr) 300px;grid-template-areas:"main side"}
+.main{grid-area:main;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
+.side{grid-area:side;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.card>h2{flex:0 0 auto;font-size:12px;margin:0;padding:6px 10px;color:var(--mute);font-weight:700;background:var(--head);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.card .body{padding:8px 10px;min-height:0}
+
+.head{flex:0 0 auto;display:grid;grid-template-columns:230px minmax(0,1fr) 140px;gap:8px}
+.total{background:var(--brand);color:var(--brand-ink);border-radius:12px;padding:8px 12px;display:flex;flex-direction:column;justify-content:space-between;min-height:128px}
+.total small{opacity:.92;font-size:12px}
+.total .big{font-size:40px;font-weight:800;line-height:1.1}
+.total .sub{display:flex;justify-content:space-between;font-size:12.5px;gap:6px}
+.center{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field{display:flex;align-items:center;gap:8px;border:2px solid var(--brand);border-radius:12px;padding:0 12px;background:var(--card);min-height:48px}
+.field input{border:0;outline:0;background:transparent;flex:1;min-width:0;font-size:17px;min-height:44px}
+.ret{flex:0 0 auto;border:1px solid var(--line);background:var(--chip);border-radius:8px;min-height:36px;padding:0 12px;cursor:pointer;font-weight:700;white-space:nowrap}
+.ret[aria-pressed="true"]{background:var(--bad);color:var(--brand-ink);border-color:var(--bad)}
+.field.returning{border-color:var(--bad)}
+.total.returning{background:var(--bad)}
+.tab small{color:var(--mute);margin-inline-start:4px}
+.tab.new{font-weight:700;color:var(--brand)}
+.msg{min-height:28px;display:flex;align-items:center;font-size:12px;color:var(--mute)}
+.undo{display:none;align-items:center;justify-content:space-between;gap:8px;background:var(--ink);color:var(--bg);border-radius:8px;padding:2px 10px;width:100%;min-height:28px}
+.undo.on{display:flex}.undo button{border:0;background:transparent;color:var(--bg);text-decoration:underline;font-weight:700;cursor:pointer;min-height:26px;padding:0 6px}
+.cur{display:grid;grid-template-columns:minmax(0,1fr) 60px 90px 104px;background:var(--card);border:1px solid var(--line);border-radius:10px;min-height:46px;align-items:center}
+.cur>*{padding:4px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cur .nm{font-weight:700;font-size:16px}.cur .v{text-align:center;font-weight:700;font-size:16px;border-inline-start:1px solid var(--line)}
+.cur .v small{display:block;color:var(--mute);font-size:10.5px;font-weight:400;line-height:1}
+.qty{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr 1fr;gap:6px}
+.qty .n{grid-column:1/-1;text-align:center;font-size:36px;font-weight:800;background:var(--sel);color:var(--brand);border-radius:10px;line-height:1.2}
+.qty button{border:1px solid var(--line);background:var(--chip);border-radius:10px;font-size:22px;cursor:pointer;min-height:38px}
+.qty .del{grid-column:1/-1;background:var(--bad-bg);color:var(--bad);font-size:26px;font-weight:800;border-color:transparent}
+
+.table{flex:1;min-height:0}
+.thead,.row{display:grid;grid-template-columns:34px minmax(0,1fr) 74px 108px 124px 80px 76px 94px 48px;align-items:center}
+.thead{flex:0 0 auto;background:var(--head);border-bottom:1px solid var(--line);font-size:12px;color:var(--mute);font-weight:700;min-height:34px}
+.thead>*,.row>*{padding:0 8px;min-width:0}
+.thead .pg{display:flex;align-items:center;gap:4px;justify-content:center;padding:0}
+.thead .pg button{border:1px solid var(--line);background:var(--card);border-radius:8px;width:34px;min-height:30px;cursor:pointer;font-size:15px;padding:0}
+.rows{flex:1;min-height:0;overflow:hidden;background:repeating-linear-gradient(to bottom,transparent 0 45px,var(--line) 45px 46px)}
+.row{height:46px;cursor:pointer;font-size:14px;border-bottom:1px solid var(--line);background:var(--card)}
+.row[aria-selected="true"]{background:var(--sel)}
+.row .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .nm small{display:block;color:var(--mute);font-weight:400;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .num{text-align:center}.row .tot{font-weight:700;text-align:end}
+.c{font-size:12px;padding:1px 8px;border-radius:999px;background:var(--chip);white-space:nowrap}
+.c.ok{background:var(--ok-bg);color:var(--ok)}.c.warn{background:var(--warn-bg);color:var(--warn)}.c.bad{background:var(--bad-bg);color:var(--bad)}
+.step{display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--card)}
+.step button{border:0;background:var(--chip);width:34px;min-height:38px;font-size:17px;cursor:pointer;padding:0}
+.step span{min-width:30px;text-align:center;font-weight:700}
+.dc{width:100%;border:1px solid var(--line);background:var(--card);border-radius:8px;min-height:36px;padding:0 4px;text-align:center}
+.dc[data-over="1"]{border-color:var(--bad);color:var(--bad)}
+.x{border:0;background:var(--bad-bg);color:var(--bad);width:40px;min-height:40px;border-radius:8px;font-size:19px;cursor:pointer;font-weight:700;padding:0}
+.pin{width:64px;border:1px solid var(--bad);background:var(--card);border-radius:6px;min-height:22px;padding:0 4px;font-size:11px}
+.row.res .go{color:var(--brand);font-weight:700;font-size:12.5px}
+.row.quick{background:var(--warn-bg);cursor:default;height:auto;min-height:52px;padding:6px 0;grid-template-columns:34px minmax(0,1fr) 140px 100px}
+.row.quick input{border:1px solid var(--line);background:var(--card);border-radius:8px;min-height:38px;padding:0 8px;width:100%}
+.row.quick button{background:var(--brand);color:var(--brand-ink);border:0;border-radius:8px;min-height:38px;font-weight:700;cursor:pointer;width:100%}
+.empty{padding:14px 16px;color:var(--mute);background:var(--card)}
+
+.pay{flex:0 0 auto;display:flex;gap:8px;align-items:center;padding:8px 10px;flex-direction:row}
+.methods{display:flex;gap:5px}
+.m{border:1px solid var(--line);background:var(--card);border-radius:8px;min-height:46px;padding:0 16px;cursor:pointer}
+.m[aria-pressed="true"]{background:var(--brand);color:var(--brand-ink);border-color:var(--brand);font-weight:700}
+.notes{display:flex;gap:5px}
+.notes button{border:1px solid var(--line);background:var(--chip);border-radius:8px;min-height:46px;padding:0 12px;cursor:pointer;white-space:nowrap;font-size:13px}
+.given{display:flex;gap:8px;align-items:center;margin-inline-start:auto;min-width:0}
+.given input{width:130px;border:1px solid var(--line);background:var(--card);border-radius:8px;min-height:46px;padding:0 10px;font-size:18px}
+.change{font-weight:700;color:var(--ok);white-space:nowrap;min-width:110px}
+.confirm{background:var(--ok);color:var(--brand-ink);border:0;border-radius:10px;min-height:50px;padding:0 24px;font-size:17px;font-weight:800;cursor:pointer;white-space:nowrap}
+
+/* side cards */
+.shift .big{font-size:26px;font-weight:800}
+.shift .row2{display:flex;justify-content:space-between;color:var(--mute);font-size:12.5px;margin-top:2px}
+.shift .chips{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.prodinfo .stock{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.prodinfo .stock b{font-size:26px;font-weight:800}
+.prodinfo .nm{font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.batches{list-style:none;margin:6px 0 0;padding:0;font-size:12.5px}
+.batches li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;border-top:1px solid var(--line)}
+.recent .list{list-style:none;margin:0;padding:0;font-size:12.5px}
+.recent .list li{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:3px 10px;border-bottom:1px solid var(--line);min-height:32px}
+.recent .list small{color:var(--mute)}
+.xs{border:0;background:var(--chip);width:30px;min-height:26px;border-radius:7px;cursor:pointer}
+.calc-card{flex:1;min-height:0}
+.calc-card .body{flex:1;display:flex;flex-direction:column;padding:6px 8px}
+.calc-out{flex:0 0 auto;display:block;text-align:end;font-size:22px;font-weight:800;border:1px solid var(--line);border-radius:10px;padding:0 10px;min-height:38px;background:var(--bg);overflow:hidden}
+.calc{flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:minmax(0,1fr);gap:4px;margin-top:5px}
+.calc button{min-height:0;border:1px solid var(--line);background:var(--chip);border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;padding:0}
+.calc .op{background:var(--sel);color:var(--brand)}.calc .wide{grid-column:span 2}
+.calc .eq{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.tojoin{flex:0 0 auto;margin-top:5px;width:100%;min-height:32px;border:1px solid var(--line);background:var(--card);border-radius:8px;cursor:pointer;font-size:12.5px}
+.bar{display:none;flex:0 0 auto;gap:6px;padding:6px 8px;background:var(--card);border-top:1px solid var(--line)}
+.bar button{flex:1;min-height:44px;border:1px solid var(--line);background:var(--chip);border-radius:10px;cursor:pointer;font-weight:600}
+.bar button[aria-pressed="true"]{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+
+@container (max-width:760px){
+  .bar{display:flex}
+  .grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"main"}
+  .side{grid-area:main}
+  .frame[data-pane="sell"] .side{display:none}
+  .frame[data-pane="box"] .main{display:none}
+  .head{grid-template-columns:minmax(0,1fr) 112px;grid-template-areas:"total qty" "center center"}
+  .total{grid-area:total;min-height:0;padding:6px 10px}.total .big{font-size:28px}.total .sub{display:none}.total small{font-size:11px}
+  .qty{grid-area:qty;grid-template-rows:auto 1fr;padding:4px;gap:4px}.qty .n{font-size:24px}.qty .del{display:none}.qty button{min-height:32px}
+  .center{grid-area:center}
+  .cur,.msg{display:none}
+  .topbar>b{display:none}
+  .thead,.row{grid-template-columns:minmax(0,1fr) 104px 72px 46px}
+  .thead>:nth-child(1),.row>:nth-child(1),.thead>:nth-child(3),.row>:nth-child(3),.thead>:nth-child(4),.row>:nth-child(4),.thead>:nth-child(6),.row>:nth-child(6),.thead>:nth-child(7),.row>:nth-child(7){display:none}
+  .row.quick{grid-template-columns:minmax(0,1fr) 90px 70px}.row.quick>:first-child{display:none}
+  .row.res .go{display:none}
+  .step button{width:30px}.step span{min-width:24px}
+  .pay{flex-wrap:wrap;gap:6px;padding:6px}.methods{width:100%}.m{flex:1}.notes{display:none}.given{width:100%;margin:0}.given input{flex:1;width:auto}.confirm{width:100%}
+  .topbar .meta,.pill:not(.rate){display:none}
+  .side{overflow:hidden}
+  .shift .chips{display:none}.prodinfo,.recent .list li:nth-child(n+4){display:none}
+}
+.legend{display:none;position:fixed;inset:48px 16px 16px;z-index:5;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 16px}
+.legend.on{display:block}
+.legend h2{font-size:15px;margin:0 0 8px}
+.legend table{width:100%;border-collapse:collapse}
+.legend td,.legend th{padding:6px 10px;text-align:start;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
+.legend th{color:var(--mute);font-weight:600;font-size:12px}
+.hint{color:var(--mute);font-size:12px}
+</style>
+</head>
+<body>
+<div class="viewer">
+  <h1>شاشة الكاشير: ثابتة، بلا تمرير ولا نوافذ، للبيع فقط</h1>
+  <div class="seg" role="group" aria-label="العرض">
+    <button type="button" id="vDesk" aria-pressed="true">حاسوب</button>
+    <button type="button" id="vPhone" aria-pressed="false">هاتف 375</button>
+    <button type="button" id="vTheme" aria-pressed="false">داكن</button>
+    <button type="button" id="vLegend" aria-pressed="false">الشرح</button>
+  </div>
+</div>
+
+<div class="stage" id="stage"><div class="frame" id="frame" data-w="desk" data-pane="sell"><div class="till">
+  <div class="topbar">
+    <b>سوق النخيل</b><span class="meta">فرع المنصور · كاشير ١ · علي</span>
+    <span class="pill rate">١$ = ١٬٤٥٠ د.ع</span>
+    <span class="pill">وردية منذ ٣:٢٠ م</span>
+    <div class="tabs" id="tabs"></div>
+  </div>
+
+  <div class="grid">
+    <div class="main">
+      <div class="head">
+        <div class="total" aria-live="polite">
+          <small>الإجمالي · وصل <span id="invNo">٣٤٣٥٢٦</span></small>
+          <span class="big" id="tot">٠</span>
+          <div class="sub"><span>الخصم الكلي <b id="dis">٠</b></span><span>الزبون: نقدي</span></div>
+        </div>
+        <div class="center">
+          <label class="field"><span aria-hidden="true">▮▮▯▮</span>
+            <input id="q" autocomplete="off" placeholder="امسح الباركود أو اكتب اسم المنتج" aria-label="باركود أو اسم المنتج">
+            <button type="button" class="ret" id="retBtn" aria-pressed="false">↩ استرجاع</button></label>
+          <div class="msg" id="msg"><span id="hintTxt">Enter يضيف أول نتيجة · اكتب − قبل الكمية للإرجاع</span>
+            <div class="undo" id="undo"><span id="undoText"></span><button type="button" id="undoBtn">تراجع</button></div></div>
+          <div class="cur" id="cur"></div>
+        </div>
+        <div class="qty" aria-label="الكمية">
+          <div class="n" id="qn">٠</div>
+          <button type="button" id="qdec" aria-label="أنقص">−</button><button type="button" id="qinc" aria-label="زِد">+</button>
+          <button type="button" class="del" id="qdel" aria-label="احذف السطر">×</button>
+        </div>
+      </div>
+
+      <section class="card table" aria-label="الوصل">
+        <div class="thead" id="thead"></div>
+        <div class="rows" id="rows"></div>
+      </section>
+
+      <div class="card pay">
+        <div class="methods" role="group" aria-label="طريقة الدفع">
+          <button type="button" class="m" data-m="cash" aria-pressed="true">نقد</button>
+          <button type="button" class="m" data-m="card" aria-pressed="false">بطاقة</button>
+          <button type="button" class="m" data-m="usd" aria-pressed="false">دولار</button>
+        </div>
+        <div class="notes" id="notes"></div>
+        <div class="given"><input id="given" inputmode="numeric" placeholder="المدفوع" aria-label="المدفوع"><span class="change" id="change"></span></div>
+        <button type="button" class="confirm" id="confirm">دفع (Enter)</button>
+      </div>
+    </div>
+
+    <aside class="side">
+      <section class="card shift" aria-label="إجمالي الوردية">
+        <h2><span>إجمالي الوردية</span><span id="shiftCnt">١٢ وصلاً</span></h2>
+        <div class="body"><div class="big" id="shiftTot">١٨٧٬٢٥٠</div>
+          <div class="chips" id="shiftChips"></div></div>
+      </section>
+      <section class="card prodinfo" aria-label="المنتج المحدد">
+        <h2><span>المنتج المحدد</span></h2>
+        <div class="body" id="pinfo"></div>
+      </section>
+      <section class="card recent" aria-label="الوصولات">
+        <h2><span>آخر الوصولات</span></h2>
+        <ul class="list" id="recent"></ul>
+      </section>
+      <section class="card calc-card" aria-label="حاسبة">
+        <div class="body">
+          <output class="calc-out" id="cOut" dir="ltr">٠</output>
+          <div class="calc" id="calc" dir="ltr">
+            <button type="button" data-k="C" class="op">C</button><button type="button" data-k="B" class="op">⌫</button><button type="button" data-k="%" class="op">%</button><button type="button" data-k="/" class="op">÷</button>
+            <button type="button" data-k="7">٧</button><button type="button" data-k="8">٨</button><button type="button" data-k="9">٩</button><button type="button" data-k="*" class="op">×</button>
+            <button type="button" data-k="4">٤</button><button type="button" data-k="5">٥</button><button type="button" data-k="6">٦</button><button type="button" data-k="-" class="op">−</button>
+            <button type="button" data-k="1">١</button><button type="button" data-k="2">٢</button><button type="button" data-k="3">٣</button><button type="button" data-k="+" class="op">+</button>
+            <button type="button" data-k="0" class="wide">٠</button><button type="button" data-k=".">٫</button><button type="button" data-k="=" class="eq">=</button>
+          </div>
+          <button type="button" class="tojoin" id="cTo">الناتج إلى «المدفوع»</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <div class="bar" role="group" aria-label="الشاشة">
+    <button type="button" id="pSell" aria-pressed="true">بيع</button>
+    <button type="button" id="pBox" aria-pressed="false">الوردية والوصولات والحاسبة</button>
+  </div>
+</div></div></div>
+
+<aside class="legend" id="legend">
+  <h2>كل ما يخص البيع على شاشة الكاشير</h2>
+  <table>
+    <tr><th>المعلومة أو الإجراء</th><th>مكانه</th></tr>
+    <tr><td>المتبقي من المنتج</td><td>عمود في الجدول، وبطاقة "المنتج المحدد" بخط كبير</td></tr>
+    <tr><td>تاريخ الانتهاء (Expiry)</td><td>عمود في الجدول، وقائمة الدُّفعات بالتواريخ والكميات في بطاقة المنتج المحدد، وتلوين أحمر قرب الانتهاء</td></tr>
+    <tr><td>الوصولات</td><td>بطاقة "آخر الوصولات" مع الطباعة</td></tr>
+    <tr><td>إجمالي الوردية</td><td>بطاقة ثابتة: مجموع المبيعات وعدد الوصولات وتفصيل نقد/بطاقة/دولار (مبيعات فقط)</td></tr>
+    <tr><td>حذف سطر</td><td>X على كل سطر وX كبير بجانب الكمية، مع "تراجع"</td></tr>
+    <tr><td>باركود جديد</td><td>سطر إضافة سريعة داخل الجدول</td></tr>
+    <tr><td>خصم / إرجاع</td><td>عمود الخصم (فوق ٥٪ رمز المدير في السطر). الإرجاع بكمية سالبة</td></tr>
+    <tr><td>فاتورة طويلة</td><td>صفحات بأسهم ‹ › بدل التمرير</td></tr>
+    <tr><td>المصروف والأجور والنقد المتوقع في الدرج</td><td>ليست على شاشة الكاشير. هي لشاشة المدير</td></tr>
+  </table>
+  <p class="hint">على الهاتف شاشتان ثابتتان: «بيع» و«الوردية والوصولات والحاسبة»، تُبدَّلان من الشريط السفلي.</p>
+</aside>
+
+<script>
+const nf = new Intl.NumberFormat('ar-EG');
+const f = n => nf.format(Math.round(n));
+const RATE = 1450, CASHIER_DISC_MAX = 0.05, ROW_H = 46;
+const prods = [
+  {id:1,code:'111111',name:'حليب المراعي ١ لتر',price:1500,other:'كرتونة ×١٢ = ١٦٬٥٠٠',b:[{d:'٢٠٢٦/١١/٢٠',q:12,days:15},{d:'٢٠٢٦/١٢/٢٨',q:36,days:53}]},
+  {id:2,code:'222222',name:'سكر ناعم ٥ كغ',price:6500,other:'كيس ١ كغ = ١٬٤٠٠',b:[{d:'٢٠٢٧/٠٦/٣٠',q:12,days:237}]},
+  {id:3,code:'333333',name:'زيت عباد الشمس ١٫٥ لتر',price:4250,other:'كرتونة ×٦ = ٢٤٬٠٠٠',b:[{d:'٢٠٢٧/٠٣/٠١',q:40,days:116},{d:'٢٠٢٧/٠٨/١٥',q:31,days:283}]},
+  {id:4,code:'444444',name:'رز بسمتي ٥ كغ',price:11000,other:'',b:[]},
+  {id:5,code:'555555',name:'مياه ٠٫٥ لتر ×١٢',price:2000,other:'',b:[{d:'٢٠٢٧/٠٩/٠١',q:130,days:300}]},
+  {id:6,code:'666666',name:'شاي ليبتون ١٠٠ ظرف',price:5500,other:'٢٥ ظرف = ١٬٧٥٠',b:[{d:'٢٠٢٧/٠٢/١٥',q:9,days:101}]}
+];
+prods.forEach(p => { p.stock = p.b.reduce((s,b)=>s+b.q,0); const n = p.b[0]; p.exp = n ? n.d : '—'; p.days = n ? n.days : 999; });
+let lines = [{pid:3,qty:2,disc:0,ok:false},{pid:1,qty:3,disc:0,ok:false}];
+let sel = 0, method = 'cash', removed = null, undoTimer = null, page = 0;
+const shift = {count:12, cash:120000, card:38000, usd:29250};
+const receipts = [{no:'٣٤٣٥٢٥',t:'٣:٤١ م',m:'نقد',v:3500,items:[[6,1]]},{no:'٣٤٣٥٢٤',t:'٣:٣٨ م',m:'بطاقة',v:12250,items:[[1,3],[2,1]]},{no:'٣٤٣٥٢٣',t:'٣:٣٣ م',m:'دولار',v:29250,items:[[4,2],[3,1],[1,2]]},{no:'٣٤٣٥٢٢',t:'٣:٢٩ م',m:'نقد',v:7000,items:[[5,2],[1,2]]}];
+const P = id => prods.find(p => p.id === id);
+const $ = id => document.getElementById(id);
+const frame = $('frame');
+
+const HEAD = ['#','المنتج','المتبقي','ينتهي','الكمية','السعر','خصم','الإجمالي',''];
+function stockChip(p){
+  if (p.isNew) return '<span class="c warn">؟</span>';
+  if (p.stock === 0) return '<span class="c bad">نفد</span>';
+  if (p.stock <= 10) return `<span class="c warn">${f(p.stock)}</span>`;
+  return `<span class="c ok">${f(p.stock)}</span>`;
+}
+function expChip(p){ return p.days <= 30 ? `<span class="c bad">بعد ${f(p.days)} يوماً</span>` : `<span class="c">${p.exp}</span>`; }
+function lineTotals(l){ const p = P(l.pid); const gross = l.qty * p.price; return {gross, net: gross - l.disc}; }
+function total(){ return lines.reduce((s,l)=>s+lineTotals(l).net,0); }
+function slots(){ return Math.max(1, Math.floor($('rows').clientHeight / ROW_H)); }
+function results(){ const q = $('q').value.trim(); return q ? prods.filter(p => p.name.includes(q) || p.code.startsWith(q)) : null; }
+
+function renderTable(){
+  const n = slots(), res = results();
+  let html = '', pages = 1;
+  if (res) {
+    const q = $('q').value.trim();
+    const unknown = q.length >= 6 && /^\d+$/.test(q) && !prods.some(p => p.code === q);
+    const shown = res.slice(0, Math.max(1, unknown ? n - 1 : n));
+    if (unknown) html += `<div class="row quick"><span class="num">＋</span><span style="padding:0 8px"><input id="qname" placeholder="باركود جديد: اسم المنتج" aria-label="اسم المنتج"></span><span style="padding:0 8px"><input id="qprice" inputmode="numeric" placeholder="السعر" aria-label="السعر"></span><span style="padding:0 8px"><button type="button" id="qgo">أضف</button></span></div>`;
+    html += shown.map((p,i)=>`<div class="row res" data-id="${p.id}"><span class="num">${f(i+1)}</span><span class="nm">${p.name}<small>${p.other||''}</small></span><span class="num">${stockChip(p)}</span><span>${expChip(p)}</span><span class="num go">اضغط للإضافة</span><span class="num">${f(p.price)}</span><span></span><span class="tot"></span><span></span></div>`).join('');
+    if (!shown.length && !unknown) html = '<div class="empty">لا نتائج.</div>';
+    $('thead').innerHTML = HEAD.map(h=>`<span>${h}</span>`).join('');
+    if (res.length > shown.length) $('thead').children[8].innerHTML = `<span class="hint">+${f(res.length-shown.length)}</span>`;
+  } else {
+    pages = Math.max(1, Math.ceil(lines.length / n));
+    if (lines.length) page = Math.floor(sel / n);
+    page = Math.min(page, pages - 1);
+    html = lines.slice(page * n, page * n + n).map((l,k)=>{
+      const i = page * n + k, p = P(l.pid), t = lineTotals(l), neg = l.qty < 0;
+      const over = (t.gross ? l.disc / Math.abs(t.gross) : 0) > CASHIER_DISC_MAX && !l.ok;
+      return `<div class="row" data-i="${i}" aria-selected="${i===sel}">
+        <span class="num">${f(i+1)}</span>
+        <span class="nm">${neg?'إرجاع · ':''}${p.name}<small>${over?'فوق ٥٪: رمز المدير <input class="pin" data-a="pin" inputmode="numeric" placeholder="••••">':(p.isNew?'جديد، يراجعه المدير':(p.other||''))}</small></span>
+        <span class="num">${stockChip(p)}</span><span>${expChip(p)}</span>
+        <span class="step"><button type="button" data-a="dec" aria-label="أنقص">−</button><span>${f(l.qty)}</span><button type="button" data-a="inc" aria-label="زِد">+</button></span>
+        <span class="num">${f(p.price)}</span>
+        <span><input class="dc" data-a="disc" data-over="${over?1:0}" inputmode="numeric" value="${l.disc||''}" placeholder="٠" aria-label="خصم"></span>
+        <span class="tot">${f(t.net)}</span>
+        <span><button type="button" class="x" data-a="rm" aria-label="احذف السطر">×</button></span></div>`;}).join('');
+    if (!lines.length) html = '<div class="empty">الوصل فارغ. امسح أول منتج.</div>';
+    $('thead').innerHTML = HEAD.map((h,i)=> i===8 ? `<span class="pg">${pages>1?`<button type="button" id="pgP" aria-label="الصفحة السابقة" ${page<=0?'disabled':''}>›</button><button type="button" id="pgN" aria-label="الصفحة التالية" ${page>=pages-1?'disabled':''}>‹</button>`:''}</span>` : `<span>${h}</span>`).join('');
+    if (pages > 1) $('thead').children[0].innerHTML = `<span title="الصفحة">${f(page+1)}/${f(pages)}</span>`;
+  }
+  $('rows').innerHTML = html;
+  renderCur(); renderTotals();
+}
+function renderCur(){
+  const l = lines[sel], p = l && P(l.pid);
+  if (!l) { $('cur').innerHTML = '<span class="nm">—</span><span class="v">٠</span><span class="v">٠</span><span class="v">٠</span>'; $('qn').textContent='٠'; $('pinfo').innerHTML='<span class="hint">اختر سطراً لترى مخزونه وانتهاءه.</span>'; return; }
+  const t = lineTotals(l);
+  $('cur').innerHTML = `<span class="nm">${p.name}</span><span class="v"><small>الكمية</small>${f(l.qty)}</span><span class="v"><small>السعر</small>${f(p.price)}</span><span class="v"><small>الإجمالي</small>${f(t.net)}</span>`;
+  $('qn').textContent = f(l.qty);
+  const low = !p.isNew && p.stock <= 10, over = !p.isNew && p.stock - l.qty < 0;
+  $('pinfo').innerHTML = `<div class="nm">${p.name}</div>
+    <div class="stock"><span>المتبقي</span><b style="color:${p.isNew?'var(--warn)':p.stock===0?'var(--bad)':low?'var(--warn)':'var(--ok)'}">${p.isNew?'؟':f(p.stock)}</b></div>
+    ${over?'<span class="c bad">الكمية أكبر من المتبقي</span>':''}
+    <ul class="batches">${p.b.length ? p.b.map(x=>`<li><span>ينتهي ${x.d}</span><span>${f(x.q)} · ${x.days<=30?`<b style="color:var(--bad)">بعد ${f(x.days)} يوماً</b>`:`بعد ${f(x.days)} يوماً`}</span></li>`).join('') : '<li><span>لا دُفعات مسجّلة</span></li>'}</ul>
+    ${p.other?`<div class="hint" style="margin-top:4px">حجم آخر: ${p.other}</div>`:''}`;
+}
+function renderTotals(){
+  const sub = lines.reduce((s,l)=>s+lineTotals(l).gross,0), tot = total();
+  $('dis').textContent = f(sub-tot); $('tot').textContent = f(tot);
+  const refund = tot < 0 || (returning && !lines.length);
+  document.querySelector('.total').classList.toggle('returning', refund);
+  document.querySelector('.total small').firstChild.textContent = refund ? 'إجمالي الإرجاع (يُردّ للزبون) · وصل ' : 'الإجمالي · وصل ';
+  $('confirm').textContent = tot < 0 ? 'رد المبلغ (Enter)' : 'دفع (Enter)';
+  if (document.querySelector('.tabs') && typeof renderTabs === 'function') renderTabs();
+  const notes = method==='usd' ? [] : [tot,5000,10000,25000].filter((v,i,a)=>v>0&&a.indexOf(v)===i);
+  $('notes').innerHTML = method==='card' ? '' : (method==='usd'
+    ? [20,50,100].map(v=>`<button type="button" data-n="${v}">${v}$</button>`).join('')
+    : notes.map((v,i)=>`<button type="button" data-n="${v}">${i===0?'بالضبط':f(v)}</button>`).join(''));
+  $('given').placeholder = method==='usd' ? 'بالدولار' : 'المدفوع';
+  updateChange();
+}
+function renderShift(){
+  const sum = shift.cash + shift.card + shift.usd;
+  $('shiftTot').textContent = f(sum) + ' د.ع'; $('shiftCnt').textContent = f(shift.count) + ' وصلاً';
+  $('shiftChips').innerHTML = `<span class="c">نقد ${f(shift.cash)}</span><span class="c">بطاقة ${f(shift.card)}</span><span class="c">دولار ${f(shift.usd)}</span>`;
+  $('recent').innerHTML = receipts.slice(0,4).map(r=>`<li><span>${r.no} <small>${r.t} · ${r.m}</small></span><b>${f(r.v)}</b><span><button type="button" class="xs" data-r="${receipts.indexOf(r)}" aria-label="استرجاع مواد من هذا الوصل" title="استرجاع">↩</button> <button type="button" class="xs" aria-label="طباعة">⎙</button></span></li>`).join('');
+}
+function updateChange(){
+  const tot = total(), g = parseFloat($('given').value) || 0;
+  if (method==='card') { $('change').textContent = ''; return; }
+  if (method==='usd') { const due = Math.ceil(tot/RATE*100)/100; $('change').textContent = g ? 'الباقي ' + f(Math.max(0,g*RATE-tot)) : 'المطلوب ' + due.toFixed(2) + ' $'; return; }
+  $('change').textContent = g ? (g>=tot ? 'الباقي ' + f(g-tot) : 'ينقص ' + f(tot-g)) : '';
+}
+function add(id){
+  const s = returning ? -1 : 1;
+  const i = lines.findIndex(l => l.pid===id && Math.sign(l.qty)===s);
+  if (i>=0) { lines[i].qty += s; sel = i; } else { lines.push({pid:id,qty:s,disc:0,ok:false}); sel = lines.length-1; }
+  $('q').value=''; renderTable();
+}
+function remove(i){
+  removed = {line: lines[i], at: i};
+  lines.splice(i,1); sel = Math.max(0, Math.min(sel, lines.length-1));
+  $('undoText').textContent = 'حُذف «' + P(removed.line.pid).name + '»';
+  $('hintTxt').style.display='none'; $('undo').classList.add('on'); clearTimeout(undoTimer);
+  undoTimer = setTimeout(()=>{ $('undo').classList.remove('on'); $('hintTxt').style.display=''; removed=null; }, 6000);
+  renderTable();
+}
+$('undoBtn').onclick = () => { if (!removed) return; lines.splice(removed.at,0,removed.line); sel = removed.at; removed=null; $('undo').classList.remove('on'); $('hintTxt').style.display=''; renderTable(); };
+
+$('rows').addEventListener('click', e => {
+  const res = e.target.closest('.row.res'); if (res) return add(+res.dataset.id);
+  if (e.target.id==='qgo') {
+    const name = $('qname').value.trim() || 'منتج جديد', price = parseFloat($('qprice').value)||0; if (!price) return;
+    const np = {id:100+prods.length,code:$('q').value.trim(),name,price,other:'',b:[],stock:0,exp:'—',days:999,isNew:true};
+    prods.push(np); return add(np.id);
+  }
+  const row = e.target.closest('.row[data-i]'); if (!row) return;
+  const i = +row.dataset.i, a = e.target.dataset.a;
+  if (a==='rm') return remove(i);
+  if (a==='inc') lines[i].qty++; else if (a==='dec') lines[i].qty = lines[i].qty-1 || -1;
+  if (a==='disc' || a==='pin') return;
+  sel = i; renderTable();
+});
+$('rows').addEventListener('change', e => {
+  const row = e.target.closest('.row[data-i]'); if (!row) return; const i = +row.dataset.i, a = e.target.dataset.a;
+  if (a==='disc') { lines[i].disc = Math.max(0, parseFloat(e.target.value)||0); lines[i].ok = false; renderTable(); }
+  if (a==='pin' && e.target.value==='1234') { lines[i].ok = true; renderTable(); }
+});
+$('thead').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; const n = slots();
+  if (b.id==='pgN') sel = Math.min(lines.length-1, (page+1)*n);
+  if (b.id==='pgP') sel = Math.max(0,(page-1)*n);
+  renderTable();
+});
+$('qinc').onclick = () => { if (lines[sel]) { lines[sel].qty++; renderTable(); } };
+$('qdec').onclick = () => { if (lines[sel]) { lines[sel].qty = lines[sel].qty-1 || -1; renderTable(); } };
+$('qdel').onclick = () => { if (lines[sel]) remove(sel); };
+$('q').addEventListener('input', renderTable);
+$('q').addEventListener('keydown', e => {
+  if (e.key!=='Enter') return;
+  const q = $('q').value.trim(); const p = prods.find(p => p.code===q) || prods.find(p => p.name.includes(q));
+  if (p) add(p.id);
+});
+document.querySelectorAll('.m').forEach(b => b.onclick = () => {
+  method = b.dataset.m; document.querySelectorAll('.m').forEach(x => x.setAttribute('aria-pressed', x===b)); $('given').value=''; renderTotals();
+});
+$('notes').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $('given').value = b.dataset.n; updateChange(); });
+$('given').addEventListener('input', updateChange);
+function pay(){
+  if (!lines.length) return;
+  const tot = total(), m = method==='cash'?'نقد':method==='card'?'بطاقة':'دولار';
+  shift.count++; shift[method] += tot;
+  receipts.unshift({no:$('invNo').textContent,t:'٣:٤٥ م',m,v:tot,items:lines.map(l=>[l.pid,l.qty])});
+  lines = []; sel = 0; page = 0; $('given').value=''; setReturn(false);
+  saleNo++; sales[curSale] = {no:f(saleNo+1), lines, sel:0};
+  renderShift(); renderTable();
+}
+$('confirm').onclick = pay;
+document.addEventListener('keydown', e => { if (e.key==='Enter' && document.activeElement===$('given')) pay(); });
+// Several open sales: switching parks the current one exactly as it is.
+let returning = false, saleNo = 343526;
+const sales = [{no:'٣٤٣٥٢٦', lines:null, sel:0}, {no:'٣٤٣٥٢٧', lines:[{pid:6,qty:1,disc:0,ok:false}], sel:0}];
+let curSale = 0;
+function renderTabs(){
+  sales[curSale].lines = lines; sales[curSale].sel = sel;
+  $('tabs').innerHTML = sales.map((s,i)=>{
+    const ls = s.lines || [], t = ls.reduce((a,l)=>a+lineTotals(l).net,0);
+    return `<button type="button" class="tab" data-s="${i}" aria-current="${i===curSale}">${s.no}<small>${ls.length ? f(ls.length)+' · '+f(t) : 'فارغ'}</small></button>`;
+  }).join('') + (sales.length < 4 ? '<button type="button" class="tab new" id="newSale">＋ بيع جديد</button>' : '');
+  $('invNo').textContent = sales[curSale].no;
+}
+function switchTo(i){
+  sales[curSale].lines = lines; sales[curSale].sel = sel;
+  curSale = i; lines = sales[i].lines || []; sel = sales[i].sel || 0; page = 0;
+  setReturn(false); $('q').value = ''; renderTable();
+}
+$('tabs').addEventListener('click', e => {
+  if (e.target.closest('#newSale')) { saleNo++; sales.push({no:f(saleNo+1), lines:[], sel:0}); saleNo = saleNo + 0; return switchTo(sales.length-1); }
+  const t = e.target.closest('.tab[data-s]'); if (t && +t.dataset.s !== curSale) switchTo(+t.dataset.s);
+});
+function setReturn(on){
+  returning = on; $('retBtn').setAttribute('aria-pressed', on);
+  document.querySelector('.field').classList.toggle('returning', on);
+  $('hintTxt').textContent = on ? 'وضع الاسترجاع: كل ما تمسحه يُضاف بكمية سالبة' : 'Enter يضيف أول نتيجة · اضغط ↩ للاسترجاع';
+  renderTotals();
+}
+$('retBtn').onclick = () => { setReturn(!returning); $('q').focus(); };
+// Return a past receipt: its items come in as negative lines on this sale.
+$('recent').addEventListener('click', e => {
+  const b = e.target.closest('button[data-r]'); if (!b) return;
+  receipts[+b.dataset.r].items.forEach(([pid,q]) => { const i = lines.findIndex(l=>l.pid===pid&&l.qty<0); if (i>=0) lines[i].qty -= q; else lines.push({pid,qty:-q,disc:0,ok:false}); });
+  sel = lines.length-1; renderTable();
+});
+
+let cA = null, cOp = null, cCur = '0', cFresh = false;
+const cShow = () => { $('cOut').textContent = nf.format(parseFloat(cCur) || 0) + (cCur.endsWith('.') ? '٫' : ''); };
+const cApply = (a, op, b) => op==='+'?a+b : op==='-'?a-b : op==='*'?a*b : op==='/'?(b?a/b:0) : b;
+$('calc').addEventListener('click', e => {
+  const k = e.target.closest('button')?.dataset.k; if (!k) return;
+  if (/\d/.test(k)) { cCur = (cFresh || cCur==='0') ? k : cCur + k; cFresh = false; }
+  else if (k==='.') { if (cFresh) { cCur='0'; cFresh=false; } if (!cCur.includes('.')) cCur += '.'; }
+  else if (k==='C') { cA=null; cOp=null; cCur='0'; cFresh=false; }
+  else if (k==='B') { cCur = cCur.length>1 ? cCur.slice(0,-1) : '0'; }
+  else if (k==='%') { const v = parseFloat(cCur)||0; cCur = String(+((cOp!==null && cA!==null && (cOp==='*'||cOp==='/')) ? v/100 : (cOp!==null && cA!==null ? cA*v/100 : v/100)).toFixed(6)); cFresh = false; }
+  else if (k==='=') { if (cOp!==null && cA!==null) { cCur = String(+cApply(cA, cOp, parseFloat(cCur)||0).toFixed(6)); cA=null; cOp=null; cFresh=true; } }
+  else { if (cOp!==null && cA!==null && !cFresh) cA = cApply(cA, cOp, parseFloat(cCur)||0); else cA = parseFloat(cCur)||0; cOp = k; cFresh = true; cCur = String(+cA.toFixed(6)); }
+  cShow();
+});
+$('cTo').onclick = () => { $('given').value = Math.round(parseFloat(cCur)||0); updateChange(); };
+
+// A fixed-size screen, scaled to fit the pane (so what you see is the real proportions, never a scroll).
+const DIM = {desk:[1280,720], phone:[375,667]};
+function fit(){
+  const st = $('stage').getBoundingClientRect(), [w,h] = DIM[frame.dataset.w];
+  const s = Math.min((st.width-16)/w, (st.height-16)/h, 1.25);
+  frame.style.width = w+'px'; frame.style.height = h+'px';
+  frame.style.transform = `scale(${s})`;
+  frame.style.left = ((st.width - w*s)/2) + 'px';
+  requestAnimationFrame(renderTable);
+}
+const setW = w => { frame.dataset.w = w; $('vDesk').setAttribute('aria-pressed', w==='desk'); $('vPhone').setAttribute('aria-pressed', w==='phone'); fit(); };
+$('vDesk').onclick = () => setW('desk'); $('vPhone').onclick = () => setW('phone');
+$('vTheme').onclick = () => { const d = document.documentElement.dataset.theme==='dark'; document.documentElement.dataset.theme = d?'light':'dark'; $('vTheme').setAttribute('aria-pressed',!d); $('vTheme').textContent = d?'داكن':'فاتح'; };
+$('vLegend').onclick = () => { const on = $('legend').classList.toggle('on'); $('vLegend').setAttribute('aria-pressed', on); };
+$('pSell').onclick = () => { frame.dataset.pane='sell'; $('pSell').setAttribute('aria-pressed',true); $('pBox').setAttribute('aria-pressed',false); requestAnimationFrame(renderTable); };
+$('pBox').onclick = () => { frame.dataset.pane='box'; $('pBox').setAttribute('aria-pressed',true); $('pSell').setAttribute('aria-pressed',false); };
+window.addEventListener('resize', fit);
+renderShift(); fit();
+</script>
+</body>
+</html>
