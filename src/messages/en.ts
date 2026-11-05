@@ -1612,6 +1612,8 @@ export const en: Messages = {
     PAYMENT_SHORT: "The amount paid is less than the total.",
     PAYMENT_RULE: "Payment not accepted: the card amount cannot exceed the total, and change is given from cash only.",
     STOCK_EXPIRED: "There is not enough stock that has not expired. Expired batches cannot be sold.",
+    EXPENSE_EXCEEDS_DRAWER: "Not enough cash in the drawer for this expense.",
+    EXPENSE_VOIDED: "This expense was already voided.",
   },
   internalError: "Something unexpected went wrong and no change was saved. Please try again.",
 };

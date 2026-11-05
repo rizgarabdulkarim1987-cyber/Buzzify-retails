@@ -144,6 +144,26 @@ export async function shiftTotals(
   return { salesCount: sales._count._all, totalMinor: sales._sum.totalMinor ?? 0n, cashMinor, cardMinor, usdTenderedMinor, usdDinarMinor };
 }
 
+/** The sum of the shift's expenses that are not voided (dinars). */
+export async function shiftExpensesTotal(tx: Tx, shiftId: string): Promise<bigint> {
+  const sum = await tx.rtExpense.aggregate({ where: { shiftId, voidedAt: null }, _sum: { amountMinor: true } });
+  return sum._sum.amountMinor ?? 0n;
+}
+
+/**
+ * What the dinar drawer holds (or should hold) now: opening + the cash the sales moved - the expenses not
+ * voided. The one place this is computed: recording an expense, the summary and the close all use it.
+ */
+export function expectedDinarMinor(openingCashMinor: bigint, cashMinor: bigint, expensesMinor: bigint): bigint {
+  return openingCashMinor + cashMinor - expensesMinor;
+}
+
+/** The dinar drawer of an open shift right now (see expectedDinarMinor). */
+export async function dinarDrawerNow(tx: Tx, shift: { id: string; openingCashMinor: bigint }): Promise<bigint> {
+  const [t, expensesMinor] = await Promise.all([shiftTotals(tx, shift.id), shiftExpensesTotal(tx, shift.id)]);
+  return expectedDinarMinor(shift.openingCashMinor, t.cashMinor, expensesMinor);
+}
+
 async function summaryOf(tx: Tx, shift: ShiftView): Promise<ShiftSummary> {
   const t = await shiftTotals(tx, shift.id);
   return {
