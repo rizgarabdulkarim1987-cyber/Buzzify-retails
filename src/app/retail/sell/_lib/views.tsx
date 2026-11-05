@@ -119,11 +119,11 @@ export function TicketPad({
         {t.till.colQty}
       </button>
       {["4", "5", "6"].map(digit)}
-      <button type="button" className="till-key till-key-op" onClick={() => onStep(1)} disabled={disabled} aria-label={fill(t.sell.increase, { name })} data-testid="key-plus">
+      <button type="button" className="till-key till-key-op" data-op="plus" onClick={() => onStep(1)} disabled={disabled} aria-label={fill(t.sell.increase, { name })} data-testid="key-plus">
         <PlusIcon />
       </button>
       {["1", "2", "3"].map(digit)}
-      <button type="button" className="till-key till-key-op" onClick={() => onStep(-1)} disabled={disabled} aria-label={fill(t.sell.decrease, { name })} data-testid="key-minus">
+      <button type="button" className="till-key till-key-op" data-op="minus" onClick={() => onStep(-1)} disabled={disabled} aria-label={fill(t.sell.decrease, { name })} data-testid="key-minus">
         <MinusIcon />
       </button>
       {decimals > 0 ? (
@@ -137,7 +137,7 @@ export function TicketPad({
       <button type="button" className="till-key" data-key="back" onClick={() => onPress("back")} disabled={disabled} aria-label={t.till.backspace} data-testid="key-back">
         <BackspaceIcon />
       </button>
-      <button type="button" className="till-key till-key-op" onClick={() => onPress("clear")} disabled={disabled} aria-label={t.till.clearEntry} data-testid="key-clear">
+      <button type="button" className="till-key till-key-op" data-op="clear" onClick={() => onPress("clear")} disabled={disabled} aria-label={t.till.clearEntry} data-testid="key-clear">
         C
       </button>
     </div>

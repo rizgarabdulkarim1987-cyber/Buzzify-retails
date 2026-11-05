@@ -12,6 +12,12 @@ export const ckb: Messages = {
     ckb: "کوردی",
     en: "English",
   },
+  theme: {
+    label: "ڕووکار",
+    day: "ڕووناک",
+    night: "تاریک",
+    system: "خۆکار",
+  },
   common: {
     loading: "بارکردن…",
     signOut: "چوونەدەرەوە",

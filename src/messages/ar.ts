@@ -12,6 +12,12 @@ export const ar = {
     ckb: "کوردی",
     en: "English",
   },
+  theme: {
+    label: "المظهر",
+    day: "فاتح",
+    night: "غامق",
+    system: "تلقائي",
+  },
   common: {
     loading: "جارٍ التحميل…",
     signOut: "تسجيل الخروج",

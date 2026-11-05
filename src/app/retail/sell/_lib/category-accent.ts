@@ -6,10 +6,13 @@ import type { CategoryKind } from "./category-kind";
  * one from a hash of its name, so it never changes between visits or screens.
  */
 
-/** The near-black card the accents sit on. */
+/** Night: the near-black card the accents sit on, and its quiet secondary ink (the Night values of --card-bg and --card-dim). */
 export const CARD = "#05050f";
-/** Quiet secondary ink on the card. */
 export const DIM = "rgba(255, 255, 255, 0.62)";
+/** Day: a white card with a faint accent wash (9%), dark ink. */
+export const CARD_DAY = "#ffffff";
+export const WASH_DAY = 0.09;
+export const INK_DAY = "#0a0a14";
 
 export const PALETTE = {
   sky: "#60a5fa",
@@ -28,7 +31,32 @@ export const PALETTE = {
   violet: "#c4b5fd",
 } as const;
 
+/** The same tones, darker, for the white Day card (4.5:1 or better on the washed card). */
+export const PALETTE_DAY: Record<keyof typeof PALETTE, string> = {
+  sky: "#1d4ed8",
+  amber: "#8f3f06",
+  green: "#126e34",
+  red: "#b51b1b",
+  cyan: "#0c6881",
+  indigo: "#4338ca",
+  lime: "#426a0c",
+  orange: "#a6370a",
+  peach: "#9a3412",
+  yellow: "#7e5900",
+  pink: "#b21657",
+  fuchsia: "#9b1aa8",
+  teal: "#0d6a62",
+  violet: "#6d28d9",
+};
+
 const ORDER = Object.values(PALETTE);
+
+/** The Day tone of a Night accent ("All" is white at night, near-black by day). */
+export function dayAccent(night: string): string {
+  if (night === "#ffffff") return INK_DAY;
+  const key = (Object.keys(PALETTE) as (keyof typeof PALETTE)[]).find((k) => PALETTE[k] === night);
+  return key ? PALETTE_DAY[key] : night;
+}
 
 /** Fixed accents of the 23 standard departments; the All tile is white. */
 export const ACCENT: Record<Exclude<CategoryKind, "other">, string> = {

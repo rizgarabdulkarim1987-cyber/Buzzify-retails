@@ -1,45 +1,88 @@
 /*
  * Buzzify Retails design tokens: the one place colours, type, spacing and radii are defined.
- * Light theme on purpose: the app is used on bright shop floors and back-office desks.
- * Component styles (globals.css) use only these variables.
+ * The look of buzzify.me: pure black page, near-black cards, white ink, one electric blue, 1px
+ * hairlines, no shadows, no motion. Two themes, Night (this block, the default) and Day (below), chosen by
+ * html[data-theme] (system follows the device); every screen reads these variables, so the whole
+ * app flips from here. Semantic names: paper/surface/panel (depth), line, ink, accent
+ * (blue as text, border and focus), brand (blue as a solid fill), on-fill, success, danger, warn.
+ * Component styles (globals.css, sell.css) use only these variables.
  */
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
-  /* Surfaces */
-  --color-paper: oklch(0.982 0.004 85);
-  --color-surface: oklch(1 0 0);
-  --color-panel: oklch(0.958 0.007 85);
-  --color-line: oklch(0.885 0.009 85);
-  --color-line-strong: oklch(0.8 0.012 85);
+  /* Surfaces: black page, cards a hair lighter, raised parts lighter again */
+  --color-paper: #000000;
+  --color-surface: #05050f;
+  --color-panel: #0b0b16;
+  --color-raised: #12121f;
+  --color-line: rgba(255, 255, 255, 0.12);
+  --color-line-strong: rgba(255, 255, 255, 0.38);
 
-  /* Text */
-  --color-ink: oklch(0.235 0.018 250);
-  --color-ink-2: oklch(0.44 0.018 250);
-  --color-ink-3: oklch(0.52 0.016 250);
+  /* Text: white, dim (.62), quiet (.5, still AA). Faint (.34) is for decoration and disabled parts only. */
+  --color-ink: #ffffff;
+  --color-ink-2: rgba(255, 255, 255, 0.62);
+  --color-ink-3: rgba(255, 255, 255, 0.5);
+  --color-ink-faint: rgba(255, 255, 255, 0.34);
 
   /* The bar that always says where you are */
-  --color-bar: oklch(0.255 0.03 200);
-  --color-bar-2: oklch(0.31 0.032 200);
-  --color-bar-ink: oklch(0.975 0.006 200);
-  --color-bar-ink-2: oklch(0.82 0.02 200);
+  --color-bar: #000000;
+  --color-bar-2: #12121f;
+  --color-bar-ink: #ffffff;
+  --color-bar-ink-2: rgba(255, 255, 255, 0.62);
 
-  /* Accent: primary actions, current selection, focus */
-  --color-accent: oklch(0.47 0.095 172);
-  --color-accent-hover: oklch(0.41 0.09 172);
-  --color-accent-ink: oklch(0.99 0.004 172);
-  --color-accent-soft: oklch(0.95 0.028 172);
-  --color-accent-line: oklch(0.8 0.06 172);
+  /* Electric blue: #0000ff for fills, a lit tone for text (#4d5cff reaches only 4.0:1 on the cards, so text uses #6674ff) */
+  --color-brand: #0000ff;
+  --color-brand-hover: #2424ff;
+  --color-on-fill: #ffffff;
+  --color-accent: #6674ff;
+  --color-accent-hover: #8490ff;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: rgba(77, 92, 255, 0.16);
+  --color-accent-line: #4d5cff;
 
-  /* States */
-  --color-danger: oklch(0.49 0.16 27);
-  --color-danger-soft: oklch(0.96 0.025 27);
-  --color-danger-line: oklch(0.82 0.07 27);
-  --color-warn: oklch(0.48 0.1 70);
-  --color-warn-soft: oklch(0.96 0.035 85);
-  --color-success: oklch(0.45 0.1 150);
-  --color-success-soft: oklch(0.955 0.03 150);
-  --color-skeleton: oklch(0.925 0.008 85);
+  /* States: light tones for text on black, tints for backgrounds, deeper fills for solid buttons */
+  --color-danger: #ff7a7a;
+  --color-danger-soft: rgba(255, 122, 122, 0.12);
+  --color-danger-line: rgba(255, 122, 122, 0.45);
+  --color-danger-fill: #d7263d;
+  --color-warn: #fbbf24;
+  --color-warn-soft: rgba(251, 191, 36, 0.12);
+  --color-warn-fill: #9a5b00;
+  --color-success: #4ade80;
+  --color-success-soft: rgba(74, 222, 128, 0.12);
+  --color-skeleton: #12121f;
+  --color-scrim: rgba(0, 0, 0, 0.72);
+  --color-scroll: rgba(255, 255, 255, 0.28);
+
+  /* Department cards: near-black with an accent border and a still glow at night */
+  --card-bg: #05050f;
+  --card-ink: #ffffff;
+  --card-dim: rgba(255, 255, 255, 0.62);
+  --card-wash: 0%;
+  --card-glow: 20%;
+
+  /* Glow language of the controls (Night: a still soft glow and a 1px hairline in the hue; no animation) */
+  --hue-blue: rgba(77, 92, 255, 0.45);
+  --glow-blue: 0 0 0.875rem rgba(77, 92, 255, 0.3);
+  --glow-blue-strong: 0 0 1.25rem rgba(77, 92, 255, 0.55);
+  --tint-blue: transparent;
+  --tint-blue-strong: rgba(77, 92, 255, 0.14);
+  --hue-violet: rgba(167, 139, 250, 0.45);
+  --glow-violet: 0 0 0.875rem rgba(167, 139, 250, 0.28);
+  --glow-violet-strong: 0 0 1.25rem rgba(167, 139, 250, 0.5);
+  --tint-violet: transparent;
+  --tint-violet-strong: rgba(167, 139, 250, 0.14);
+  --hue-red: rgba(255, 122, 122, 0.45);
+  --glow-red: 0 0 0.875rem rgba(255, 122, 122, 0.28);
+  --glow-red-strong: 0 0 1.25rem rgba(255, 122, 122, 0.5);
+  --tint-red: transparent;
+  --tint-red-strong: rgba(255, 122, 122, 0.14);
+  --hue-amber: rgba(251, 191, 36, 0.45);
+  --glow-amber: 0 0 0.875rem rgba(251, 191, 36, 0.26);
+  --glow-amber-strong: 0 0 1.25rem rgba(251, 191, 36, 0.5);
+  --tint-amber: transparent;
+  --tint-amber-strong: rgba(251, 191, 36, 0.14);
+  --glow-blue-xl: 0 0 1.75rem rgba(77, 92, 255, 0.5);
 
   /* Type: Space Grotesk for Latin letters and digits, then the system Arabic stack (Sorani letters included) for everything it lacks. */
   --font-arabic: "Segoe UI", "Noto Sans Arabic", "Noto Sans", "SF Arabic", "Geeza Pro", Tahoma, system-ui, sans-serif;
@@ -67,9 +110,9 @@
   /* Shape and depth */
   --radius-sm: 6px;
   --radius: 8px;
-  --radius-lg: 12px;
-  --shadow-1: 0 1px 2px oklch(0.235 0.018 250 / 0.06), 0 2px 8px oklch(0.235 0.018 250 / 0.05);
-  --focus-ring: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-accent);
+  --radius-lg: 16px;
+  --shadow-1: none;
+  --focus-ring: 0 0 0 2px var(--color-paper), 0 0 0 4px var(--color-accent);
 
   /* Layout */
   --gutter: var(--space-4);
@@ -79,4 +122,148 @@
   /* Motion */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --duration: 160ms;
+}
+
+/* Day: the same language on light. Chosen with html[data-theme="day"], or by the device when it is "system". */
+:root[data-theme="day"] {
+  color-scheme: light;
+  --color-paper: #f7f7fb;
+  --color-surface: #ffffff;
+  --color-panel: #f0f0f6;
+  --color-raised: #e8e8f1;
+  --color-line: rgba(10, 10, 20, 0.1);
+  --color-line-strong: rgba(10, 10, 20, 0.5);
+  --color-ink: #0a0a14;
+  --color-ink-2: rgba(10, 10, 20, 0.68);
+  --color-ink-3: rgba(10, 10, 20, 0.62);
+  --color-ink-faint: rgba(10, 10, 20, 0.34);
+  --color-bar: #ffffff;
+  --color-bar-2: #f0f0f6;
+  --color-bar-ink: #0a0a14;
+  --color-bar-ink-2: rgba(10, 10, 20, 0.68);
+  --color-brand: #0000ff;
+  --color-brand-hover: #0000cc;
+  --color-on-fill: #ffffff;
+  --color-accent: #0000ff;
+  --color-accent-hover: #0000b3;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: rgba(0, 0, 255, 0.07);
+  --color-accent-line: #2b2bff;
+  --color-danger: #b42318;
+  --color-danger-soft: rgba(180, 35, 24, 0.08);
+  --color-danger-line: rgba(180, 35, 24, 0.4);
+  --color-danger-fill: #c4122f;
+  --color-warn: #8a5300;
+  --color-warn-soft: rgba(154, 91, 0, 0.1);
+  --color-warn-fill: #9a5b00;
+  --color-success: #086a32;
+  --color-success-soft: rgba(10, 125, 59, 0.1);
+  --color-skeleton: #e8e8f1;
+  --color-scrim: rgba(10, 10, 20, 0.5);
+  --color-scroll: rgba(10, 10, 20, 0.3);
+  --card-bg: #ffffff;
+  --card-ink: #0a0a14;
+  --card-dim: rgba(10, 10, 20, 0.68);
+  --card-wash: 9%;
+  --card-glow: 0%;
+
+  /* Glow language, Day: no glow; a coloured 1px border and a faint tinted fill in the same hue */
+  --hue-blue: rgba(0, 0, 255, 0.45);
+  --glow-blue: 0 0 0 transparent;
+  --glow-blue-strong: 0 0 0 transparent;
+  --tint-blue: rgba(0, 0, 255, 0.06);
+  --tint-blue-strong: rgba(0, 0, 255, 0.14);
+  --hue-violet: rgba(109, 40, 217, 0.45);
+  --glow-violet: 0 0 0 transparent;
+  --glow-violet-strong: 0 0 0 transparent;
+  --tint-violet: rgba(109, 40, 217, 0.06);
+  --tint-violet-strong: rgba(109, 40, 217, 0.14);
+  --hue-red: rgba(185, 28, 28, 0.45);
+  --glow-red: 0 0 0 transparent;
+  --glow-red-strong: 0 0 0 transparent;
+  --tint-red: rgba(185, 28, 28, 0.06);
+  --tint-red-strong: rgba(185, 28, 28, 0.14);
+  --hue-amber: rgba(180, 83, 9, 0.45);
+  --glow-amber: 0 0 0 transparent;
+  --glow-amber-strong: 0 0 0 transparent;
+  --tint-amber: rgba(180, 83, 9, 0.06);
+  --tint-amber-strong: rgba(180, 83, 9, 0.14);
+  --glow-blue-xl: 0 0 0 transparent;
+}
+
+:root[data-theme="day"] .till-cattile {
+  --accent: var(--accent-day);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    color-scheme: light;
+    --color-paper: #f7f7fb;
+    --color-surface: #ffffff;
+    --color-panel: #f0f0f6;
+    --color-raised: #e8e8f1;
+    --color-line: rgba(10, 10, 20, 0.1);
+    --color-line-strong: rgba(10, 10, 20, 0.5);
+    --color-ink: #0a0a14;
+    --color-ink-2: rgba(10, 10, 20, 0.68);
+    --color-ink-3: rgba(10, 10, 20, 0.62);
+    --color-ink-faint: rgba(10, 10, 20, 0.34);
+    --color-bar: #ffffff;
+    --color-bar-2: #f0f0f6;
+    --color-bar-ink: #0a0a14;
+    --color-bar-ink-2: rgba(10, 10, 20, 0.68);
+    --color-brand: #0000ff;
+    --color-brand-hover: #0000cc;
+    --color-on-fill: #ffffff;
+    --color-accent: #0000ff;
+    --color-accent-hover: #0000b3;
+    --color-accent-ink: #ffffff;
+    --color-accent-soft: rgba(0, 0, 255, 0.07);
+    --color-accent-line: #2b2bff;
+    --color-danger: #b42318;
+    --color-danger-soft: rgba(180, 35, 24, 0.08);
+    --color-danger-line: rgba(180, 35, 24, 0.4);
+    --color-danger-fill: #c4122f;
+    --color-warn: #8a5300;
+    --color-warn-soft: rgba(154, 91, 0, 0.1);
+    --color-warn-fill: #9a5b00;
+    --color-success: #086a32;
+    --color-success-soft: rgba(10, 125, 59, 0.1);
+    --color-skeleton: #e8e8f1;
+    --color-scrim: rgba(10, 10, 20, 0.5);
+    --color-scroll: rgba(10, 10, 20, 0.3);
+  --color-scroll: rgba(10, 10, 20, 0.3);
+    --card-bg: #ffffff;
+    --card-ink: #0a0a14;
+    --card-dim: rgba(10, 10, 20, 0.68);
+    --card-wash: 9%;
+    --card-glow: 0%;
+
+    /* Glow language, Day: no glow; a coloured 1px border and a faint tinted fill in the same hue */
+    --hue-blue: rgba(0, 0, 255, 0.45);
+    --glow-blue: 0 0 0 transparent;
+    --glow-blue-strong: 0 0 0 transparent;
+    --tint-blue: rgba(0, 0, 255, 0.06);
+    --tint-blue-strong: rgba(0, 0, 255, 0.14);
+    --hue-violet: rgba(109, 40, 217, 0.45);
+    --glow-violet: 0 0 0 transparent;
+    --glow-violet-strong: 0 0 0 transparent;
+    --tint-violet: rgba(109, 40, 217, 0.06);
+    --tint-violet-strong: rgba(109, 40, 217, 0.14);
+    --hue-red: rgba(185, 28, 28, 0.45);
+    --glow-red: 0 0 0 transparent;
+    --glow-red-strong: 0 0 0 transparent;
+    --tint-red: rgba(185, 28, 28, 0.06);
+    --tint-red-strong: rgba(185, 28, 28, 0.14);
+    --hue-amber: rgba(180, 83, 9, 0.45);
+    --glow-amber: 0 0 0 transparent;
+    --glow-amber-strong: 0 0 0 transparent;
+    --tint-amber: rgba(180, 83, 9, 0.06);
+    --tint-amber-strong: rgba(180, 83, 9, 0.14);
+    --glow-blue-xl: 0 0 0 transparent;
+  }
+
+  :root[data-theme="system"] .till-cattile {
+    --accent: var(--accent-day);
+  }
 }

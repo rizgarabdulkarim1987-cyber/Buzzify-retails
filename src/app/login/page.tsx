@@ -9,6 +9,7 @@ import { currentHost } from "../_lib/host";
 import { Wordmark } from "../_ui/wordmark";
 import { getI18n } from "../_lib/i18n";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
+import { ThemeSwitch } from "../_ui/theme-switch";
 import { AccountSignInForm } from "./login-form";
 
 /** Sales, stock and shifts, each in its own language: the calm panel beside the form on wide screens. */
@@ -44,6 +45,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }}
             tone="light"
           />
+          <ThemeSwitch labels={t.theme} />
         </header>
         <main className="auth-body">
           <div className="auth-form">

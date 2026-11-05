@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { dayAccent } from "./category-accent";
 import { CategoryGlyph, OpenArrow } from "./category-icons";
 import type { CategoryKind } from "./category-kind";
 
@@ -30,7 +31,7 @@ export function CategoryTile({
   testId?: string;
 }) {
   return (
-    <button type="button" className="till-cattile" style={{ "--accent": accent } as CSSProperties} onClick={onPick} data-kind={kind} data-testid={testId}>
+    <button type="button" className="till-cattile" style={{ "--accent-night": accent, "--accent-day": dayAccent(accent) } as CSSProperties} onClick={onPick} data-kind={kind} data-testid={testId}>
       <span className="till-cattile-top">
         <CategoryGlyph kind={kind} />
         <span className="till-cattile-index" aria-hidden="true">

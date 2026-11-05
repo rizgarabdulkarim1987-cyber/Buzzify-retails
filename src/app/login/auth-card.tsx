@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { Locale, Messages } from "@/messages";
 import type { ProductBrand } from "@/packs/brand";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
+import { ThemeSwitch } from "../_ui/theme-switch";
 import { Wordmark } from "../_ui/wordmark";
 
 /**
@@ -38,6 +39,7 @@ export function AuthCard({
             names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }}
             tone="light"
           />
+          <ThemeSwitch labels={t.theme} />
         </div>
         <div className="panel">
           <h1>{product ? product.heading : t.auth.title}</h1>

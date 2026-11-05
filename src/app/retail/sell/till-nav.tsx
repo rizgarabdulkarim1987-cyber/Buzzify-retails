@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ComponentType } from "react";
 import type { Messages } from "@/messages";
+import { ThemeSwitch } from "../../_ui/theme-switch";
 import { CartIcon, DrawerIcon, PackageIcon, StockIcon, UserIcon } from "../../_ui/icons";
 import { ExpensesIcon, ReportsIcon, SettingsIcon, SuppliersIcon } from "./_lib/nav-icons";
 
@@ -45,6 +46,9 @@ export function TillNav({ t, variant, onNavigate }: { t: Messages; variant: "rai
           </li>
         ))}
       </ul>
+      <div className="till-theme">
+        <ThemeSwitch labels={t.theme} variant={variant === "rail" ? "cycle" : "row"} />
+      </div>
     </nav>
   );
 }

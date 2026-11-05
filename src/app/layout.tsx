@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Space_Grotesk } from "next/font/google";
+import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { dirOf } from "@/messages";
 import { packById } from "@/packs";
 import { productBrand } from "@/packs/brand";
 import { currentHost } from "./_lib/host";
 import { getLocale } from "./_lib/i18n";
+import { THEME_COOKIE, parseTheme } from "./theme";
 import "./globals.css";
 
 /*
@@ -27,8 +29,9 @@ export const viewport = { width: "device-width", initialScale: 1 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const locale = await getLocale();
+  const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
   return (
-    <html lang={locale} dir={dirOf(locale)} className={`${grotesk.variable} ${mono.variable}`}>
+    <html lang={locale} dir={dirOf(locale)} data-theme={theme} className={`${grotesk.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );

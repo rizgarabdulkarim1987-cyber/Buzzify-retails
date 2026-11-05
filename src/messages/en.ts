@@ -12,6 +12,12 @@ export const en: Messages = {
     ckb: "کوردی",
     en: "English",
   },
+  theme: {
+    label: "Theme",
+    day: "Light",
+    night: "Dark",
+    system: "Auto",
+  },
   common: {
     loading: "Loading…",
     signOut: "Sign out",

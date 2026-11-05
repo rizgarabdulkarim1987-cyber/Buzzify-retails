@@ -328,7 +328,8 @@ describe("views", () => {
 
   it("a category tile is a dark card: glyph, index, name, item count and an Open label; no picture, no price", () => {
     const out = html(createElement(CategoryTile, { name: "ألبان", kind: "dairy", accent: ACCENT.dairy, index: "01", meta: "24 مادة", action: "فتح" }));
-    expect(out).toContain("--accent:#60a5fa");
+    expect(out).toContain("--accent-night:#60a5fa");
+    expect(out).toContain("--accent-day:#1d4ed8");
     expect(out).toContain("till-cattile-glyph");
     expect(out).toMatch(/till-cattile-index[^>]*>01</);
     expect(out).toContain("ألبان");

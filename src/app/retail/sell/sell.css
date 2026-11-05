@@ -19,11 +19,11 @@
   --t-b: 0.8125rem;
   --t-n: 0.875rem;
   --t-p: 0.9375rem;
-  --till-go: oklch(0.52 0.15 152);
-  --till-go-hover: oklch(0.46 0.14 152);
-  --till-go-edge: oklch(0.38 0.12 152);
-  --till-go-ink: oklch(0.99 0.01 152);
-  --till-dark: oklch(0.22 0.03 225);
+  --till-go: var(--color-brand);
+  --till-go-hover: var(--color-brand-hover);
+  --till-go-edge: var(--color-success);
+  --till-go-ink: var(--color-on-fill);
+  --till-dark: var(--color-paper);
   --till-cart-w: clamp(18rem, 26vw, 22rem);
   --till-rail-w: 4.5rem;
   --till-tile-min: 7.75rem;
@@ -102,8 +102,8 @@ body:has(.till-app) .shell-header {
 
 .till-btn-go:disabled {
   /* Not see-through: the sticky pay button must hide what scrolls under it. */
-  background: oklch(0.82 0.04 152);
-  color: oklch(0.4 0.05 152);
+  background: var(--color-raised);
+  color: var(--color-ink-3);
   box-shadow: none;
   opacity: 1;
 }
@@ -302,8 +302,8 @@ body:has(.till-app) .shell-header {
   height: 1.125rem;
   padding-inline: var(--space-1);
   border-radius: 999px;
-  background: var(--color-accent);
-  color: var(--color-surface);
+  background: var(--color-brand);
+  color: var(--color-on-fill);
   font-size: 0.6875rem;
   font-weight: 700;
 }
@@ -379,6 +379,31 @@ a.till-nav-item:hover {
   display: block;
 }
 
+.till-theme {
+  margin-block-start: var(--space-3);
+}
+
+/* In the rail the switch is the last item, glyph over word. */
+.till-app > .till-nav .till-theme {
+  margin-block-start: auto;
+  padding-block-start: var(--space-3);
+}
+
+.till-app > .till-nav .theme-cycle-face {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.till-app > .till-nav .theme-cycle {
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2) var(--space-1);
+  border-color: transparent;
+  color: var(--color-ink-2);
+  font-size: 0.6875rem;
+}
+
 /* Categories: one row of small chips (it scrolls on a phone, wraps on a wide screen). --------------- */
 
 /* The chosen one is filled with its colour, so it is clear at a glance and not only by colour (it is also bolder and ringed). */
@@ -394,29 +419,28 @@ a.till-nav-item:hover {
 
 /* The card: near-black, one accent (thin border + still glow), never animated. */
 .till-cattile {
-  --card: #05050f;
-  --dim: rgba(255, 255, 255, 0.62);
+  --accent: var(--accent-night);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
   min-height: 9.75rem;
   padding: 1.125rem 1.125rem 1rem;
-  border: 1px solid color-mix(in srgb, var(--accent) 72%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--accent) 72%, var(--card-bg));
   border-radius: 1rem;
-  background: var(--card);
-  color: #fff;
+  background: color-mix(in srgb, var(--accent) var(--card-wash), var(--card-bg));
+  color: var(--card-ink);
   font: inherit;
   text-align: start;
   cursor: pointer;
   touch-action: manipulation;
-  box-shadow: 0 0 1.25rem color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 1.25rem color-mix(in srgb, var(--accent) var(--card-glow), transparent);
 }
 
 .till-cattile:active {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--card));
-  box-shadow: 0 0 1.5rem color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) calc(var(--card-wash) + 12%), var(--card-bg));
+  box-shadow: 0 0 1.5rem color-mix(in srgb, var(--accent) calc(var(--card-glow) * 2), transparent);
 }
 
 .till-cattile-top {
@@ -465,7 +489,7 @@ a.till-nav-item:hover {
 }
 
 .till-cattile-meta {
-  color: var(--dim);
+  color: var(--card-dim);
   font-size: var(--t-b);
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
@@ -667,8 +691,8 @@ a.till-nav-item:hover {
   height: 1.25rem;
   padding-inline: var(--space-1);
   border-radius: 999px;
-  background: var(--color-accent);
-  color: var(--color-surface);
+  background: var(--color-brand);
+  color: var(--color-on-fill);
   font-size: var(--t-s);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -731,8 +755,8 @@ a.till-nav-item:hover {
   margin: 0;
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius);
-  background: var(--color-warn);
-  color: var(--color-surface);
+  background: var(--color-warn-fill);
+  color: var(--color-on-fill);
   font-size: var(--t-b);
   font-weight: 600;
 }
@@ -848,9 +872,9 @@ a.till-nav-item:hover {
 }
 
 .till-tab[data-active] {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-surface);
+  border-color: var(--color-accent-line);
+  background: var(--color-brand);
+  color: var(--color-on-fill);
 }
 
 .till-tab[data-active] small {
@@ -1094,7 +1118,7 @@ a.till-nav-item:hover {
 
 @keyframes till-flash {
   from {
-    background: oklch(0.96 0.06 92);
+    background: var(--color-accent-soft);
   }
 }
 
@@ -1316,9 +1340,9 @@ a.till-nav-item:hover {
 }
 
 .till-fn-key.till-clear[data-armed] {
-  border-color: var(--color-danger);
-  background: var(--color-danger);
-  color: var(--color-surface);
+  border-color: var(--color-danger-fill);
+  background: var(--color-danger-fill);
+  color: var(--color-on-fill);
 }
 
 .till-pay {
@@ -1460,7 +1484,8 @@ a.till-nav-item:hover {
 
   .till-app > .till-nav {
     grid-area: nav;
-    display: block;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     padding: var(--space-2);
     border-inline-end: 1px solid var(--color-line);
@@ -1537,7 +1562,7 @@ a.till-nav-item:hover {
   display: grid;
   place-items: center;
   padding: var(--space-4);
-  background: oklch(0.2 0.03 225 / 0.6);
+  background: var(--color-scrim);
   animation: till-fade 160ms var(--ease-out);
 }
 
@@ -1562,7 +1587,7 @@ a.till-nav-item:hover {
   padding: var(--space-4);
   overflow-y: auto;
   background: var(--color-surface);
-  box-shadow: 0 0 32px oklch(0.2 0.03 225 / 0.3);
+  border-inline-start: 1px solid var(--color-line);
 }
 
 .till-menu-head,
@@ -1694,7 +1719,7 @@ a.till-nav-item:hover {
   padding: var(--space-4);
   border-radius: var(--radius);
   background: var(--color-surface);
-  box-shadow: 0 8px 28px oklch(0.2 0.03 225 / 0.3);
+  border: 1px solid var(--color-line);
   overflow-y: auto;
 }
 
@@ -1949,7 +1974,7 @@ a.till-nav-item:hover {
 }
 
 .till-pay-result[data-tone="good"] {
-  background: oklch(0.94 0.05 152);
+  background: var(--color-success-soft);
 }
 
 .till-pay-result[data-tone="good"] dd,
@@ -1984,7 +2009,7 @@ a.till-nav-item:hover {
   align-content: center;
   min-height: var(--till-key);
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--till-go);
+  border: 1px solid var(--color-accent-line);
   border-radius: var(--radius);
   background: var(--color-surface);
   color: var(--color-ink);
@@ -2011,7 +2036,7 @@ a.till-nav-item:hover {
 }
 
 .till-note-tag {
-  color: var(--till-go);
+  color: var(--color-accent);
   font-size: var(--text-sm);
   font-weight: 700;
 }
@@ -2164,7 +2189,7 @@ body:has(.till-done) .shell-header {
 
 .till-done-head h1 {
   margin: 0;
-  color: var(--till-go);
+  color: var(--color-accent);
   font-size: 2rem;
   font-weight: 800;
 }
@@ -2441,6 +2466,113 @@ body:has(.till-done) .shell-header {
   .till-receipt-thanks {
     color: #000;
   }
+}
+
+/* One glow language for the till's controls ------------------------------------------------------
+ * Night: every key keeps its 1px hairline and gets a soft still glow in its hue (digits blue, plus and
+ * minus violet, backspace red, C amber, the active Qty key stronger). Day: no glow, a coloured 1px
+ * border and a faint tinted fill. Pressed: a brighter border and a stronger glow, no movement.
+ * The values are tokens (--hue-*, --glow-*, --tint-*) in tokens.css. */
+
+.till-key {
+  border-color: var(--hue-blue);
+  background: linear-gradient(var(--tint-blue), var(--tint-blue)), var(--color-surface);
+  box-shadow: var(--glow-blue);
+}
+
+.till-key-op[data-op="plus"],
+.till-key-op[data-op="minus"] {
+  border-color: var(--hue-violet);
+  background: linear-gradient(var(--tint-violet), var(--tint-violet)), var(--color-surface);
+  box-shadow: var(--glow-violet);
+}
+
+.till-key[data-key="back"] {
+  border-color: var(--hue-red);
+  background: linear-gradient(var(--tint-red), var(--tint-red)), var(--color-surface);
+  box-shadow: var(--glow-red);
+  color: var(--color-danger);
+}
+
+.till-key-op[data-op="clear"] {
+  border-color: var(--hue-amber);
+  background: linear-gradient(var(--tint-amber), var(--tint-amber)), var(--color-surface);
+  box-shadow: var(--glow-amber);
+  color: var(--color-warn);
+}
+
+.till-pad .till-key-mode {
+  border-color: var(--color-accent-line);
+  background: linear-gradient(var(--tint-blue-strong), var(--tint-blue-strong)), var(--color-surface);
+  box-shadow: var(--glow-blue-strong);
+}
+
+.till-key:active:not(:disabled) {
+  scale: none;
+  border-color: color-mix(in srgb, var(--hue-blue) 55%, var(--color-ink));
+  background: linear-gradient(var(--tint-blue-strong), var(--tint-blue-strong)), var(--color-surface);
+  box-shadow: var(--glow-blue-strong);
+}
+
+.till-key-op[data-op="plus"]:active:not(:disabled),
+.till-key-op[data-op="minus"]:active:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hue-violet) 55%, var(--color-ink));
+  background: linear-gradient(var(--tint-violet-strong), var(--tint-violet-strong)), var(--color-surface);
+  box-shadow: var(--glow-violet-strong);
+}
+
+.till-key[data-key="back"]:active:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hue-red) 55%, var(--color-ink));
+  background: linear-gradient(var(--tint-red-strong), var(--tint-red-strong)), var(--color-surface);
+  box-shadow: var(--glow-red-strong);
+}
+
+.till-key-op[data-op="clear"]:active:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hue-amber) 55%, var(--color-ink));
+  background: linear-gradient(var(--tint-amber-strong), var(--tint-amber-strong)), var(--color-surface);
+  box-shadow: var(--glow-amber-strong);
+}
+
+.till-key:disabled {
+  border-color: var(--color-line);
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
+/* Pay and the other primary controls: blue family */
+.till-btn-go:not(:disabled) {
+  box-shadow: var(--glow-blue-xl);
+}
+
+.till-btn-go:active:not(:disabled) {
+  background: var(--till-go-hover);
+  box-shadow: var(--glow-blue-xl), var(--glow-blue-strong);
+}
+
+.till-tab[data-active],
+.till-newsale,
+.till-method[aria-current="true"],
+.till-note {
+  box-shadow: var(--glow-blue);
+}
+
+.till-tab[data-active] {
+  border-color: var(--color-accent-line);
+  box-shadow: var(--glow-blue-strong);
+}
+
+.till-newsale:active,
+.till-note:active:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hue-blue) 55%, var(--color-ink));
+  box-shadow: var(--glow-blue-strong);
+}
+
+.till-note:first-child {
+  box-shadow: var(--glow-blue-xl);
+}
+
+.till-row[data-selected] .till-row-btn {
+  box-shadow: var(--glow-blue);
 }
 
 /* Mono voice: counts, headers, tab sub-lines and the numbers of the ticket table. */

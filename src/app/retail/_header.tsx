@@ -4,6 +4,7 @@ import type { NavId } from "@/packs";
 import type { ProductBrand } from "@/packs/brand";
 import { BranchIcon, CartIcon, PackageIcon, SignOutIcon, StockIcon, StoreIcon, SwitchIcon, TerminalIcon, UserIcon } from "../_ui/icons";
 import { LocaleSwitcher } from "../_ui/locale-switcher";
+import { ThemeSwitch } from "../_ui/theme-switch";
 import { Wordmark } from "../_ui/wordmark";
 import { signOut } from "../session-actions";
 
@@ -43,6 +44,7 @@ export function ShellHeader({ locale, t, business, branch, terminal, user, produ
         </div>
         <div className="bar-actions">
           <LocaleSwitcher locale={locale} label={t.locale.label} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} />
+          <ThemeSwitch labels={t.theme} />
           {nav.map((item) => {
             const Icon = NAV_ICONS[item.id] ?? PackageIcon;
             return (

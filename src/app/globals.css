@@ -13,6 +13,22 @@ html {
   text-size-adjust: 100%;
 }
 
+html {
+  scrollbar-color: var(--color-scroll) transparent;
+  scrollbar-width: thin;
+}
+
+/* Browser autofill paints its own light field: keep it on the dark surface. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 100vmax var(--color-panel) inset;
+  -webkit-text-fill-color: var(--color-ink);
+  caret-color: var(--color-ink);
+}
+
 body {
   margin: 0;
   min-height: 100dvh;
@@ -333,13 +349,18 @@ textarea {
 }
 
 .btn-primary {
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
+  background: var(--color-brand);
+  color: var(--color-on-fill);
+  box-shadow: var(--glow-blue-xl);
+}
+
+.btn-primary:disabled {
+  box-shadow: none;
 }
 
 .btn-primary:hover {
-  background: var(--color-accent-hover);
-  color: var(--color-accent-ink);
+  background: var(--color-brand-hover);
+  color: var(--color-on-fill);
 }
 
 .btn-secondary {
@@ -1594,9 +1615,9 @@ textarea.input {
 
 .btn-danger-solid,
 .btn-danger-solid:hover {
-  border-color: var(--color-danger);
-  background: var(--color-danger);
-  color: var(--color-surface);
+  border-color: var(--color-danger-fill);
+  background: var(--color-danger-fill);
+  color: var(--color-on-fill);
 }
 
 .confirm {
@@ -2931,7 +2952,7 @@ textarea.input {
   inset: 30% 12%;
   border: 2px solid var(--color-bar-ink);
   border-radius: var(--radius-sm);
-  box-shadow: 0 0 0 100vmax oklch(0 0 0 / 0.25);
+  box-shadow: 0 0 0 100vmax var(--color-scrim);
   pointer-events: none;
 }
 
@@ -3202,14 +3223,14 @@ textarea.input {
 }
 
 .shop-tile-go {
-  border-color: oklch(0.5 0.14 152);
-  background: oklch(0.5 0.14 152);
-  color: oklch(0.99 0.01 152);
+  border-color: var(--color-brand);
+  background: var(--color-brand);
+  color: var(--color-on-fill);
 }
 
 .shop-tile-go:hover {
-  border-color: oklch(0.44 0.13 152);
-  background: oklch(0.44 0.13 152);
+  border-color: var(--color-brand-hover);
+  background: var(--color-brand-hover);
 }
 
 .shop-tile-go .icon,
@@ -3257,4 +3278,96 @@ textarea.input {
 :root:lang(en) .badge {
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+/* Day / Night switch ---------------------------------------------------------------------------- */
+
+.theme-cycle,
+.theme-choice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.theme-cycle-face {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+:root[data-theme="system"] .theme-cycle-face[data-for="system"],
+:root[data-theme="day"] .theme-cycle-face[data-for="day"],
+:root[data-theme="night"] .theme-cycle-face[data-for="night"] {
+  display: inline-flex;
+}
+
+.theme-cycle .icon,
+.theme-choice .icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.theme-cycle:hover,
+.theme-choice:hover {
+  background: var(--color-accent-soft);
+}
+
+.theme-cycle:focus-visible,
+.theme-choice:focus-visible {
+  outline: 2px solid var(--color-accent-line);
+  outline-offset: 2px;
+}
+
+.theme-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.theme-choice {
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--color-ink-2);
+}
+
+.theme-choice[aria-checked="true"] {
+  border-color: var(--color-accent-line);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+/* On the dark top bar of the back-office screens the switch is a bar button with its word. */
+.bar-actions .theme-cycle {
+  color: var(--color-bar-ink);
+}
+
+@media (max-width: 40rem) {
+  .bar-actions .theme-cycle-face > span {
+    display: none;
+  }
+}
+
+/* No motion anywhere: the look of buzzify.me here is still. The pressed and focus states change colour only. */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
 }
