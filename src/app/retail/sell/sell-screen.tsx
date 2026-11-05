@@ -477,6 +477,7 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
     setUsdText("");
     setTarget("IQD");
     setCardMinor(0n);
+    setPane("box");
     setMode("pay");
   };
 
@@ -819,78 +820,8 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
           <ShiftCard locale={locale} t={t} currency={currency} shift={shift} />
           <ProductCard locale={locale} t={t} currency={currency} line={selLine} item={selInfo} />
           <ReceiptsCard locale={locale} t={t} currency={currency} receipts={receipts} />
-          <Calculator locale={locale} t={t} onToPaid={calcToPaid} />
-        </aside>
-      </div>
-
-      <div className="ot-bar" role="group" aria-label={one.paneBox}>
-        <button type="button" aria-pressed={pane === "sell"} onClick={() => setPane("sell")} data-testid="pane-sell">
-          {one.paneSell}
-        </button>
-        <button type="button" aria-pressed={pane === "box"} onClick={() => setPane("box")} data-testid="pane-box">
-          {one.paneBox}
-        </button>
-      </div>
-
-      {menuOpen ? (
-        <div className="till-layer" onClick={(e) => e.target === e.currentTarget && setMenuOpen(false)}>
-          <div className="till-menu" role="dialog" aria-modal="true" aria-labelledby="till-menu-title" ref={menuRef} data-testid="menu-panel">
-            <div className="till-menu-head">
-              <h2 id="till-menu-title">{tl.menu}</h2>
-              <button type="button" className="till-icon-btn" onClick={() => setMenuOpen(false)} aria-label={tl.closeMenu}>
-                <CloseIcon />
-              </button>
-            </div>
-            <TillNav t={t} variant="list" onNavigate={() => setMenuOpen(false)} />
-            <p className="till-menu-shift">{fill(s.shiftSince, { at: formatDateTime(locale, new Date(shift.openedAt)) })}</p>
-            <div className="till-menu-actions">
-              <button type="button" className="till-menu-item" onClick={closeActive} disabled={lines.length === 0} data-testid="cart-clear">
-                <TrashIcon />
-                {tl.clearCart}
-              </button>
-              {canVoidExpense ? (
-                <button
-                  type="button"
-                  className="till-menu-item"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setExpenseOpen(true);
-                  }}
-                  data-testid="fn-expense"
-                >
-                  <DrawerIcon />
-                  {t.expense.key}
-                </button>
-              ) : null}
-              <Link href="/retail/sell/close" className="till-menu-item" data-testid="open-close-shift">
-                <DrawerIcon />
-                {tl.closeShift}
-              </Link>
-            </div>
-            <div className="till-menu-foot">
-              <Link href="/retail/home?menu=1" className="till-menu-link" data-testid="open-shop-menu">
-                <GridIcon />
-                {tl.shopMenu}
-              </Link>
-              <LocaleSwitcher key={locale} locale={locale} label={tl.language} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} tone="light" />
-              <form action={signOut}>
-                <button type="submit" className="till-menu-link">
-                  <SignOutIcon />
-                  {t.common.signOut}
-                </button>
-              </form>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {expenseOpen ? (
-        <ExpensePanel locale={locale} t={t} currency={currency} shiftId={shift.id} canVoid={canVoidExpense} who={operator} onClose={() => setExpenseOpen(false)} />
-      ) : null}
-
-      {mode === "pay" ? (
-        <div className="till-layer till-layer-full">
-          <div className="till-paypad" role="dialog" aria-modal="true" aria-labelledby="pay-title" data-testid="pay-panel">
+          {mode === "pay" ? (
+<section className="ot-card ot-calc-card ot-paycard" aria-labelledby="pay-title" data-testid="pay-panel">
             <div className="till-pay-head">
               <h2 id="pay-title">{s.payScreen.title}</h2>
               <button type="button" className="till-btn till-btn-quiet" onClick={() => setMode("sell")} disabled={sending}>
@@ -995,9 +926,78 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
             <button type="button" className="till-btn till-btn-go till-pay till-pay-confirm" onClick={() => void confirm()} disabled={!pay.ready || sending} aria-busy={sending} data-testid="pay-confirm">
               {sending ? s.payScreen.sending : s.payScreen.confirm}
             </button>
+          </section>
+          ) : (
+            <Calculator locale={locale} t={t} onToPaid={calcToPaid} />
+          )}
+        </aside>
+      </div>
+
+      <div className="ot-bar" role="group" aria-label={one.paneBox}>
+        <button type="button" aria-pressed={pane === "sell"} onClick={() => setPane("sell")} data-testid="pane-sell">
+          {one.paneSell}
+        </button>
+        <button type="button" aria-pressed={pane === "box"} onClick={() => setPane("box")} data-testid="pane-box">
+          {one.paneBox}
+        </button>
+      </div>
+
+      {menuOpen ? (
+        <div className="till-layer" onClick={(e) => e.target === e.currentTarget && setMenuOpen(false)}>
+          <div className="till-menu" role="dialog" aria-modal="true" aria-labelledby="till-menu-title" ref={menuRef} data-testid="menu-panel">
+            <div className="till-menu-head">
+              <h2 id="till-menu-title">{tl.menu}</h2>
+              <button type="button" className="till-icon-btn" onClick={() => setMenuOpen(false)} aria-label={tl.closeMenu}>
+                <CloseIcon />
+              </button>
+            </div>
+            <TillNav t={t} variant="list" onNavigate={() => setMenuOpen(false)} />
+            <p className="till-menu-shift">{fill(s.shiftSince, { at: formatDateTime(locale, new Date(shift.openedAt)) })}</p>
+            <div className="till-menu-actions">
+              <button type="button" className="till-menu-item" onClick={closeActive} disabled={lines.length === 0} data-testid="cart-clear">
+                <TrashIcon />
+                {tl.clearCart}
+              </button>
+              {canVoidExpense ? (
+                <button
+                  type="button"
+                  className="till-menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setExpenseOpen(true);
+                  }}
+                  data-testid="fn-expense"
+                >
+                  <DrawerIcon />
+                  {t.expense.key}
+                </button>
+              ) : null}
+              <Link href="/retail/sell/close" className="till-menu-item" data-testid="open-close-shift">
+                <DrawerIcon />
+                {tl.closeShift}
+              </Link>
+            </div>
+            <div className="till-menu-foot">
+              <Link href="/retail/home?menu=1" className="till-menu-link" data-testid="open-shop-menu">
+                <GridIcon />
+                {tl.shopMenu}
+              </Link>
+              <LocaleSwitcher key={locale} locale={locale} label={tl.language} names={{ ar: t.locale.ar, ckb: t.locale.ckb, en: t.locale.en }} tone="light" />
+              <form action={signOut}>
+                <button type="submit" className="till-menu-link">
+                  <SignOutIcon />
+                  {t.common.signOut}
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       ) : null}
+
+      {expenseOpen ? (
+        <ExpensePanel locale={locale} t={t} currency={currency} shiftId={shift.id} canVoid={canVoidExpense} who={operator} onClose={() => setExpenseOpen(false)} />
+      ) : null}
+
     </div>
   );
 }
