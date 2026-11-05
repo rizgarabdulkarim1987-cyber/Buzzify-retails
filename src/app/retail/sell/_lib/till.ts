@@ -29,50 +29,8 @@ export function tileInitial(name: string): string {
   return first.toLocaleUpperCase();
 }
 
-export type CategoryIconKind = "grain" | "can" | "cup" | "bottle" | "milk" | "candy" | "spray" | "paper" | "leaf" | "meat" | "bread" | "shirt" | "plug" | "box";
-
-/** Words that say what a category sells (Arabic, Sorani and English), in the order they are tried. */
-const ICON_WORDS: [CategoryIconKind, RegExp][] = [
-  ["milk", /ألبان|لبن|حليب|جبن|شير|پەنیر|دۆ|dairy|milk|cheese/i],
-  ["cup", /شاي|قهوة|چا|قاوە|tea|coffee/i],
-  ["bottle", /مشروب|عصير|ماء|مياه|خواردنەوە|ئاو|drink|beverage|juice|water|soda/i],
-  ["candy", /حلوي|وجبات|شوكولا|بسكويت|سناك|شیرینی|شەکرلەمە|snack|sweet|candy|biscuit|chocolate/i],
-  ["spray", /منظف|تنظيف|صابون|شامبو|عناية|پاککەرەوە|پاک|clean|detergent|soap|care|hygiene/i],
-  ["paper", /ورق|مناديل|پەڕۆ|کاغەز|paper|tissue/i],
-  ["can", /معلب|کانزا|تێن|canned|tin/i],
-  ["leaf", /خضار|فواك|سلق|سەوزە|میوە|fruit|vegetable|produce|fresh/i],
-  ["meat", /لحم|دجاج|سمك|مجمد|گۆشت|مریشک|ماسی|meat|chicken|fish|frozen/i],
-  ["bread", /خبز|مخبوز|نان|bread|bakery/i],
-  ["shirt", /ملابس|قميص|حذاء|أحذية|جلد|جل و بەرگ|پۆشاک|cloth|shirt|shoe|wear|fashion/i],
-  ["plug", /إلكترون|كهرب|هاتف|جوال|شاحن|ئەلیکترۆن|مۆبایل|electr|phone|cable|charger|device/i],
-  ["grain", /غذائ|رز|أرز|سكر|طحين|زيت|بقول|خۆراک|برنج|food|grocery|rice|sugar|flour|oil/i],
-];
-
-/** The picture a category shows on its tiles: the first kind whose words its name holds, else a plain box. */
-export function categoryIcon(name: string | null | undefined): CategoryIconKind {
-  if (!name) return "box";
-  for (const [kind, words] of ICON_WORDS) if (words.test(name)) return kind;
-  return "box";
-}
-
 /** "12" for twelve digits, a CSS custom property the total's font size divides the box width by. */
 export const textLength = (text: string) => [...text].length;
-
-/**
- * The letters a tile without a photo shows: the first letter of each of the first two words (so a
- * word is never cut and Arabic letters never join across words), the Arabic article "ال" skipped,
- * words that start with a digit or a symbol ignored. One word, or none with a letter, gives one
- * letter (see tileInitial).
- */
-export function tileInitials(name: string): string[] {
-  const words = name
-    .trim()
-    .split(/\s+/)
-    .map((w) => (/^ال\p{L}{2,}/u.test(w) ? w.slice(2) : w))
-    .filter((w) => /^\p{L}/u.test(w));
-  if (words.length < 2) return [tileInitial(name)];
-  return words.slice(0, 2).map((w) => [...w][0]!.toLocaleUpperCase());
-}
 
 export type NumpadKey = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "000" | "." | "back" | "clear";
 

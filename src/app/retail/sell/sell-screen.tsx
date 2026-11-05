@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, pickName } from "../../_lib/format";
 import { CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, PauseIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon } from "../../_ui/icons";
@@ -35,9 +35,10 @@ import {
   type SellItemDto,
   type ShiftDto,
 } from "./_lib/cart";
-import { CatIcon } from "./_lib/cat-icons";
-import { categoryIcon, categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, textLength, type CategoryIconKind, type NumpadKey } from "./_lib/till";
+import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, textLength, type NumpadKey } from "./_lib/till";
 import { CartLineRow, Numpad, Receipt, Tile, entryText, localQuantity, money } from "./_lib/views";
+import { TillNav } from "./till-nav";
+import { DotsIcon } from "./_lib/nav-icons";
 
 type Props = {
   locale: Locale;
@@ -100,32 +101,11 @@ const subscribeOnline = (onChange: () => void) => {
   };
 };
 
-/**
- * Tells the product grid how many rows it holds (--rows), so a small category's tiles grow to fill
- * the screen (up to a cap) instead of leaving half of it empty, and a big one scrolls.
- */
-function useGridRows(count: number) {
-  const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => {
-      const cols = getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean).length || 1;
-      el.style.setProperty("--rows", String(Math.max(1, Math.ceil(count / cols))));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [count]);
-  return ref;
-}
-
-type BoardTileProps = { locale: Locale; t: Messages; item: SellItemDto; tone: number | null; kind: CategoryIconKind | null; qty: number; onAdd: (item: SellItemDto) => void };
+type BoardTileProps = { locale: Locale; t: Messages; item: SellItemDto; tone: number | null; qty: number; onAdd: (item: SellItemDto) => void };
 
 /** A tile that re-renders only when its own item, colour or cart quantity changes (hundreds of them stay quick). */
-const BoardTile = memo(function BoardTile({ locale, t, item, tone, kind, qty, onAdd }: BoardTileProps) {
-  return <Tile locale={locale} t={t} item={item} tone={tone} kind={kind} qty={qty} onAdd={() => onAdd(item)} />;
+const BoardTile = memo(function BoardTile({ locale, t, item, tone, qty, onAdd }: BoardTileProps) {
+  return <Tile locale={locale} t={t} item={item} tone={tone} qty={qty} onAdd={() => onAdd(item)} />;
 });
 
 const SKELETON_TILES = Array.from({ length: 12 }, (_, i) => i);
@@ -172,7 +152,8 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const [switching, setSwitching] = useState(false);
-  const [armClear, setArmClear] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const [receipt, setReceipt] = useState<ReceiptDto | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -190,10 +171,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const toneOf = useCallback((id: string | null) => categoryTone(categories, id), [categories]);
   const qtyLine = qtyFor ? (lines.find((l) => l.key === qtyFor) ?? null) : null;
   const m = (v: bigint | string) => money(ctx, currency, v);
-  const kindOf = useMemo(
-    () => new Map(categories.map((c) => [c.id, categoryIcon(`${c.nameAr} ${c.nameCkb ?? ""} ${c.nameEn ?? ""}`)] as const)),
-    [categories],
-  );
   const inCart = useMemo(() => {
     const q = new Map<string, number>();
     for (const l of lines) {
@@ -238,8 +215,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     }, 300);
     return () => window.clearTimeout(id);
   }, [query, fetchItems]);
-
-  const gridRef = useGridRows(query.trim() !== "" && results !== null ? results.length : browse.items.length);
 
   const overlay = mode !== "sell" || menuOpen || qtyFor !== null;
 
@@ -316,6 +291,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   // Menu ---------------------------------------------------------------------------------------
 
   const hold = () => {
+    setMoreOpen(false);
     if (lines.length === 0) return;
     writeHeld(heldKey, holdCart(held, lines, newKey(), new Date()));
     setLines([]);
@@ -332,22 +308,27 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   };
 
   const clearCart = () => {
+    setMoreOpen(false);
     setLines([]);
     setMenuOpen(false);
-    setArmClear(false);
   };
 
-  // The quick Clear button asks twice: a second tap within three seconds empties the cart.
-  const clearQuick = () => {
-    if (lines.length === 0) return;
-    if (armClear) return clearCart();
-    setArmClear(true);
-  };
+  // The cart's one small actions menu closes on Escape or a tap anywhere else.
   useEffect(() => {
-    if (!armClear) return;
-    const id = window.setTimeout(() => setArmClear(false), 3000);
-    return () => window.clearTimeout(id);
-  }, [armClear]);
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [moreOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -561,6 +542,8 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
         {announce}
       </p>
 
+      <TillNav t={t} variant="rail" />
+
       <header className="till-top">
         <div className="till-top-id">
           <strong className="truncate" title={business}>
@@ -606,7 +589,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
       <nav className="till-cats" aria-label={s.categories}>
         <button type="button" className="till-cat" data-tone="all" aria-pressed={category === null && !searching} onClick={() => void pickCategory(null)} data-testid="sell-cat-all">
-          <GridIcon />
           <span>{s.all}</span>
         </button>
         {categories.map((c) => (
@@ -619,7 +601,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
             onClick={() => void pickCategory(c.id)}
             data-testid="sell-cat"
           >
-            <CatIcon kind={kindOf.get(c.id) ?? "box"} />
+            <i className="till-dot" aria-hidden="true" />
             <span>{pickName(locale, c)}</span>
           </button>
         ))}
@@ -645,7 +627,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
             {searching ? null : <span>{s.noItemsBody}</span>}
           </div>
         ) : (
-          <div className="till-tiles" ref={gridRef} data-testid="sell-tiles">
+          <div className="till-tiles" data-testid="sell-tiles">
             {shown.map((it) => {
               const k = `${it.variantId}:${it.unitId}`;
               return (
@@ -655,7 +637,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                   t={t}
                   item={it}
                   tone={toneOf(it.categoryId)}
-                  kind={it.categoryId ? (kindOf.get(it.categoryId) ?? null) : null}
                   qty={inCart.get(k) ?? 0}
                   onAdd={add}
                 />
@@ -677,6 +658,23 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
             {s.cart}
             {count > 0 ? <span className="till-count">{formatNumber(locale, count)}</span> : null}
           </h2>
+          <div className="till-more-wrap" ref={moreRef}>
+            <button type="button" className="till-icon-btn till-more-btn" onClick={() => setMoreOpen((v) => !v)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={tl.cartActions} data-testid="cart-more">
+              <DotsIcon />
+            </button>
+            {moreOpen ? (
+              <div className="till-popover" role="menu" data-testid="cart-more-menu">
+                <button type="button" role="menuitem" className="till-pop-item" onClick={hold} disabled={lines.length === 0} data-testid="cart-hold-quick">
+                  <PauseIcon />
+                  {tl.holdCart}
+                </button>
+                <button type="button" role="menuitem" className="till-pop-item till-pop-danger" onClick={clearCart} disabled={lines.length === 0} data-testid="cart-clear-quick">
+                  <TrashIcon />
+                  {tl.clearCart}
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button type="button" className="till-icon-btn till-sheet-close" onClick={() => setCartOpen(false)} aria-label={s.items}>
             <CloseIcon />
           </button>
@@ -691,16 +689,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
             <strong data-testid="cart-total" style={lenStyle(totalText)}>
               {totalText}
             </strong>
-          </div>
-          <div className="till-foot-actions">
-            <button type="button" className="till-btn till-btn-quiet" onClick={hold} disabled={lines.length === 0} data-testid="cart-hold-quick">
-              <PauseIcon />
-              {tl.holdShort}
-            </button>
-            <button type="button" className="till-btn till-btn-quiet till-clear" data-armed={armClear || undefined} onClick={clearQuick} disabled={lines.length === 0} data-testid="cart-clear-quick">
-              <TrashIcon />
-              {armClear ? tl.clearCart : tl.clearShort}
-            </button>
           </div>
           <button type="button" className="till-btn till-btn-go till-pay" onClick={openPay} disabled={lines.length === 0} data-testid="cart-pay">
             {s.pay}
@@ -728,6 +716,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 <CloseIcon />
               </button>
             </div>
+            <TillNav t={t} variant="list" onNavigate={() => setMenuOpen(false)} />
             <p className="till-menu-shift">{fill(s.shiftSince, { at: formatDateTime(locale, new Date(shift.openedAt)) })}</p>
             <div className="till-menu-actions">
               <button type="button" className="till-menu-item" onClick={hold} disabled={lines.length === 0} data-testid="cart-hold">
@@ -858,9 +847,9 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
               <div className="till-pay-keys">
                 <div className="till-notes">
                   {quickAmounts(total > cardMinor ? total - cardMinor : 0n, currency).map((v, i) => (
-                    <button key={v.toString()} type="button" className="till-note" onClick={() => (i === 0 ? exact() : setCash(v))} disabled={sending} data-testid="pay-note">
+                    <button key={v.toString()} type="button" className="till-note" onClick={() => (i === 0 ? exact() : setCash(v))} disabled={sending} style={lenStyle(m(v))} data-testid="pay-note">
                       {i === 0 ? <span className="till-note-tag">{tl.exact}</span> : null}
-                      {m(v)}
+                      <span className="till-note-amount">{m(v)}</span>
                     </button>
                   ))}
                 </div>

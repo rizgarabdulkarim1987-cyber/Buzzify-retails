@@ -7,6 +7,7 @@ export default async function Loading() {
   return (
     <div className="till-app" role="status" aria-busy="true" data-testid="till-loading">
       <span className="visually-hidden">{t.common.loading}</span>
+      <nav className="till-nav" aria-hidden="true" />
       <header className="till-top" aria-hidden="true">
         <span className="till-skel-bar" />
       </header>

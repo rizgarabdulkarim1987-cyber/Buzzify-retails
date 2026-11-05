@@ -31,7 +31,9 @@ import {
   type ShiftDto,
 } from "../../src/app/retail/sell/_lib/cart";
 import { CartLineRow, Numpad, PaySummary, Receipt, ShiftSummaryView, Tile, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
-import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, tileInitials, categoryIcon, textLength, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
+import { offenders } from "../helpers/own-words";
+import { TillNav } from "../../src/app/retail/sell/till-nav";
+import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, textLength, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
 
@@ -195,51 +197,26 @@ describe("the numpad and the tiles", () => {
   });
 });
 
-describe("till v3: category pictures, tile letters, cart count on a tile", () => {
+describe("till v3: compact tiles and the shop frame", () => {
   const ctx = { locale: "ar" as const, t: ar };
-  it("a category's picture comes from the words in its name (Arabic, Sorani, English), else a plain box", () => {
-    expect(categoryIcon("ألبان")).toBe("milk");
-    expect(categoryIcon("شاي وقهوة")).toBe("cup");
-    expect(categoryIcon("مشروبات")).toBe("bottle");
-    expect(categoryIcon("حلويات ووجبات")).toBe("candy");
-    expect(categoryIcon("منظفات")).toBe("spray");
-    expect(categoryIcon("ورقيات")).toBe("paper");
-    expect(categoryIcon("معلبات")).toBe("can");
-    expect(categoryIcon("مواد غذائية")).toBe("grain");
-    expect(categoryIcon("Dairy & Cheese")).toBe("milk");
-    expect(categoryIcon("Cleaning")).toBe("spray");
-    expect(categoryIcon("Electronics")).toBe("plug");
-    expect(categoryIcon("ملابس")).toBe("shirt");
-    expect(categoryIcon("شتی تر")).toBe("box");
-    expect(categoryIcon("")).toBe("box");
-    expect(categoryIcon(null)).toBe("box");
-  });
-
-  it("tile letters: the first letter of each of the first two words, the article skipped, never a cut word", () => {
-    expect(tileInitials("بسكويت ماري")).toEqual(["ب", "م"]);
-    expect(tileInitials("الرز البسمتي ٥ كغم")).toEqual(["ر", "ب"]);
-    expect(tileInitials("Sugar fine 1kg")).toEqual(["S", "F"]);
-    expect(tileInitials("سكر")).toEqual(["س"]);
-    expect(tileInitials("٥ كغم رز")).toEqual(["ك", "ر"]);
-    expect(tileInitials("123")).toEqual(["1"]);
-    expect(tileInitials("")).toEqual([""]);
-  });
 
   it("textLength counts characters, not UTF-16 units (the total's font size divides by it)", () => {
     expect(textLength("٩٬٩٩٩٬٩٩٩٬٩٩٩ د.ع")).toBe(17);
     expect(textLength("😀a")).toBe(2);
   });
 
-  it("a tile shows how many are in the cart, a category picture, and a two-letter slot", () => {
-    const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "بسكويت ماري" }), tone: 1, kind: "candy", qty: 3 }));
+  it("a tile is text first: name, price, a tone bar, the cart count; no picture area, no big letter", () => {
+    const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "بسكويت ماري" }), tone: 1, qty: 3 }));
+    expect(out).toContain('data-tone="1"');
     expect(out).toContain('data-incart="true"');
     expect(out).toContain('data-testid="tile-qty"');
-    expect(out).toContain("<span>ب</span><span>م</span>");
-    expect(out).toContain("till-tile-art");
+    expect(out).toContain("till-tile-name");
+    expect(out).not.toContain("till-tile-media");
+    expect(out).not.toContain("till-tile-initial");
+    expect(out).not.toContain("<svg");
     const plain = html(createElement(Tile, { ...ctx, item: item() }));
     expect(plain).not.toContain("tile-qty");
     expect(plain).not.toContain("data-incart");
-    expect(plain).not.toContain("till-tile-art");
   });
 
   it("a very large price keeps its whole text and tells the box its length", () => {
@@ -248,10 +225,23 @@ describe("till v3: category pictures, tile letters, cart count on a tile", () =>
     expect(out).toMatch(/--len:\d+/);
   });
 
+  it("the shop frame links the screens that exist and shows the rest as soon, without links", () => {
+    const out = html(createElement(TillNav, { t: ar, variant: "rail" }));
+    for (const href of ["/retail/sell", "/retail/sell/close", "/retail/stock", "/retail/catalog", "/retail/setup"]) expect(out).toContain(`href="${href}"`);
+    expect(out).toContain('aria-current="page"');
+    for (const k of ["expenses", "suppliers", "customers", "reports"] as const) {
+      expect(out).toContain(ar.till.nav[k]);
+      expect(out).toMatch(new RegExp(`aria-disabled="true"[^>]*data-testid="nav-${k}"`));
+    }
+    expect((out.match(/<a /g) ?? []).length).toBe(5);
+    expect((out.match(/aria-disabled="true"/g) ?? []).length).toBe(4);
+  });
+
   it("the new till strings exist in the three languages and keep the words guard", () => {
     for (const t of [ar, ckb, en]) {
-      for (const k of ["offline", "quickQty", "holdShort", "clearShort"] as const) expect(t.till[k].length).toBeGreaterThan(1);
-      expect(JSON.stringify(t.till)).not.toMatch(/studio|core|restaurant|menus?|pharmac|cashier|كاشير|مطعم|صيدلي/i);
+      for (const k of ["offline", "quickQty", "cartActions"] as const) expect(t.till[k].length).toBeGreaterThan(1);
+      for (const v of Object.values(t.till.nav)) expect(v.length).toBeGreaterThan(1);
+      expect(offenders(t.till)).toEqual([]);
     }
   });
 });
@@ -288,10 +278,10 @@ describe("views", () => {
     expect(html(createElement(Tile, { ...ctx, item: item({ onHand: "0" }) }))).toContain(ar.sell.outOfStock);
   });
 
-  it("a tile carries its category tone and the name's first letter in the photo slot (the Arabic article skipped)", () => {
+  it("a tile carries its category tone (a bar in its colour) and no name letter", () => {
     const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "الرز" }), tone: 3 }));
     expect(out).toContain('data-tone="3"');
-    expect(out).toContain('aria-hidden="true">ر<');
+    expect(out).not.toContain("till-tile-initial");
     expect(html(createElement(Tile, { ...ctx, item: item() }))).not.toContain("data-tone");
   });
 
