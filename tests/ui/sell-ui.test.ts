@@ -30,6 +30,10 @@ import {
   type SellItemDto,
   type ShiftDto,
 } from "../../src/app/retail/sell/_lib/cart";
+import { ACCENT, CARD, DIM, PALETTE, accentFor, contrast } from "../../src/app/retail/sell/_lib/category-accent";
+import { hasGlyph } from "../../src/app/retail/sell/_lib/category-icons";
+import { STANDARD_CATEGORY_KEYS, categoryKind } from "../../src/app/retail/sell/_lib/category-kind";
+import { CategoryTile } from "../../src/app/retail/sell/_lib/category-tile";
 import { Numpad, PaySummary, Receipt, ShiftSummaryView, TicketPad, TicketRow, Tile, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
 import { offenders } from "../helpers/own-words";
 import { TillNav } from "../../src/app/retail/sell/till-nav";
@@ -239,7 +243,7 @@ describe("till v3: compact tiles and the shop frame", () => {
 
   it("the new till strings exist in the three languages and keep the words guard", () => {
     for (const t of [ar, ckb, en]) {
-      for (const k of ["offline", "quickQty", "cartActions", "colItem", "colQty", "colPrice", "ticket", "fnHold", "fnVoid", "fnClear", "fnCustomer", "fnNote", "productsTab", "backToTicket", "padShow", "padHide", "methods"] as const) expect(t.till[k].length).toBeGreaterThan(1);
+      for (const k of ["offline", "quickQty", "cartActions", "colItem", "colQty", "colPrice", "ticket", "fnVoid", "fnClear", "fnCustomer", "fnNote", "productsTab", "backToTicket", "padShow", "padHide", "methods", "scanPlaceholder", "scanLabel", "scanNotFound", "allCategories"] as const) expect(t.till[k].length).toBeGreaterThan(1);
       for (const v of Object.values(t.till.nav)) expect(v.length).toBeGreaterThan(1);
       expect(offenders(t.till)).toEqual([]);
     }
@@ -276,6 +280,64 @@ describe("views", () => {
     expect(off).toContain("disabled");
     expect(off).toContain(ar.sell.noPrice);
     expect(html(createElement(Tile, { ...ctx, item: item({ onHand: "0" }) }))).toContain(ar.sell.outOfStock);
+  });
+
+  it("a category's picture is chosen from the words of its name (ar, ckb, en), with a neutral fallback", () => {
+    const cases: [string, string][] = [
+      ["ألبان", "dairy"], ["ألبان وأجبان", "dairy"], ["Dairy & Eggs", "dairy"], ["مخبوزات", "bakery"], ["خضار وفواكه", "fruit_veg"],
+      ["لحوم ودجاج", "meat_poultry"], ["أسماك ومأكولات بحرية", "fish"], ["مجمدات", "frozen"], ["مواد غذائية أساسية", "staples"],
+      ["معلبات", "canned"], ["بهارات وتوابل", "spices"], ["إفطار وحبوب", "breakfast"], ["وجبات خفيفة", "snacks"], ["حلويات وسكاكر", "sweets"],
+      ["حلويات ووجبات", "sweets"], ["شاي وقهوة", "tea_coffee"], ["مشروبات", "beverages"], ["منظفات", "cleaning"], ["عناية شخصية", "personal_care"],
+      ["أطفال", "baby"], ["مستلزمات الحيوانات الأليفة", "pet"], ["أدوات منزلية", "household"], ["قرطاسية وألعاب", "stationery"], ["ورقيات", "stationery"],
+      ["صحة وفيتامينات", "health"], ["تبغ وكبريت", "tobacco"], ["Bakery", "bakery"], ["Frozen food", "frozen"], ["أشياء متفرقة", "other"], ["", "other"],
+    ];
+    for (const [name, kind] of cases) expect(categoryKind(name), name).toBe(kind);
+    expect(categoryKind(null, undefined, "Fresh fish")).toBe("fish");
+  });
+
+  it("every standard department key has a glyph and a fixed accent (23 keys); All is white", () => {
+    expect(STANDARD_CATEGORY_KEYS).toHaveLength(23);
+    for (const key of STANDARD_CATEGORY_KEYS) {
+      expect(hasGlyph(key), key).toBe(true);
+      if (key !== "other") expect(ACCENT[key], key).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    expect(hasGlyph("all")).toBe(true);
+    expect(ACCENT.all).toBe("#ffffff");
+    expect(ACCENT.dairy).toBe(PALETTE.sky);
+    expect(accentFor("dairy", "any seed")).toBe(accentFor("dairy", "another seed"));
+  });
+
+  it("every accent reads on the near-black card at AA (4.5:1) and the dim ink does too", () => {
+    for (const [name, hex] of Object.entries({ ...PALETTE, all: ACCENT.all })) expect(contrast(hex, CARD), name).toBeGreaterThanOrEqual(4.5);
+    // The dim ink is white at 62%: blend it over the card before measuring.
+    const a = Number(/([\d.]+)\)$/.exec(DIM)![1]);
+    const blend = [1, 3, 5].map((i) => Math.round(255 * a + parseInt(CARD.slice(i, i + 2), 16) * (1 - a)).toString(16).padStart(2, "0")).join("");
+    expect(contrast(`#${blend}`, CARD)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#ffffff", CARD)).toBeGreaterThanOrEqual(15);
+  });
+
+  it("an owner-made category gets a stable accent from the palette (same name, same colour)", () => {
+    const palette = new Set<string>(Object.values(PALETTE));
+    const seeds = ["قسم جديد", "My shelf", "بەشی نوێ", "x", "", "Cat 7"];
+    for (const seed of seeds) {
+      expect(palette.has(accentFor("other", seed)), seed).toBe(true);
+      expect(accentFor("other", seed)).toBe(accentFor("other", seed));
+    }
+    expect(new Set(seeds.map((x) => accentFor("other", x))).size).toBeGreaterThan(2);
+  });
+
+  it("a category tile is a dark card: glyph, index, name, item count and an Open label; no picture, no price", () => {
+    const out = html(createElement(CategoryTile, { name: "ألبان", kind: "dairy", accent: ACCENT.dairy, index: "01", meta: "24 مادة", action: "فتح" }));
+    expect(out).toContain("--accent:#60a5fa");
+    expect(out).toContain("till-cattile-glyph");
+    expect(out).toMatch(/till-cattile-index[^>]*>01</);
+    expect(out).toContain("ألبان");
+    expect(out).toContain("24 مادة");
+    expect(out).toContain("till-cattile-action");
+    expect(out.indexOf("till-cattile-name")).toBeLessThan(out.indexOf("till-cattile-meta"));
+    expect(out.indexOf("till-cattile-meta")).toBeLessThan(out.indexOf("till-cattile-action"));
+    expect(out).not.toContain("<img");
+    expect(out).not.toContain("till-tile-price");
   });
 
   it("a ticket line is one selectable row: name, quantity, unit price and total", () => {

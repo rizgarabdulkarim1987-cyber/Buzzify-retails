@@ -70,7 +70,8 @@ body:has(.till-app) .shell-header {
 
 .till-btn:focus-visible,
 .till-icon-btn:focus-visible,
-.till-cat:focus-visible,
+.till-cattile:focus-visible,
+.till-crumb-back:focus-visible,
 .till-key:focus-visible,
 .till-note:focus-visible,
 .till-chip:focus-visible,
@@ -380,67 +381,184 @@ a.till-nav-item:hover {
 
 /* Categories: one row of small chips (it scrolls on a phone, wraps on a wide screen). --------------- */
 
-.till-cats {
-  grid-area: cats;
+/* The chosen one is filled with its colour, so it is clear at a glance and not only by colour (it is also bolder and ringed). */
+
+/* Departments as picture buttons; opening one shows its products under a breadcrumb. ---------------------- */
+
+.till-cattiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.75rem, 1fr));
+  gap: var(--space-3);
+  align-content: start;
+}
+
+/* The card: near-black, one accent (thin border + still glow), never animated. */
+.till-cattile {
+  --card: #05050f;
+  --dim: rgba(255, 255, 255, 0.62);
   display: flex;
+  flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
-  padding: var(--space-2) var(--gutter);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  border-block-end: 0;
-  background: var(--color-panel);
-}
-
-.till-cat {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex: none;
-  min-height: 2.25rem;
-  max-width: 12rem;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--color-line-strong);
-  border-radius: 999px;
-  background: var(--color-surface);
-  color: var(--color-ink);
+  min-height: 9.75rem;
+  padding: 1.125rem 1.125rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 72%, var(--card));
+  border-radius: 1rem;
+  background: var(--card);
+  color: #fff;
   font: inherit;
-  font-size: var(--t-b);
-  font-weight: 500;
-  line-height: var(--leading-tight);
-  text-align: center;
+  text-align: start;
   cursor: pointer;
   touch-action: manipulation;
-  transition: background-color var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
-  border-color: var(--color-line);
+  box-shadow: 0 0 1.25rem color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-.till-cat:active {
-  scale: 0.97;
+.till-cattile:active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  box-shadow: 0 0 1.5rem color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
-.till-cat span {
-  overflow: hidden;
+.till-cattile-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-block-end: auto;
+  padding-block-end: var(--space-3);
+}
+
+.till-cattile-glyph {
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  color: var(--accent);
+}
+
+.till-cattile-index {
+  color: var(--accent);
+  font-family: var(--font-tile-mono), ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 1;
+}
+
+.till-cattile-name {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-family: var(--font-grotesk), var(--font-ui);
+  font-size: 1.3125rem;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-wrap: balance;
   overflow-wrap: anywhere;
 }
 
-.till-cat:hover {
-  background: var(--color-surface);
+/* Latin type is set tight; Arabic and Kurdish keep their joins (no tracking) and a taller line. */
+:root:lang(en) .till-cattile-name {
+  line-height: 1.1;
+  letter-spacing: -0.025em;
 }
 
-/* The chosen one is filled with its colour, so it is clear at a glance and not only by colour (it is also bolder and ringed). */
-.till-cat[aria-pressed="true"] {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-surface);
+.till-cattile-meta {
+  color: var(--dim);
+  font-size: var(--t-b);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+
+.till-cattile-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+  color: var(--accent);
+  font-family: var(--font-tile-mono), ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+:root:lang(ar) .till-cattile-action,
+:root:lang(ckb) .till-cattile-action {
+  letter-spacing: 0;
+  font-size: 0.8125rem;
   font-weight: 600;
+  font-family: var(--font-ui);
 }
 
+.till-cattile-arrow {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.till-cattile-arrow:dir(rtl) {
+  transform: scaleX(-1);
+}
+
+/* Tablet portrait: the products side is narrow, so two slimmer cards fit per row. */
+@media (min-width: 48rem) and (max-width: 63.99rem) {
+  .till-cattiles {
+    grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  }
+
+  .till-cattile {
+    padding-inline: 0.875rem;
+  }
+}
+
+.till-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--color-line);
+  background: var(--color-surface);
+  font-size: var(--t-n);
+}
+
+.till-crumb-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  min-height: 2.5rem;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.till-crumb-back:hover {
+  background: var(--color-panel);
+}
+
+.till-crumb-back .icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.till-crumb-sep {
+  color: var(--color-ink-3);
+}
+
+.till-crumb strong {
+  min-width: 0;
+  font-weight: 700;
+}
 
 /* Product grid ---------------------------------------------------------------------------------- */
 
@@ -586,19 +704,6 @@ a.till-nav-item:hover {
   background: var(--color-skeleton);
 }
 
-.till-cat-skel {
-  min-width: 6rem;
-  border-color: transparent;
-  background: var(--color-skeleton);
-  animation: till-shimmer-flat 1.2s ease-in-out infinite alternate;
-}
-
-@keyframes till-shimmer-flat {
-  to {
-    opacity: 0.5;
-  }
-}
-
 .till-more {
   justify-self: center;
   align-self: center;
@@ -675,6 +780,237 @@ a.till-nav-item:hover {
   font-size: var(--t-s);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* Parallel sales: one tab per open ticket, a big New sale button; on a narrow ticket a compact switcher. */
+.till-tabs,
+.till-switch {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--color-line);
+  background: var(--color-panel);
+}
+
+.till-switch {
+  display: none;
+}
+
+.till-tabs-list {
+  display: flex;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.till-tab,
+.till-switch-btn {
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  flex: none;
+  min-width: 7.5rem;
+  min-height: 3rem;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.till-tab strong,
+.till-switch-btn strong {
+  font-size: var(--t-b);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.till-tab small,
+.till-switch-btn small {
+  color: var(--color-ink-2);
+  font-size: var(--t-s);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.till-tab:hover {
+  background: var(--color-accent-soft);
+}
+
+.till-tab[data-active] {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-surface);
+}
+
+.till-tab[data-active] small {
+  color: inherit;
+  opacity: 0.9;
+}
+
+.till-switch-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.till-newsale {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: none;
+  min-height: 3rem;
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font: inherit;
+  font-size: var(--t-b);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.till-newsale:hover {
+  background: var(--color-accent-soft);
+}
+
+.till-newsale:active {
+  transform: scale(0.98);
+}
+
+.till-newsale-wide {
+  width: 100%;
+}
+
+.till-tab:focus-visible,
+.till-switch-btn:focus-visible,
+.till-newsale:focus-visible,
+.till-sale:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.till-ticketmsg {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-warn-soft);
+  color: var(--color-ink);
+  font-size: var(--t-b);
+  font-weight: 600;
+}
+
+.till-sales {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.till-sale {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px var(--space-3);
+  width: 100%;
+  min-height: 3.5rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.till-sale span {
+  grid-column: 1;
+  color: var(--color-ink-2);
+  font-size: var(--t-s);
+}
+
+.till-sale b {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-variant-numeric: tabular-nums;
+}
+
+.till-sale[data-active] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/* The barcode field: full width at the top of the ticket, used all day. */
+.till-scan {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--color-line);
+}
+
+.till-scan > .icon {
+  position: absolute;
+  inset-inline-start: calc(var(--space-3) + var(--space-3));
+  width: 1.375rem;
+  height: 1.375rem;
+  color: var(--color-ink-2);
+  pointer-events: none;
+}
+
+.till-scan-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 3rem;
+  padding-inline: 2.75rem var(--space-3);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.till-scan-input::placeholder {
+  color: var(--color-ink-3);
+  font-size: var(--t-n);
+}
+
+.till-scan-input:focus {
+  border-color: var(--color-accent);
+  background: var(--color-surface);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.till-scan-input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.till-scan-miss {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: var(--t-b);
+  font-weight: 600;
 }
 
 .till-ticket > .till-offline,
@@ -925,7 +1261,7 @@ a.till-nav-item:hover {
 .till-fn {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -947,10 +1283,6 @@ a.till-nav-item:hover {
   text-align: center;
   cursor: pointer;
   touch-action: manipulation;
-}
-
-.till-fn-key:last-child {
-  grid-column: 1 / -1;
 }
 
 .till-fn-key .icon {
@@ -1019,14 +1351,18 @@ a.till-nav-item:hover {
 
 /* A narrow ticket (phone, tablet portrait): function keys in one row above the keypad; the keypad can fold away. */
 @container (max-width: 29.99rem) {
-  .till-fn {
-    order: -1;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    grid-template-rows: auto;
+  .till-tabs {
+    display: none;
   }
 
-  .till-fn-key:last-child {
-    grid-column: auto;
+  .till-switch {
+    display: flex;
+  }
+
+  .till-fn {
+    order: -1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: auto;
   }
 
   .till-fn-key {
@@ -1167,10 +1503,6 @@ a.till-nav-item:hover {
     display: none;
   }
 
-  .till-cats {
-    flex-wrap: wrap;
-    overflow: visible;
-  }
 }
 
 /* Wide: the ticket takes a little over half. */
@@ -2052,7 +2384,6 @@ body:has(.till-done) .shell-header {
 @media (prefers-reduced-motion: reduce) {
   .till-btn,
   .till-tile,
-  .till-cat,
   .till-key,
   .till-fn-key,
   .till-note {
@@ -2060,7 +2391,7 @@ body:has(.till-done) .shell-header {
   }
 
   .till-btn:active:not(:disabled),
-  .till-cat:active,
+  .till-newsale:active,
   .till-tile:active:not(:disabled),
   .till-fn-key:active:not(:disabled),
   .till-key:active:not(:disabled),

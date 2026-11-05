@@ -46,3 +46,9 @@ export const DotsIcon = () => (
     <circle cx="19" cy="12" r="1.25" />
   </Icon>
 );
+
+export const ChevronIcon = () => (
+  <Icon className="icon icon-flip">
+    <path d="M15 6l-6 6 6 6" />
+  </Icon>
+);

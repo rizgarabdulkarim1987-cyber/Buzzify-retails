@@ -4,7 +4,7 @@ import Link from "next/link";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, pickName } from "../../_lib/format";
-import { CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, MinusIcon, PackageIcon, PauseIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon, UserIcon } from "../../_ui/icons";
+import { BarcodeIcon, CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, MinusIcon, PackageIcon, PlusIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon, UserIcon } from "../../_ui/icons";
 import { LocaleSwitcher } from "../../_ui/locale-switcher";
 import { Notice } from "../../_ui/state";
 import { signOut } from "../../session-actions";
@@ -17,7 +17,6 @@ import {
   cardRest,
   cartCount,
   cartTotal,
-  holdCart,
   parseAmount,
   parseHeld,
   payState,
@@ -25,7 +24,6 @@ import {
   quickAmounts,
   removeLine,
   repriceLines,
-  resumeCart,
   setQuantity,
   stepLine,
   type CartLine,
@@ -36,8 +34,14 @@ import {
   type SellItemDto,
   type ShiftDto,
 } from "./_lib/cart";
+import { MAX_TICKETS, closeTicket, latestTicket, openTicket, orderTickets, saveTicket, ticketLines, ticketTotals, touchTicket } from "./_lib/tickets";
 import { keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, textLength, type NumpadKey } from "./_lib/till";
 import { Numpad, Receipt, TicketPad, TicketRow, Tile, entryText, money } from "./_lib/views";
+import { accentFor, ACCENT } from "./_lib/category-accent";
+import { categoryKind } from "./_lib/category-kind";
+import { CategoryTile } from "./_lib/category-tile";
+import { grotesk, mono } from "./_lib/tile-fonts";
+import { ChevronIcon } from "./_lib/nav-icons";
 import { TillNav } from "./till-nav";
 
 type Props = {
@@ -132,6 +136,8 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const tl = t.till;
   const [category, setCategory] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  /** The products side shows the department pictures until one is opened (or a name is searched). */
+  const [browsing, setBrowsing] = useState(false);
   /** The browsed page(s) of the chosen category; a search shows `results` instead. */
   const [browse, setBrowse] = useState<{ items: SellItemDto[]; more: boolean }>({ items: initialItems, more: initialItems.length >= pageSize });
   const [results, setResults] = useState<SellItemDto[] | null>(null);
@@ -140,6 +146,10 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const [lastKey, setLastKey] = useState<string | null>(null);
   const heldRaw = useSyncExternalStore(subscribeHeld, () => readHeldRaw(heldKey), () => null);
   const held = useMemo(() => parseHeld(heldRaw), [heldRaw]);
+  /** The sale being rung up; every open sale (this one included) is saved in the device store. */
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [ticketsOpen, setTicketsOpen] = useState(false);
+  const [ticketMsg, setTicketMsg] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("sell");
   const [menuOpen, setMenuOpen] = useState(false);
   /** The line the keypad edits, and the digits typed for it so far. */
@@ -158,6 +168,11 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const [receipt, setReceipt] = useState<ReceiptDto | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** The barcode field at the top of the ticket: scanners and typed codes. */
+  const codeRef = useRef<HTMLInputElement>(null);
+  const [code, setCode] = useState("");
+  const [codeMiss, setCodeMiss] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
   const linesRef = useRef<HTMLUListElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   /** The current attempt's key: kept across a network retry, dropped when the cart or the payment changes. */
@@ -223,8 +238,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (overlay || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || isTyping(e.target)) return;
-      if (searchRef.current && searchRef.current.offsetParent === null) setProductsOpen(true);
-      searchRef.current?.focus();
+      codeRef.current?.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -232,7 +246,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   // Back on the sale screen: the search box is ready for the scanner (not on touch, where it would pop the keyboard).
   useEffect(() => {
-    if (!overlay && finePointer()) searchRef.current?.focus({ preventScroll: true });
+    if (!overlay && finePointer()) codeRef.current?.focus({ preventScroll: true });
   }, [overlay]);
 
   // The line just touched stays in view in the cart.
@@ -257,6 +271,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   const pickCategory = async (id: string | null) => {
     setCategory(id);
+    setBrowsing(true);
     setQuery("");
     setResults(null);
     setSwitching(true);
@@ -268,6 +283,28 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const loadMore = async () => {
     const found = await fetchItems("", category, browse.items.length);
     if (found) setBrowse((b) => ({ items: [...b.items, ...found], more: found.length >= pageSize }));
+  };
+
+  /** Enter on the barcode field (a scanner ends with Enter): one hit goes into the ticket and the field clears; an unknown code says so. */
+  const onScan = async (e: FormEvent) => {
+    e.preventDefault();
+    const c = code.trim();
+    if (c === "" || scanning) return;
+    setScanning(true);
+    setCodeMiss(null);
+    try {
+      const r = await sellItemsAction({ query: c, categoryId: null, locationId, offset: 0 });
+      if (!r.ok) return setCodeMiss(failureMessage(t, r));
+      const hit = r.value.find((it) => it.matchedBarcode && it.priceMinor !== null);
+      if (!hit) return setCodeMiss(fill(tl.scanNotFound, { code: c }));
+      add(hit);
+      setCode("");
+    } catch {
+      setCodeMiss(s.failures.network);
+    } finally {
+      setScanning(false);
+      codeRef.current?.focus({ preventScroll: true });
+    }
   };
 
   const onSearch = async (e: FormEvent) => {
@@ -285,7 +322,17 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     setResults(found);
   };
 
+  const backToCategories = () => {
+    setBrowsing(false);
+    setCategory(null);
+    setQuery("");
+    setResults(null);
+    searchSeq.current++;
+    setLoading(false);
+  };
+
   const clearSearch = () => {
+    setBrowsing(false);
     setQuery("");
     setResults(null);
     searchSeq.current++;
@@ -295,27 +342,104 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   // Menu ---------------------------------------------------------------------------------------
 
-  const hold = () => {
-    if (lines.length === 0) return;
-    writeHeld(heldKey, holdCart(held, lines, newKey(), new Date()));
-    setLines([]);
+  // Parallel sales ------------------------------------------------------------------------------
+
+  /** Puts a ticket on the screen: its lines, a clean keypad and no leftover messages. */
+  const showTicket = (t: HeldCart | null) => {
+    const ls = t ? ticketLines(t) : [];
+    setActiveId(t?.id ?? null);
+    setLines(ls);
+    setSelKey(ls[ls.length - 1]?.key ?? null);
+    setLastKey(null);
+    setEntry("");
+    setArmClear(false);
+    setError(null);
+    setNotice(null);
+    setTicketMsg(null);
+    setCodeMiss(null);
+    setCode("");
+    setTicketsOpen(false);
     setMenuOpen(false);
+    setProductsOpen(false);
+    if (finePointer()) codeRef.current?.focus({ preventScroll: true });
   };
 
-  const resume = (id: string) => {
-    const r = resumeCart(held, id);
-    if (!r) return;
-    // The current cart, if any, is held in its place so nothing is lost.
-    writeHeld(heldKey, lines.length > 0 ? holdCart(r.held, lines, newKey(), new Date()) : r.held);
-    setLines(r.lines);
-    setMenuOpen(false);
+  const readStore = () => parseHeld(readHeldRaw(heldKey));
+
+  // On load: the sale worked on last comes back, or the first blank one opens.
+  /* eslint-disable react-hooks/set-state-in-effect -- the device store only exists in the browser: read once after mount */
+  useEffect(() => {
+    const store = readStore();
+    const last = latestTicket(store);
+    if (last) {
+      showTicket(last);
+      return;
+    }
+    const o = openTicket([], newKey(), new Date());
+    if (o) {
+      writeHeld(heldKey, o.store);
+      showTicket(o.ticket);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per device store
+  }, [heldKey]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Every change of the active sale is saved at once (a reload or a switch loses nothing).
+  useEffect(() => {
+    if (!activeId) return;
+    const cur = readStore();
+    const next = saveTicket(cur, activeId, lines, new Date());
+    if (next !== cur) writeHeld(heldKey, [...next]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- readStore only reads
+  }, [lines, activeId, heldKey]);
+
+  /** Leaves the active sale; a blank one left behind is dropped so empties never pile up. */
+  const leaveActive = (store: HeldCart[]) => (activeId && lines.length === 0 && store.length > 1 ? closeTicket(store, activeId) : store);
+
+  const newSale = () => {
+    if (lines.length === 0) {
+      setTicketsOpen(false);
+      if (finePointer()) codeRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    const cur = readStore();
+    const o = openTicket(cur, newKey(), new Date());
+    if (!o) {
+      setTicketsOpen(false);
+      setTicketMsg(fill(tl.ticketsLimit, { max: formatNumber(locale, MAX_TICKETS) }));
+      return;
+    }
+    writeHeld(heldKey, o.store);
+    showTicket(o.ticket);
+  };
+
+  const switchTo = (id: string) => {
+    if (id === activeId) return setTicketsOpen(false);
+    const cur = readStore();
+    const target = cur.find((h) => h.id === id);
+    if (!target) return;
+    writeHeld(heldKey, touchTicket(leaveActive(cur), id, new Date()));
+    showTicket(target);
+  };
+
+  /** Paid or voided: this sale's tab closes and the most recent other one (or a blank) comes up. */
+  const closeActive = () => {
+    const cur = readStore();
+    const rest = activeId ? closeTicket(cur, activeId) : cur;
+    const other = latestTicket(rest);
+    if (other) {
+      writeHeld(heldKey, rest);
+      return showTicket(other);
+    }
+    const o = openTicket(rest, newKey(), new Date());
+    if (o) {
+      writeHeld(heldKey, o.store);
+      showTicket(o.ticket);
+    }
   };
 
   const clearCart = () => {
-    setLines([]);
-    setEntry("");
-    setMenuOpen(false);
-    setArmClear(false);
+    closeActive();
   };
 
   // The Clear key asks twice: a second tap within three seconds empties the ticket.
@@ -408,8 +532,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
       });
       if (r.ok) {
         setReceipt(r.value);
-        setLines([]);
-        setEntry("");
+        closeActive();
         resetPay();
         setMode("receipt");
         return;
@@ -457,7 +580,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     return () => window.removeEventListener("keydown", onKey);
   }, [mode, sending, currency]);
 
-  const newSale = () => {
+  const afterReceipt = () => {
     setReceipt(null);
     setMode("sell");
     setNotice(null);
@@ -481,7 +604,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
           ) : null}
         </div>
         <div className="till-done-actions">
-          <button type="button" className="till-btn till-btn-go till-btn-xl" onClick={newSale} autoFocus data-testid="receipt-new">
+          <button type="button" className="till-btn till-btn-go till-btn-xl" onClick={afterReceipt} autoFocus data-testid="receipt-new">
             {s.receipt.newSale}
           </button>
           <button type="button" className="till-btn till-btn-quiet" onClick={() => window.print()} data-testid="receipt-print">
@@ -496,6 +619,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   const shown = query.trim() !== "" && results !== null ? results : browse.items;
   const searching = query.trim() !== "";
+  const showItems = browsing || searching;
   const totalText = m(total);
 
   const cartBody =
@@ -514,6 +638,12 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     );
 
   const noLines = lines.length === 0;
+  /** One tab per open sale; the active one shows the live lines. */
+  const tabs = orderTickets(held).map((h) => {
+    const live = h.id === activeId ? { count, total } : ticketTotals(h);
+    return { id: h.id, no: h.no, count: live.count, total: live.total };
+  });
+  const activeNo = tabs.find((x) => x.id === activeId)?.no ?? 1;
 
   return (
     <div className="till-app" data-products-open={productsOpen || undefined} data-pad-closed={!padOpen || undefined} data-testid="till">
@@ -524,6 +654,44 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
       <TillNav t={t} variant="rail" />
 
       <aside className="till-ticket" aria-label={s.cart} data-testid="sell-cart">
+        <div className="till-tabs" data-testid="ticket-tabs">
+          <div className="till-tabs-list" role="tablist" aria-label={tl.openSales}>
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={tab.id === activeId}
+                className="till-tab"
+                data-active={tab.id === activeId || undefined}
+                onClick={() => switchTo(tab.id)}
+                data-testid="ticket-tab"
+              >
+                <strong>{fill(tl.saleNo, { n: formatNumber(locale, tab.no) })}</strong>
+                <small>{tab.count > 0 ? `${fill(tl.itemCount, { n: formatNumber(locale, tab.count) })} · ${m(tab.total)}` : tl.saleEmpty}</small>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="till-newsale" onClick={newSale} data-testid="new-sale">
+            <PlusIcon />
+            {tl.newSale}
+          </button>
+        </div>
+        <div className="till-switch" data-testid="ticket-switch">
+          <button type="button" className="till-switch-btn" onClick={() => setTicketsOpen(true)} aria-haspopup="dialog" aria-expanded={ticketsOpen} data-testid="open-sales">
+            <strong>{fill(tl.saleOf, { n: formatNumber(locale, activeNo), total: formatNumber(locale, tabs.length) })}</strong>
+            <small>{count > 0 ? `${fill(tl.itemCount, { n: formatNumber(locale, count) })} · ${totalText}` : tl.saleEmpty}</small>
+          </button>
+          <button type="button" className="till-newsale" onClick={newSale} data-testid="new-sale-compact">
+            <PlusIcon />
+            {tl.newSale}
+          </button>
+        </div>
+        {ticketMsg ? (
+          <p className="till-ticketmsg" role="status" data-testid="tickets-limit">
+            {ticketMsg}
+          </p>
+        ) : null}
         <div className="till-ticket-head">
           <h2>
             {tl.ticket}
@@ -536,9 +704,37 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
           <button type="button" className="till-menu-btn" onClick={() => setMenuOpen(true)} aria-haspopup="dialog" aria-expanded={menuOpen} data-testid="till-menu">
             <MenuIcon />
             <span className="till-menu-label">{tl.menu}</span>
-            {held.length > 0 ? <span className="till-badge">{formatNumber(locale, held.length)}</span> : null}
           </button>
         </div>
+        <form className="till-scan" role="search" onSubmit={onScan}>
+          <label className="visually-hidden" htmlFor="till-code">
+            {tl.scanLabel}
+          </label>
+          <BarcodeIcon />
+          <input
+            ref={codeRef}
+            id="till-code"
+            className="till-scan-input"
+            type="text"
+            enterKeyHint="go"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={tl.scanPlaceholder}
+            value={code}
+            aria-invalid={codeMiss !== null || undefined}
+            aria-describedby={codeMiss ? "till-code-miss" : undefined}
+            onChange={(e) => {
+              setCode(e.target.value);
+              setCodeMiss(null);
+            }}
+            data-testid="scan-input"
+          />
+        </form>
+        {codeMiss ? (
+          <p className="till-scan-miss" id="till-code-miss" role="alert" data-testid="scan-miss">
+            {codeMiss}
+          </p>
+        ) : null}
         {!online ? (
           <p className="till-offline" role="status" data-testid="till-offline">
             {tl.offline}
@@ -573,10 +769,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
           <div className="till-keys" id="till-keys">
             <TicketPad locale={locale} t={t} decimals={selLine?.quantityScale ?? 0} name={selLine ? pickName(locale, selLine) : ""} disabled={noLines} onPress={padPress} onStep={padStep} />
             <div className="till-fn" role="group" aria-label={tl.cartActions}>
-              <button type="button" className="till-fn-key" onClick={hold} disabled={noLines} data-testid="cart-hold-quick">
-                <PauseIcon />
-                {tl.fnHold}
-              </button>
               <button type="button" className="till-fn-key" onClick={voidLine} disabled={noLines} data-testid="cart-void">
                 <MinusIcon />
                 {tl.fnVoid}
@@ -625,7 +817,10 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
-                if (e.target.value.trim() === "") setResults(null);
+                if (e.target.value.trim() === "") {
+                  setResults(null);
+                  setBrowsing(false);
+                }
               }}
               data-testid="sell-search"
             />
@@ -637,26 +832,49 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
           </form>
         </header>
 
-        <nav className="till-cats" aria-label={s.categories}>
-          <button type="button" className="till-cat" aria-pressed={category === null && !searching} onClick={() => void pickCategory(null)} data-testid="sell-cat-all">
-            <span>{s.all}</span>
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className="till-cat"
-              aria-pressed={category === c.id && !searching}
-              onClick={() => void pickCategory(c.id)}
-              data-testid="sell-cat"
-            >
-              <span>{pickName(locale, c)}</span>
+        {showItems ? (
+          <div className="till-crumb" data-testid="till-crumb">
+            <button type="button" className="till-crumb-back" onClick={backToCategories} data-testid="cats-back">
+              <ChevronIcon />
+              {tl.allCategories}
             </button>
-          ))}
-        </nav>
+            <span className="till-crumb-sep" aria-hidden="true">
+              ›
+            </span>
+            <strong className="truncate">{searching ? `“${query.trim()}”` : category === null ? s.all : (categories.find((c) => c.id === category) ? pickName(locale, categories.find((c) => c.id === category)!) : s.all)}</strong>
+          </div>
+        ) : null}
 
         <section className="till-products" aria-label={s.items} aria-busy={loading}>
-          {switching ? (
+          {!showItems ? (
+            <div className={`till-cattiles ${grotesk.variable} ${mono.variable}`} data-testid="sell-cats" aria-label={s.categories} role="group">
+              <CategoryTile
+                name={s.all}
+                kind="all"
+                accent={ACCENT.all}
+                index="00"
+                meta={fill(tl.departments, { n: formatNumber(locale, categories.length) })}
+                action={tl.openCategory}
+                onPick={() => void pickCategory(null)}
+                testId="sell-cat-all"
+              />
+              {categories.map((c, i) => {
+                const kind = categoryKind(c.nameAr, c.nameCkb, c.nameEn);
+                return (
+                  <CategoryTile
+                    key={c.id}
+                    name={pickName(locale, c)}
+                    kind={kind}
+                    accent={accentFor(kind, c.nameAr || c.id)}
+                    index={String(i + 1).padStart(2, "0")}
+                    meta={fill(tl.itemCount, { n: formatNumber(locale, c.itemCount) })}
+                    action={tl.openCategory}
+                    onPick={() => void pickCategory(c.id)}
+                  />
+                );
+              })}
+            </div>
+          ) : switching ? (
             <div className="till-tiles" data-testid="sell-skeleton" aria-hidden="true">
               {SKELETON_TILES.map((i) => (
                 <span key={i} className="till-tile-skel" />
@@ -675,7 +893,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
               })}
             </div>
           )}
-          {!searching && browse.more ? (
+          {showItems && !searching && browse.more ? (
             <button type="button" className="till-btn till-btn-quiet till-more" onClick={() => void loadMore()} disabled={loading} data-testid="sell-more">
               {tl.showMore}
             </button>
@@ -690,6 +908,34 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
         </button>
       </div>
 
+      {ticketsOpen ? (
+        <div className="till-layer" onClick={(e) => e.target === e.currentTarget && setTicketsOpen(false)}>
+          <div className="till-menu till-sheet" role="dialog" aria-modal="true" aria-labelledby="till-sales-title" data-testid="sales-sheet">
+            <div className="till-menu-head">
+              <h2 id="till-sales-title">{tl.openSales}</h2>
+              <button type="button" className="till-icon-btn" onClick={() => setTicketsOpen(false)} aria-label={tl.closeMenu}>
+                <CloseIcon />
+              </button>
+            </div>
+            <ul className="till-sales">
+              {tabs.map((tab) => (
+                <li key={tab.id}>
+                  <button type="button" className="till-sale" data-active={tab.id === activeId || undefined} onClick={() => switchTo(tab.id)} data-testid="sale-row">
+                    <strong>{fill(tl.saleNo, { n: formatNumber(locale, tab.no) })}</strong>
+                    <span>{tab.count > 0 ? fill(tl.itemCount, { n: formatNumber(locale, tab.count) }) : tl.saleEmpty}</span>
+                    <b>{tab.count > 0 ? m(tab.total) : ""}</b>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="till-newsale till-newsale-wide" onClick={newSale}>
+              <PlusIcon />
+              {tl.newSale}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {menuOpen ? (
         <div className="till-layer" onClick={(e) => e.target === e.currentTarget && setMenuOpen(false)}>
           <div className="till-menu" role="dialog" aria-modal="true" aria-labelledby="till-menu-title" ref={menuRef} data-testid="menu-panel">
@@ -702,10 +948,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
             <TillNav t={t} variant="list" onNavigate={() => setMenuOpen(false)} />
             <p className="till-menu-shift">{fill(s.shiftSince, { at: formatDateTime(locale, new Date(shift.openedAt)) })}</p>
             <div className="till-menu-actions">
-              <button type="button" className="till-menu-item" onClick={hold} disabled={lines.length === 0} data-testid="cart-hold">
-                <PauseIcon />
-                {tl.holdCart}
-              </button>
               <button type="button" className="till-menu-item" onClick={clearCart} disabled={lines.length === 0} data-testid="cart-clear">
                 <TrashIcon />
                 {tl.clearCart}
@@ -715,21 +957,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 {tl.closeShift}
               </Link>
             </div>
-            {held.length > 0 ? (
-              <section className="till-held" aria-label={s.heldTitle} data-testid="held-list">
-                <h3>{fill(tl.heldCarts, { n: formatNumber(locale, held.length) })}</h3>
-                <ul>
-                  {held.map((h) => (
-                    <li key={h.id}>
-                      <span>{fill(s.heldLine, { n: formatNumber(locale, h.lines.length), at: formatDateTime(locale, new Date(h.at)) })}</span>
-                      <button type="button" className="till-btn till-btn-quiet" onClick={() => resume(h.id)} data-testid="held-resume">
-                        {s.resume}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
             <div className="till-menu-foot">
               <Link href="/retail/home?menu=1" className="till-menu-link" data-testid="open-shop-menu">
                 <GridIcon />

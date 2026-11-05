@@ -17,15 +17,10 @@ export default async function Loading() {
         <header className="till-top">
           <span className="till-skel-bar" />
         </header>
-        <nav className="till-cats">
-          {Array.from({ length: 6 }, (_, i) => (
-            <span key={i} className="till-cat till-cat-skel" />
-          ))}
-        </nav>
         <section className="till-products">
-          <div className="till-tiles">
+          <div className="till-cattiles">
             {cards.map((i) => (
-              <span key={i} className="till-tile-skel" />
+              <span key={i} className="till-tile-skel" style={{ minHeight: "9.75rem" }} />
             ))}
           </div>
         </section>
