@@ -1103,3 +1103,14 @@ body:has(.ot) {
 .ot-paycard .till-pay-head {
   flex-wrap: wrap;
 }
+
+/* Held sales: each open sale is a tab you can see and hit at a glance. */
+.ot-tab {
+  min-height: 2.5rem;
+  font-size: var(--text-sm);
+}
+
+.ot-menu-btn {
+  min-height: 2.5rem;
+  font-size: var(--text-sm);
+}
