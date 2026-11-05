@@ -7,7 +7,7 @@ import { en } from "@/messages/en";
 
 const item = (id: string, price = "1500"): SellItemDto => ({
   variantId: id, unitId: id, nameAr: "سكر", nameCkb: null, nameEn: "Sugar", unitName: "pc", quantityScale: 0, factor: 1,
-  soldByWeight: false, priceMinor: price, currency: "IQD", onHand: null, matchedBarcode: null, categoryId: null,
+  soldByWeight: false, priceMinor: price, currency: "IQD", onHand: null, matchedBarcode: null, categoryId: null, batches: [], earliestExpiry: null,
 });
 const at = (s: number) => new Date(Date.UTC(2026, 10, 5, 8, 0, s));
 const first = () => openTicket([], "t1", at(0))!.store;

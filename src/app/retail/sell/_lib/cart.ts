@@ -30,6 +30,9 @@ export type SellItemDto = {
   matchedBarcode: string | null;
   /** The top-level category the tile is coloured by, or null. */
   categoryId: string | null;
+  /** Batches with stock (base units x 1000 as text), earliest expiry first; [] when not read. */
+  batches: { expiryDate: string | null; qty: string }[];
+  earliestExpiry: string | null;
 };
 
 export type CategoryDto = { id: string; nameAr: string; nameCkb: string | null; nameEn: string | null; itemCount: number };

@@ -118,14 +118,10 @@ describe("the till's department words come from the pack", () => {
     }
   });
 
-  it("the sell page passes the pack and its words, and the cards use them", () => {
-    const page = readFileSync(join(process.cwd(), "src/app/retail/sell/page.tsx"), "utf8");
-    expect(page).toContain("pack={pack}");
-    expect(page).toContain("departmentWords={departmentWords}");
+  it("the one-screen till finds products by scan or name in the line table (no department cards on the till)", () => {
     const screen = readFileSync(join(process.cwd(), "src/app/retail/sell/sell-screen.tsx"), "utf8");
-    expect(screen).toContain("categoryKindFor(pack,");
-    expect(screen).toContain("departmentWords.open");
-    expect(screen).toContain("departmentWords.categoryItems");
-    expect(screen).not.toContain("tl.openCategory");
+    expect(screen).not.toContain("CategoryTile");
+    expect(screen).toContain("<LineTable");
   });
+
 });

@@ -2,6 +2,7 @@
 
 import { listShiftExpenses, recordExpense, voidExpense } from "@/server/sales/expenses";
 import { currentUnitPrices, listSellItems } from "@/server/sales/catalog";
+import { listRecentSales } from "@/server/sales/recent";
 import { createSale } from "@/server/sales/sales";
 import { closeShift, openShift } from "@/server/sales/shifts";
 import { loadShell } from "../_shell";
@@ -95,4 +96,10 @@ export async function voidExpenseAction(key: unknown, input: { expenseId: unknow
 /** The shift's expenses, newest first (voided ones included). */
 export async function listExpensesAction(shiftId: unknown): Promise<SellResult<ExpenseDto[]>> {
   return call("", (m) => listShiftExpenses({ shiftId }, m), (v) => v.map(expenseDto));
+}
+
+/** The last receipts of the user's open shift, newest first (the till's receipts card). */
+export async function recentSalesAction(limit: unknown): Promise<SellResult<ReceiptDto[]>> {
+  const n = typeof limit === "number" && Number.isInteger(limit) && limit >= 1 && limit <= 20 ? limit : 10;
+  return call("", (m) => listRecentSales({ limit: n }, m), (v) => v.map(receiptDto));
 }
