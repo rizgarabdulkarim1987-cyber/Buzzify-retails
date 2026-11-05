@@ -62,6 +62,8 @@ const item = (over: Partial<SellItemDto> = {}): SellItemDto => ({
   onHand: "10000",
   matchedBarcode: null,
   categoryId: null,
+  batches: [],
+  earliestExpiry: null,
   ...over,
 });
 const cheese = item({ variantId: "v2", unitId: "u2", nameAr: "جبن", nameEn: "Cheese", unitName: "كغم", quantityScale: 3, soldByWeight: true, priceMinor: "1500" });

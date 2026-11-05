@@ -1,0 +1,913 @@
+/*
+ * The one-screen till: a fixed screen that never scrolls. A line table with pages (arrows, not a
+ * scroll bar) in the middle, the calculator at the inline-start, the shift, the selected product and
+ * the receipts at the inline-end. Everything is on this screen; nothing opens over it. Tokens come
+ * from tokens.css; logical properties only, so Arabic and Sorani mirror English with no overrides.
+ * Below 760px (container width) the side cards and the calculator are a second fixed pane.
+ */
+
+body:has(.ot) .shell-header {
+  display: none;
+}
+
+html:has(.ot),
+body:has(.ot) {
+  overflow: hidden;
+}
+
+.ot {
+  container-type: inline-size;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-size: var(--t-b, 0.8125rem);
+  line-height: 1.35;
+}
+
+:where(.ot) button,
+:where(.ot) input {
+  font: inherit;
+  color: inherit;
+}
+
+.ot-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  min-height: 2.75rem;
+  background: var(--color-surface);
+  border-block-end: 1px solid var(--color-line);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ot-top b {
+  font-size: var(--text-md);
+}
+
+.ot-meta {
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+}
+
+.ot-pill {
+  background: var(--color-panel);
+  border-radius: 999px;
+  padding: 0.125rem 0.625rem;
+  font-size: var(--text-xs);
+}
+
+.ot-pill[data-rate] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.ot-tabs {
+  display: flex;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ot-tab {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  border-radius: 10px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.ot-tab[aria-selected="true"] {
+  border-color: var(--color-accent-line);
+  background: var(--color-accent-soft);
+  font-weight: 700;
+}
+
+.ot-tab small {
+  margin-inline-start: var(--space-2);
+  color: var(--color-ink-2);
+}
+
+.ot-tab[data-new] {
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+.ot-menu-btn {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.ot-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  grid-template-columns: 18.5rem minmax(0, 1fr) 14.75rem;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    "calc main shift"
+    "calc main prod"
+    "calc main recent";
+}
+
+.ot-main {
+  grid-area: main;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ot-side {
+  display: contents;
+}
+
+.ot-card {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+}
+
+.ot-card > h2 {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0.375rem var(--space-3);
+  background: var(--color-panel);
+  border-block-end: 1px solid var(--color-line);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.ot-body {
+  padding: var(--space-2) var(--space-3);
+  min-height: 0;
+}
+
+.ot-shift {
+  grid-area: shift;
+}
+
+.ot-prod {
+  grid-area: prod;
+}
+
+.ot-recent {
+  grid-area: recent;
+}
+
+.ot-calc-card {
+  grid-area: calc;
+}
+
+/* Head: total, scan field, selected line strip, quantity box */
+.ot-head {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr) 8.5rem;
+  gap: var(--space-2);
+}
+
+.ot-total {
+  min-height: 8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 12px;
+  background: var(--color-brand);
+  color: var(--color-on-fill);
+}
+
+.ot-total[data-refund] {
+  background: var(--color-danger-fill);
+}
+
+.ot-total small {
+  font-size: var(--text-xs);
+  opacity: 0.92;
+}
+
+.ot-total strong {
+  font-size: 2.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.ot-total span {
+  font-size: var(--text-xs);
+}
+
+.ot-center {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.ot-scan {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  min-height: 3rem;
+  border: 2px solid var(--color-accent-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.ot-scan input:focus-visible {
+  box-shadow: none;
+  outline: 0;
+}
+
+.ot-scan input {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.75rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: var(--text-lg);
+}
+
+.ot-msg {
+  min-height: 1.75rem;
+  display: flex;
+  align-items: center;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+
+.ot-msg[data-bad] {
+  color: var(--color-danger);
+}
+
+.ot-undo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 1.75rem;
+  padding: 0 var(--space-3);
+  border-radius: 8px;
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+.ot-undo button {
+  min-height: 1.625rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ot-cur {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4rem 5.5rem 6.5rem;
+  align-items: center;
+  min-height: 2.875rem;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.ot-cur > * {
+  padding: 0.25rem var(--space-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-cur .nm {
+  font-weight: 700;
+  font-size: var(--text-lg);
+}
+
+.ot-cur .v {
+  text-align: center;
+  font-weight: 700;
+  border-inline-start: 1px solid var(--color-line);
+}
+
+.ot-cur .v small {
+  display: block;
+  color: var(--color-ink-2);
+  font-weight: 400;
+  font-size: 0.625rem;
+  line-height: 1;
+}
+
+.ot-qty {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr 1fr;
+  gap: 0.375rem;
+  padding: 0.375rem;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.ot-qty input {
+  grid-column: 1 / -1;
+  min-width: 0;
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 800;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border: 0;
+  border-radius: 10px;
+  line-height: 1.2;
+}
+
+.ot-qty button {
+  min-height: 2.5rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  border-radius: 10px;
+  font-size: 1.375rem;
+  cursor: pointer;
+}
+
+.ot-qty .del {
+  grid-column: 1 / -1;
+  border-color: transparent;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 1.625rem;
+  font-weight: 800;
+}
+
+/* The line table: fixed rows, pages instead of a scroll bar */
+.ot-table {
+  flex: 1;
+  min-height: 0;
+}
+
+.ot-thead,
+.ot-row {
+  display: grid;
+  align-items: center;
+  grid-template-columns: 2.75rem minmax(0, 1fr) 3.75rem 6rem 6.75rem 5.5rem 6rem 2.875rem;
+}
+
+.ot-thead {
+  flex: 0 0 auto;
+  min-height: 2.125rem;
+  background: var(--color-panel);
+  border-block-end: 1px solid var(--color-line);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.ot-thead > :first-child {
+  white-space: nowrap;
+  font-size: 0.6875rem;
+}
+
+.ot-thead > *,
+.ot-row > * {
+  min-width: 0;
+  padding: 0 var(--space-2);
+}
+
+.ot-pg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0 !important;
+}
+
+.ot-pg button {
+  width: 2.125rem;
+  min-height: 1.875rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ot-pg button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ot-rows {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ot-row {
+  height: 2.875rem;
+  border-block-end: 1px solid var(--color-line);
+  cursor: pointer;
+}
+
+.ot-row[aria-selected="true"] {
+  background: var(--color-accent-soft);
+}
+
+.ot-row .nm {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-row .nm small {
+  display: block;
+  color: var(--color-ink-2);
+  font-weight: 400;
+  font-size: 0.6875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ot-row .num {
+  text-align: center;
+}
+
+.ot-row .tot {
+  font-weight: 700;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.ot-chip {
+  display: inline-block;
+  padding: 0.0625rem 0.5rem;
+  border-radius: 999px;
+  background: var(--color-panel);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.ot-chip[data-tone="ok"] {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.ot-chip[data-tone="warn"] {
+  background: var(--color-warn-soft);
+  color: var(--color-warn);
+}
+
+.ot-chip[data-tone="bad"] {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.ot-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.ot-step button {
+  width: 2.125rem;
+  min-height: 2.5rem;
+  border: 0;
+  background: var(--color-panel);
+  font-size: 1.0625rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ot-step span {
+  min-width: 1.875rem;
+  text-align: center;
+  font-weight: 700;
+}
+
+.ot-x {
+  width: 2.5rem;
+  min-height: 2.5rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 1.1875rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ot-add {
+  color: var(--color-accent);
+  font-weight: 700;
+  font-size: var(--text-xs);
+}
+
+.ot-empty {
+  padding: var(--space-4);
+  color: var(--color-ink-2);
+}
+
+/* Pay strip */
+.ot-pay {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.ot-pay .note {
+  flex: 1;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+}
+
+.ot-go {
+  min-height: 3.25rem;
+  padding: 0 var(--space-6);
+  border: 0;
+  border-radius: 10px;
+  background: var(--color-brand);
+  color: var(--color-on-fill);
+  font-size: var(--text-lg);
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ot-go:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ot-clear {
+  min-height: 3.25rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.ot-clear[data-armed] {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border-color: var(--color-danger-line);
+}
+
+/* Side cards */
+.ot-shift .big {
+  font-size: 1.625rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.ot-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-block-start: 0.375rem;
+}
+
+.ot-prod .stock {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ot-prod .stock b {
+  font-size: 1.625rem;
+  font-weight: 800;
+}
+
+.ot-prod .nm {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-batches {
+  list-style: none;
+  margin: 0.375rem 0 0;
+  padding: 0;
+  font-size: var(--text-xs);
+}
+
+.ot-batches li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0.125rem 0;
+  border-block-start: 1px solid var(--color-line);
+}
+
+.ot-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-size: var(--text-xs);
+}
+
+.ot-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2rem;
+  padding: 0.125rem var(--space-3);
+  border-block-end: 1px solid var(--color-line);
+}
+
+.ot-list small {
+  color: var(--color-ink-2);
+}
+
+.ot-xs {
+  width: 1.875rem;
+  min-height: 1.625rem;
+  border: 0;
+  border-radius: 7px;
+  background: var(--color-panel);
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Calculator: a full-height column, big keys */
+.ot-calc-card .ot-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+}
+
+.ot-calc-out {
+  flex: 0 0 auto;
+  display: block;
+  min-height: 4rem;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-paper);
+  text-align: end;
+  font-size: 2.125rem;
+  font-weight: 800;
+  line-height: 4rem;
+  overflow: hidden;
+}
+
+.ot-calc {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 0.375rem;
+  margin-block-start: var(--space-2);
+}
+
+.ot-calc button {
+  min-height: 0;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  border-radius: 10px;
+  font-size: 1.625rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ot-calc .op {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.ot-calc .wide {
+  grid-column: span 2;
+}
+
+.ot-calc .eq {
+  background: var(--color-brand);
+  color: var(--color-on-fill);
+  border-color: var(--color-brand);
+}
+
+.ot-tojoin {
+  flex: 0 0 auto;
+  margin-block-start: var(--space-2);
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.ot-bar {
+  display: none;
+  flex: 0 0 auto;
+  gap: 0.375rem;
+  padding: 0.375rem var(--space-2);
+  background: var(--color-surface);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.ot-bar button {
+  flex: 1;
+  min-height: 2.75rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ot-bar button[aria-pressed="true"] {
+  background: var(--color-brand);
+  color: var(--color-on-fill);
+  border-color: var(--color-brand);
+}
+
+/* Narrow: two fixed panes, switched from the bottom bar */
+@container (max-width: 760px) {
+  .ot-bar {
+    display: flex;
+  }
+
+  .ot-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: "main";
+  }
+
+  .ot-main {
+    grid-area: main;
+  }
+
+  .ot-side {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    grid-area: main;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .ot[data-pane="sell"] .ot-side,
+  .ot[data-pane="box"] .ot-main {
+    display: none;
+  }
+
+  .ot-calc-card {
+    flex: 1 0 17rem;
+  }
+
+  .ot-calc-out {
+    min-height: 2.75rem;
+    font-size: 1.5rem;
+    line-height: 2.75rem;
+  }
+
+  .ot-calc button {
+    font-size: 1.25rem;
+  }
+
+  .ot-batches,
+  .ot-shift .ot-chips {
+    display: none;
+  }
+
+  .ot-shift,
+  .ot-prod {
+    flex: 0 1 auto;
+  }
+
+  .ot-recent {
+    flex: 1 1 0;
+    min-height: 3.5rem;
+  }
+
+  .ot-bar button {
+    font-size: var(--text-xs);
+    line-height: 1.2;
+  }
+
+  .ot-head {
+    grid-template-columns: minmax(0, 1fr) 7rem;
+    grid-template-areas:
+      "total qty"
+      "center center";
+  }
+
+  .ot-total {
+    grid-area: total;
+    min-height: 0;
+    padding: var(--space-1) var(--space-3);
+  }
+
+  .ot-total strong {
+    font-size: 1.75rem;
+  }
+
+  .ot-total span {
+    display: none;
+  }
+
+  .ot-qty {
+    grid-area: qty;
+    grid-template-rows: auto 1fr;
+    padding: 0.25rem;
+  }
+
+  .ot-qty input {
+    font-size: 1.5rem;
+  }
+
+  .ot-qty .del {
+    display: none;
+  }
+
+  .ot-qty button {
+    min-height: 2rem;
+  }
+
+  .ot-center {
+    grid-area: center;
+  }
+
+  .ot-cur,
+  .ot-msg {
+    display: none;
+  }
+
+  .ot-thead,
+  .ot-row {
+    grid-template-columns: minmax(0, 1fr) 6.5rem 4.5rem 2.875rem;
+  }
+
+  .ot-thead > :nth-child(1),
+  .ot-row > :nth-child(1),
+  .ot-thead > :nth-child(3),
+  .ot-row > :nth-child(3),
+  .ot-thead > :nth-child(4),
+  .ot-row > :nth-child(4),
+  .ot-thead > :nth-child(6),
+  .ot-row > :nth-child(6) {
+    display: none;
+  }
+
+  .ot-pay {
+    padding: var(--space-2);
+  }
+
+  .ot-go {
+    flex: 1;
+    padding: 0 var(--space-3);
+  }
+
+  .ot-top b,
+  .ot-meta {
+    display: none;
+  }
+}

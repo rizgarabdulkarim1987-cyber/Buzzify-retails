@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { CASHIER, MANAGER, PASSWORD, TERMINAL_A } from "./fixtures";
+import { MANAGER, PASSWORD, TERMINAL_A } from "./fixtures";
 import { typeDigitsWhenReady } from "./keypad";
 
 async function signIn(page: Page, email: string) {
@@ -22,12 +22,18 @@ async function openShiftWith(page: Page, email: string, opening: string) {
   await expect(page.getByTestId("till")).toBeVisible();
 }
 
-test("a cashier records expenses at 375px in Arabic, cannot void, and closes with the expected cash reduced", async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 667 });
-  await openShiftWith(page, CASHIER.email, "50000");
-
-  // The Expense key is on the till for the cashier.
+/** Managers and owners reach the Expense panel from the till's menu (a cashier's till has no expense key). */
+async function openExpensePanel(page: Page) {
+  await page.getByTestId("till-menu").click();
   await page.getByTestId("fn-expense").click();
+}
+
+test("a manager records expenses at 375px in Arabic and closes with the expected cash reduced", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await openShiftWith(page, MANAGER.email, "50000");
+
+  // The Expense key is in the till's menu for the manager.
+  await openExpensePanel(page);
   await expect(page.getByTestId("expense-panel")).toBeVisible();
   expect(await noHorizontalScroll(page)).toBe(true);
   await expect(page.getByTestId("expense-save")).toBeDisabled();
@@ -69,8 +75,6 @@ test("a cashier records expenses at 375px in Arabic, cannot void, and closes wit
   await expect(page.getByRole("alert").first()).toContainText("لا يوجد في الصندوق نقد يكفي");
   await expect(page.getByTestId("expense-row")).toHaveCount(2);
 
-  // A cashier cannot void.
-  await expect(page.getByTestId("expense-void")).toHaveCount(0);
   await page.getByTestId("expense-back").click();
   await expect(page.getByTestId("expense-panel")).toHaveCount(0);
 
@@ -81,7 +85,6 @@ test("a cashier records expenses at 375px in Arabic, cannot void, and closes wit
   await expect(page.getByTestId("summary-expected")).toContainText("٤٤٬٠٠٠");
   await page.getByTestId("close-expenses-toggle").click();
   await expect(page.getByTestId("expense-row")).toHaveCount(2);
-  await expect(page.getByTestId("expense-void")).toHaveCount(0);
   await page.getByTestId("close-expenses-toggle").click();
   await typeDigitsWhenReady(page, "close-counted", "44000");
   await expect(page.getByTestId("close-difference")).toContainText("مطابق");
@@ -94,7 +97,7 @@ test("a cashier records expenses at 375px in Arabic, cannot void, and closes wit
 test("a manager voids a mistaken expense with a reason; it stays struck through and no longer counts", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await openShiftWith(page, MANAGER.email, "20000");
-  await page.getByTestId("fn-expense").click();
+  await openExpensePanel(page);
   await page.keyboard.type("3000");
   await page.getByTestId("expense-cat-SUPPLIES").click();
   await page.getByTestId("expense-save").click();
