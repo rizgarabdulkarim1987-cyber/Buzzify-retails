@@ -143,6 +143,8 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
   const [activeId, setActiveId] = useState<string | null>(null);
   const [ticketMsg, setTicketMsg] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("sell");
+  /** The right column: payment (the default) or the calculator, swapped in place. */
+  const [side, setSide] = useState<"pay" | "calc">("pay");
   const [pane, setPane] = useState<"sell" | "box">("sell");
   const [menuOpen, setMenuOpen] = useState(false);
   /** The Expense panel (managers and owners only, from the menu). */
@@ -478,6 +480,7 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
     setTarget("IQD");
     setCardMinor(0n);
     setPane("box");
+    setSide("pay");
     setMode("pay");
   };
 
@@ -820,12 +823,12 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
           <ShiftCard locale={locale} t={t} currency={currency} shift={shift} />
           <ProductCard locale={locale} t={t} currency={currency} line={selLine} item={selInfo} />
           <ReceiptsCard locale={locale} t={t} currency={currency} receipts={receipts} />
-          {mode === "pay" ? (
+          {side === "pay" ? (
 <section className="ot-card ot-calc-card ot-paycard" aria-labelledby="pay-title" data-testid="pay-panel">
             <div className="till-pay-head">
               <h2 id="pay-title">{s.payScreen.title}</h2>
-              <button type="button" className="till-btn till-btn-quiet" onClick={() => setMode("sell")} disabled={sending}>
-                {s.payScreen.back}
+              <button type="button" className="till-btn till-btn-quiet" onClick={() => setSide("calc")} disabled={sending} data-testid="show-calc">
+                {one.calculator}
               </button>
             </div>
             <div className="till-pay-body">
@@ -928,7 +931,7 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
             </button>
           </section>
           ) : (
-            <Calculator locale={locale} t={t} onToPaid={calcToPaid} />
+            <Calculator locale={locale} t={t} onToPaid={calcToPaid} onPay={() => setSide("pay")} />
           )}
         </aside>
       </div>
