@@ -31,7 +31,7 @@ import {
   type ShiftDto,
 } from "../../src/app/retail/sell/_lib/cart";
 import { CartLineRow, Numpad, PaySummary, Receipt, ShiftSummaryView, Tile, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
-import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
+import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, tileInitials, categoryIcon, textLength, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
 
@@ -192,6 +192,67 @@ describe("the numpad and the tiles", () => {
     expect(tileInitial("sugar")).toBe("S");
     expect(tileInitial("شەکر")).toBe("ش");
     expect(tileInitial("")).toBe("");
+  });
+});
+
+describe("till v3: category pictures, tile letters, cart count on a tile", () => {
+  const ctx = { locale: "ar" as const, t: ar };
+  it("a category's picture comes from the words in its name (Arabic, Sorani, English), else a plain box", () => {
+    expect(categoryIcon("ألبان")).toBe("milk");
+    expect(categoryIcon("شاي وقهوة")).toBe("cup");
+    expect(categoryIcon("مشروبات")).toBe("bottle");
+    expect(categoryIcon("حلويات ووجبات")).toBe("candy");
+    expect(categoryIcon("منظفات")).toBe("spray");
+    expect(categoryIcon("ورقيات")).toBe("paper");
+    expect(categoryIcon("معلبات")).toBe("can");
+    expect(categoryIcon("مواد غذائية")).toBe("grain");
+    expect(categoryIcon("Dairy & Cheese")).toBe("milk");
+    expect(categoryIcon("Cleaning")).toBe("spray");
+    expect(categoryIcon("Electronics")).toBe("plug");
+    expect(categoryIcon("ملابس")).toBe("shirt");
+    expect(categoryIcon("شتی تر")).toBe("box");
+    expect(categoryIcon("")).toBe("box");
+    expect(categoryIcon(null)).toBe("box");
+  });
+
+  it("tile letters: the first letter of each of the first two words, the article skipped, never a cut word", () => {
+    expect(tileInitials("بسكويت ماري")).toEqual(["ب", "م"]);
+    expect(tileInitials("الرز البسمتي ٥ كغم")).toEqual(["ر", "ب"]);
+    expect(tileInitials("Sugar fine 1kg")).toEqual(["S", "F"]);
+    expect(tileInitials("سكر")).toEqual(["س"]);
+    expect(tileInitials("٥ كغم رز")).toEqual(["ك", "ر"]);
+    expect(tileInitials("123")).toEqual(["1"]);
+    expect(tileInitials("")).toEqual([""]);
+  });
+
+  it("textLength counts characters, not UTF-16 units (the total's font size divides by it)", () => {
+    expect(textLength("٩٬٩٩٩٬٩٩٩٬٩٩٩ د.ع")).toBe(17);
+    expect(textLength("😀a")).toBe(2);
+  });
+
+  it("a tile shows how many are in the cart, a category picture, and a two-letter slot", () => {
+    const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "بسكويت ماري" }), tone: 1, kind: "candy", qty: 3 }));
+    expect(out).toContain('data-incart="true"');
+    expect(out).toContain('data-testid="tile-qty"');
+    expect(out).toContain("<span>ب</span><span>م</span>");
+    expect(out).toContain("till-tile-art");
+    const plain = html(createElement(Tile, { ...ctx, item: item() }));
+    expect(plain).not.toContain("tile-qty");
+    expect(plain).not.toContain("data-incart");
+    expect(plain).not.toContain("till-tile-art");
+  });
+
+  it("a very large price keeps its whole text and tells the box its length", () => {
+    const out = html(createElement(Tile, { ...ctx, item: item({ priceMinor: "9999999999" }) }));
+    expect(out).toContain("٩٬٩٩٩٬٩٩٩٬٩٩٩");
+    expect(out).toMatch(/--len:\d+/);
+  });
+
+  it("the new till strings exist in the three languages and keep the words guard", () => {
+    for (const t of [ar, ckb, en]) {
+      for (const k of ["offline", "quickQty", "holdShort", "clearShort"] as const) expect(t.till[k].length).toBeGreaterThan(1);
+      expect(JSON.stringify(t.till)).not.toMatch(/studio|core|restaurant|menus?|pharmac|cashier|كاشير|مطعم|صيدلي/i);
+    }
   });
 });
 

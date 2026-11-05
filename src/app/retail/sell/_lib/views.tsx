@@ -1,8 +1,10 @@
+import type { CSSProperties } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, formatMoney, pickName } from "../../../_lib/format";
 import { BackspaceIcon, CardIcon, CashIcon, MinusIcon, PlusIcon, TrashIcon } from "../../../_ui/icons";
 import { lineTotal, type CartLine, type Currency, type PayState, type ReceiptDto, type SellItemDto, type ShiftDto } from "./cart";
-import { numpadKeys, tileInitial, type NumpadKey } from "./till";
+import { CatIcon } from "./cat-icons";
+import { numpadKeys, tileInitials, type CategoryIconKind, type NumpadKey } from "./till";
 
 /*
  * The till's views, pure (no state, no effects): the client screen wires them, and the UI tests
@@ -22,13 +24,24 @@ export function localQuantity(locale: Locale, q: string): string {
 }
 
 /**
- * One product tile: a colour block in its category's tone with the name's first letter (the slot
- * a photo takes once the catalog has them), the name on up to two lines and the price, large. An
- * item without a price is shown but cannot be added.
+ * One product tile, a card: a block in its category's colour with the category's picture and the
+ * name's first letters (the slot a photo takes once the catalog has them), then the name on up to
+ * two lines and the price, large. `qty` is how many are in the cart now. An item without a price is
+ * shown but cannot be added.
  */
-export function Tile({ locale, t, item, tone = null, onAdd }: Ctx & { item: SellItemDto; tone?: number | null; onAdd?: () => void }) {
+export function Tile({
+  locale,
+  t,
+  item,
+  tone = null,
+  kind = null,
+  qty = 0,
+  onAdd,
+}: Ctx & { item: SellItemDto; tone?: number | null; kind?: CategoryIconKind | null; qty?: number; onAdd?: () => void }) {
   const name = pickName(locale, item);
+  const letters = tileInitials(name);
   const priced = item.priceMinor !== null;
+  const priceText = priced ? money({ locale, t }, item.currency, item.priceMinor!) : t.sell.noPrice;
   const out = item.onHand !== null && BigInt(item.onHand) <= 0n;
   return (
     <button
@@ -38,16 +51,25 @@ export function Tile({ locale, t, item, tone = null, onAdd }: Ctx & { item: Sell
       disabled={!priced}
       data-out={out || undefined}
       data-tone={tone ?? undefined}
+      data-incart={qty > 0 || undefined}
       data-testid="sell-tile"
     >
       <span className="till-tile-media">
-        <span className="till-tile-initial" aria-hidden="true">
-          {tileInitial(name)}
+        {kind ? <CatIcon kind={kind} className="till-tile-art" /> : null}
+        <span className="till-tile-initial" dir="auto" aria-hidden="true">
+          {letters.length === 1 ? letters[0] : letters.map((l, i) => <span key={i}>{l}</span>)}
         </span>
         {out ? <span className="till-tile-flag">{t.sell.outOfStock}</span> : null}
+        {qty > 0 ? (
+          <span className="till-tile-qty" aria-hidden="true" data-testid="tile-qty" key={qty}>
+            {localQuantity(locale, String(qty))}
+          </span>
+        ) : null}
       </span>
       <span className="till-tile-name">{name}</span>
-      <span className="till-tile-price">{priced ? money({ locale, t }, item.currency, item.priceMinor!) : t.sell.noPrice}</span>
+      <span className="till-tile-price" style={{ "--len": [...priceText].length } as CSSProperties}>
+        {priceText}
+      </span>
     </button>
   );
 }

@@ -1496,6 +1496,10 @@ export const ckb: Messages = {
     backToTill: "گەڕانەوە بۆ سندوق",
     openCashTitle: "پارەی ناو چەکمەجە",
     countedTitle: "پارەی ژمێردراو",
+    offline: "پەیوەندی نییە. ئەوەی لە سەبەتەکەدایە دەمێنێتەوە، بۆ تەواوکردنی فرۆشتن پەیوەندی پێویستە.",
+    quickQty: "بڕی خێرا",
+    holdShort: "ڕاگرتن",
+    clearShort: "سڕینەوە",
   },
   errors: {
     FORBIDDEN: "ڕێگەت نییە ئەم کردارە ئەنجام بدەیت.",

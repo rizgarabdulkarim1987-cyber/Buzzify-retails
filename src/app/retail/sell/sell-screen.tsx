@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, pickName } from "../../_lib/format";
 import { CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, PauseIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon } from "../../_ui/icons";
@@ -35,7 +35,8 @@ import {
   type SellItemDto,
   type ShiftDto,
 } from "./_lib/cart";
-import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, type NumpadKey } from "./_lib/till";
+import { CatIcon } from "./_lib/cat-icons";
+import { categoryIcon, categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, textLength, type CategoryIconKind, type NumpadKey } from "./_lib/till";
 import { CartLineRow, Numpad, Receipt, Tile, entryText, localQuantity, money } from "./_lib/views";
 
 type Props = {
@@ -90,6 +91,48 @@ function subscribeHeld(onChange: () => void) {
   };
 }
 
+const subscribeOnline = (onChange: () => void) => {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+};
+
+/**
+ * Tells the product grid how many rows it holds (--rows), so a small category's tiles grow to fill
+ * the screen (up to a cap) instead of leaving half of it empty, and a big one scrolls.
+ */
+function useGridRows(count: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const cols = getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean).length || 1;
+      el.style.setProperty("--rows", String(Math.max(1, Math.ceil(count / cols))));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [count]);
+  return ref;
+}
+
+type BoardTileProps = { locale: Locale; t: Messages; item: SellItemDto; tone: number | null; kind: CategoryIconKind | null; qty: number; onAdd: (item: SellItemDto) => void };
+
+/** A tile that re-renders only when its own item, colour or cart quantity changes (hundreds of them stay quick). */
+const BoardTile = memo(function BoardTile({ locale, t, item, tone, kind, qty, onAdd }: BoardTileProps) {
+  return <Tile locale={locale} t={t} item={item} tone={tone} kind={kind} qty={qty} onAdd={() => onAdd(item)} />;
+});
+
+const SKELETON_TILES = Array.from({ length: 12 }, (_, i) => i);
+
+/** The size of a very large amount: the box width divided by the text length, set as --len. */
+const lenStyle = (text: string) => ({ "--len": textLength(text) }) as CSSProperties;
+
 const isTyping = (el: EventTarget | null) =>
   el instanceof HTMLElement && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
 
@@ -128,6 +171,9 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [armClear, setArmClear] = useState(false);
+  const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const [receipt, setReceipt] = useState<ReceiptDto | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const linesRef = useRef<HTMLUListElement>(null);
@@ -144,6 +190,18 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const toneOf = useCallback((id: string | null) => categoryTone(categories, id), [categories]);
   const qtyLine = qtyFor ? (lines.find((l) => l.key === qtyFor) ?? null) : null;
   const m = (v: bigint | string) => money(ctx, currency, v);
+  const kindOf = useMemo(
+    () => new Map(categories.map((c) => [c.id, categoryIcon(`${c.nameAr} ${c.nameCkb ?? ""} ${c.nameEn ?? ""}`)] as const)),
+    [categories],
+  );
+  const inCart = useMemo(() => {
+    const q = new Map<string, number>();
+    for (const l of lines) {
+      const k = `${l.variantId}:${l.unitId}`;
+      q.set(k, (q.get(k) ?? 0) + Number(l.quantity));
+    }
+    return q;
+  }, [lines]);
 
   useEffect(() => {
     keyRef.current = null;
@@ -181,6 +239,8 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     return () => window.clearTimeout(id);
   }, [query, fetchItems]);
 
+  const gridRef = useGridRows(query.trim() !== "" && results !== null ? results.length : browse.items.length);
+
   const overlay = mode !== "sell" || menuOpen || qtyFor !== null;
 
   // Any printable key typed outside a field goes to the search box: a scanner works without a tap first.
@@ -203,20 +263,25 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     linesRef.current?.querySelector("[data-last]")?.scrollIntoView({ block: "nearest" });
   }, [lastKey, lines]);
 
-  const add = (item: SellItemDto) => {
-    if (item.priceMinor === null) return;
-    setError(null);
-    setNotice(null);
-    setLines((ls) => addItem(ls, item));
-    setLastKey(`${item.variantId}:${item.unitId}`);
-    setAnnounce(fill(s.added, { name: pickName(locale, item) }));
-  };
+  const add = useCallback(
+    (item: SellItemDto) => {
+      if (item.priceMinor === null) return;
+      setError(null);
+      setNotice(null);
+      setLines((ls) => addItem(ls, item));
+      setLastKey(`${item.variantId}:${item.unitId}`);
+      setAnnounce(fill(s.added, { name: pickName(locale, item) }));
+    },
+    [locale, s.added],
+  );
 
   const pickCategory = async (id: string | null) => {
     setCategory(id);
     setQuery("");
     setResults(null);
+    setSwitching(true);
     const found = await fetchItems("", id);
+    setSwitching(false);
     if (found) setBrowse({ items: found, more: found.length >= pageSize });
   };
 
@@ -269,7 +334,20 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const clearCart = () => {
     setLines([]);
     setMenuOpen(false);
+    setArmClear(false);
   };
+
+  // The quick Clear button asks twice: a second tap within three seconds empties the cart.
+  const clearQuick = () => {
+    if (lines.length === 0) return;
+    if (armClear) return clearCart();
+    setArmClear(true);
+  };
+  useEffect(() => {
+    if (!armClear) return;
+    const id = window.setTimeout(() => setArmClear(false), 3000);
+    return () => window.clearTimeout(id);
+  }, [armClear]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -447,6 +525,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   const shown = query.trim() !== "" && results !== null ? results : browse.items;
   const searching = query.trim() !== "";
+  const totalText = m(total);
 
   const cartBody =
     lines.length === 0 ? (
@@ -540,24 +619,48 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
             onClick={() => void pickCategory(c.id)}
             data-testid="sell-cat"
           >
+            <CatIcon kind={kindOf.get(c.id) ?? "box"} />
             <span>{pickName(locale, c)}</span>
           </button>
         ))}
       </nav>
 
       <section className="till-products" aria-label={s.items} aria-busy={loading}>
+        {!online ? (
+          <p className="till-offline" role="status" data-testid="till-offline">
+            {tl.offline}
+          </p>
+        ) : null}
         {notice ? <Notice tone="success">{notice}</Notice> : null}
         {error && mode === "sell" && qtyFor === null ? <Notice tone="danger">{error}</Notice> : null}
-        {shown.length === 0 && !loading ? (
+        {switching ? (
+          <div className="till-tiles" data-testid="sell-skeleton" aria-hidden="true">
+            {SKELETON_TILES.map((i) => (
+              <span key={i} className="till-tile-skel" />
+            ))}
+          </div>
+        ) : shown.length === 0 && !loading ? (
           <div className="till-empty">
             <strong>{searching ? fill(s.noMatch, { q: query.trim() }) : s.noItemsTitle}</strong>
             {searching ? null : <span>{s.noItemsBody}</span>}
           </div>
         ) : (
-          <div className="till-tiles" data-testid="sell-tiles">
-            {shown.map((it) => (
-              <Tile key={`${it.variantId}:${it.unitId}`} locale={locale} t={t} item={it} tone={toneOf(it.categoryId)} onAdd={() => add(it)} />
-            ))}
+          <div className="till-tiles" ref={gridRef} data-testid="sell-tiles">
+            {shown.map((it) => {
+              const k = `${it.variantId}:${it.unitId}`;
+              return (
+                <BoardTile
+                  key={k}
+                  locale={locale}
+                  t={t}
+                  item={it}
+                  tone={toneOf(it.categoryId)}
+                  kind={it.categoryId ? (kindOf.get(it.categoryId) ?? null) : null}
+                  qty={inCart.get(k) ?? 0}
+                  onAdd={add}
+                />
+              );
+            })}
           </div>
         )}
         {!searching && browse.more ? (
@@ -580,15 +683,24 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
         </div>
         {cartBody}
         <div className="till-cart-foot">
-          <div className="till-subtotal">
-            <span>{fill(tl.itemCount, { n: formatNumber(locale, count) })}</span>
-            <span>
-              {tl.subtotal} <bdi>{m(total)}</bdi>
-            </span>
-          </div>
           <div className="till-total">
-            <span>{s.total}</span>
-            <strong data-testid="cart-total">{m(total)}</strong>
+            <span>
+              {s.total}
+              <small>{fill(tl.itemCount, { n: formatNumber(locale, count) })}</small>
+            </span>
+            <strong data-testid="cart-total" style={lenStyle(totalText)}>
+              {totalText}
+            </strong>
+          </div>
+          <div className="till-foot-actions">
+            <button type="button" className="till-btn till-btn-quiet" onClick={hold} disabled={lines.length === 0} data-testid="cart-hold-quick">
+              <PauseIcon />
+              {tl.holdShort}
+            </button>
+            <button type="button" className="till-btn till-btn-quiet till-clear" data-armed={armClear || undefined} onClick={clearQuick} disabled={lines.length === 0} data-testid="cart-clear-quick">
+              <TrashIcon />
+              {armClear ? tl.clearCart : tl.clearShort}
+            </button>
           </div>
           <button type="button" className="till-btn till-btn-go till-pay" onClick={openPay} disabled={lines.length === 0} data-testid="cart-pay">
             {s.pay}
@@ -600,7 +712,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
       <div className="till-bar">
         <button type="button" className="till-bar-cart" onClick={() => setCartOpen(true)} aria-label={s.viewCart} data-testid="bar-cart">
           <span className="till-count">{formatNumber(locale, count)}</span>
-          <strong>{m(total)}</strong>
+          <strong>{totalText}</strong>
         </button>
         <button type="button" className="till-btn till-btn-go till-bar-pay" onClick={openPay} disabled={lines.length === 0} data-testid="bar-pay">
           {s.pay}
@@ -676,6 +788,15 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
               {qtyText === "" ? localQuantity(locale, qtyLine.quantity) : entryText(locale, qtyText)}
             </output>
             {error ? <Notice tone="danger">{error}</Notice> : null}
+            {qtyLine.quantityScale === 0 ? (
+              <div className="till-quickqty" dir="ltr" role="group" aria-label={tl.quickQty}>
+                {[1, 2, 3, 5, 10, 12].map((n) => (
+                  <button key={n} type="button" className="till-chip" onClick={() => setQtyText(String(n))}>
+                    {formatNumber(locale, n)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <Numpad locale={locale} t={t} label={tl.qtyTitle} decimals={qtyLine.quantityScale} onPress={(k) => setQtyText((x) => numpadPress(x, k, qtyLine.quantityScale))} />
             <div className="till-pad-actions">
               <button type="button" className="till-btn till-btn-quiet" onClick={() => setQtyFor(null)}>
@@ -702,7 +823,9 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
               <dl className="till-pay-summary" data-testid="pay-summary">
                 <div className="till-pay-due">
                   <dt>{s.payScreen.due}</dt>
-                  <dd data-testid="pay-due">{m(total)}</dd>
+                  <dd data-testid="pay-due" style={lenStyle(totalText)}>
+                    {totalText}
+                  </dd>
                 </div>
                 <div className="till-pay-given">
                   <dt>
@@ -753,6 +876,11 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 </div>
               </div>
             </div>
+            {!online ? (
+              <p className="till-offline" role="status">
+                {tl.offline}
+              </p>
+            ) : null}
             {error ? <Notice tone="danger">{error}</Notice> : null}
             <button type="button" className="till-btn till-btn-go till-pay till-pay-confirm" onClick={() => void confirm()} disabled={!pay.ready || sending} aria-busy={sending} data-testid="pay-confirm">
               {sending ? s.payScreen.sending : s.payScreen.confirm}

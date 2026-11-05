@@ -1495,6 +1495,10 @@ export const en: Messages = {
     backToTill: "Back to the till",
     openCashTitle: "Cash in the drawer",
     countedTitle: "Counted cash",
+    offline: "No connection. The cart is kept; finishing a sale needs the connection.",
+    quickQty: "Quick quantity",
+    holdShort: "Hold",
+    clearShort: "Clear",
   },
   errors: {
     FORBIDDEN: "You do not have permission to do this.",
