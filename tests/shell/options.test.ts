@@ -54,7 +54,7 @@ describe("shell options", () => {
     expect(result).toEqual({
       ok: true,
       value: {
-        business: { id: s.business.id, name: "Test Business" },
+        business: { id: s.business.id, name: "Test Business", activityType: "MARKET" },
         role: "CASHIER",
         branches: [{ id: s.branches.A!.id, name: "A", terminals: [{ id: s.tA.id, name: "Till A1" }] }],
       },
@@ -90,8 +90,8 @@ describe("memberships", () => {
     await db.rtStaff.create({ data: { businessId: archived.business.id, userId: s.staff.owner!.user.id, role: "OWNER" } });
 
     expect(await listMemberships(s.staff.owner!.user.id)).toEqual([
-      { businessId: second.business.id, name: "Another shop", role: "CASHIER" },
-      { businessId: s.business.id, name: "Test Business", role: "OWNER" },
+      { businessId: second.business.id, name: "Another shop", role: "CASHIER", activityType: "MARKET" },
+      { businessId: s.business.id, name: "Test Business", role: "OWNER", activityType: "MARKET" },
     ]);
     expect(await listMemberships(s.staff.gone!.user.id)).toEqual([]);
     expect(await listMemberships("")).toEqual([]);

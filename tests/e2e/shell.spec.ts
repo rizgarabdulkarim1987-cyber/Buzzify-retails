@@ -56,6 +56,9 @@ test("an 80-character business name does not overflow the header at 375px width"
   // The long branch has no terminal: one button chooses it.
   await page.getByRole("button", { name: ar.select.chooseBranch }).click();
   await expect(page).toHaveURL(/\/retail\/sell/);
+  // The sale screen hides the shell header (the till has its own frame), so measure the header on a back-office page.
+  await page.goto("/retail/home?menu=1");
+  await expect(page.getByTestId("shell-header")).toBeVisible();
 
   const name = page.getByTestId("header-business");
   await expect(name).toHaveText(LONG_BUSINESS);
