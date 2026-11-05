@@ -24,15 +24,15 @@ describe("permissions", () => {
 
   it("OWNER holds every permission", () => {
     const all = new Set(Object.values(ROLE_PERMISSIONS).flat());
-    expect(permissionsOf("OWNER").size).toBe(21);
-    expect(all.size).toBe(21);
+    expect(permissionsOf("OWNER").size).toBe(22);
+    expect(all.size).toBe(22);
   });
 
   it("pins the whole role matrix", () => {
     const expected: Record<RtRole, Permission[]> = {
       OWNER: [...PERMISSIONS],
-      MANAGER: ["price.change", "discount.override", "return.noInvoice", "refund", "count.adjust.approve", "stock.receive", "stock.transfer", "staff.manage", "ai.use", "multiBranch.access", "catalog.manage", "catalog.import", "stock.adjust", "stock.view", "sale.create", "shift.manage"],
-      CASHIER: ["stock.view", "sale.create"],
+      MANAGER: ["price.change", "discount.override", "return.noInvoice", "refund", "count.adjust.approve", "stock.receive", "stock.transfer", "staff.manage", "ai.use", "multiBranch.access", "catalog.manage", "catalog.import", "stock.adjust", "stock.view", "sale.create", "shift.manage", "expense.create"],
+      CASHIER: ["stock.view", "sale.create", "expense.create"],
       STOCK: ["stock.receive", "stock.transfer", "catalog.manage", "stock.adjust", "stock.view"],
       PURCHASING: ["stock.receive", "ai.use", "stock.view"],
       ACCOUNTANT: ["cost.view", "data.export", "supplier.pay", "multiBranch.access", "stock.view"],
@@ -50,7 +50,7 @@ describe("permissions", () => {
     expect(roles.filter((r) => can(r, "catalog.import")).sort()).toEqual(["MANAGER", "OWNER"]);
     expect(PERMISSIONS).toContain("catalog.manage");
     expect(PERMISSIONS).toContain("catalog.import");
-    expect(PERMISSIONS.length).toBe(21);
+    expect(PERMISSIONS.length).toBe(22);
     expect(Object.isFrozen(PERMISSIONS)).toBe(true);
   });
 
@@ -62,7 +62,7 @@ describe("permissions", () => {
     );
     expect(PERMISSIONS).toContain("stock.adjust");
     expect(PERMISSIONS).toContain("stock.view");
-    expect(PERMISSIONS.length).toBe(21);
+    expect(PERMISSIONS.length).toBe(22);
     expect(Object.isFrozen(PERMISSIONS)).toBe(true);
   });
 
@@ -71,7 +71,7 @@ describe("permissions", () => {
     expect(roles.filter((r) => can(r, "ai.consent"))).toEqual(["OWNER"]);
     for (const role of roles.filter((r) => r !== "OWNER")) expect(permissionsOf(role).has("ai.consent"), role).toBe(false);
     expect(PERMISSIONS).toContain("ai.consent");
-    expect(PERMISSIONS.length).toBe(21);
+    expect(PERMISSIONS.length).toBe(22);
     expect(Object.isFrozen(PERMISSIONS)).toBe(true);
   });
 
