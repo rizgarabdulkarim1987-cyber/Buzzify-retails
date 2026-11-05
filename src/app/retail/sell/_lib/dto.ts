@@ -5,7 +5,7 @@ import type { CategoryDto, ReceiptDto, SellItemDto, ShiftDto } from "./cart";
 
 /* What crosses the wire to the till: BigInt as digit strings, dates as ISO text. Cost never leaves the server. */
 
-export const categoryDto = (c: SellCategory): CategoryDto => ({ id: c.id, nameAr: c.nameAr, nameCkb: c.nameCkb, nameEn: c.nameEn });
+export const categoryDto = (c: SellCategory): CategoryDto => ({ id: c.id, nameAr: c.nameAr, nameCkb: c.nameCkb, nameEn: c.nameEn, itemCount: c.itemCount });
 
 export const itemDto = (i: SellItem): SellItemDto => ({
   variantId: i.variantId,

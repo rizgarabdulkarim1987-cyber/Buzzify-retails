@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
+import type { PackId, PackWords } from "@/packs";
 import { fill, pickName } from "../../_lib/format";
-import { CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, PauseIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon } from "../../_ui/icons";
+import { BarcodeIcon, CardIcon, CartIcon, CashIcon, CloseIcon, DrawerIcon, GridIcon, MenuIcon, MinusIcon, PackageIcon, PlusIcon, PrintIcon, SearchIcon, SignOutIcon, TrashIcon, UserIcon } from "../../_ui/icons";
 import { LocaleSwitcher } from "../../_ui/locale-switcher";
 import { Notice } from "../../_ui/state";
 import { signOut } from "../../session-actions";
@@ -13,10 +14,10 @@ import { newKey } from "../catalog/_lib/keys";
 import { createSaleAction, pricesAction, sellItemsAction } from "./actions";
 import {
   addItem,
+  lineKey,
   cardRest,
   cartCount,
   cartTotal,
-  holdCart,
   parseAmount,
   parseHeld,
   payState,
@@ -24,7 +25,6 @@ import {
   quickAmounts,
   removeLine,
   repriceLines,
-  resumeCart,
   setQuantity,
   stepLine,
   type CartLine,
@@ -35,8 +35,14 @@ import {
   type SellItemDto,
   type ShiftDto,
 } from "./_lib/cart";
-import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, type NumpadKey } from "./_lib/till";
-import { CartLineRow, Numpad, Receipt, Tile, entryText, localQuantity, money } from "./_lib/views";
+import { MAX_TICKETS, closeTicket, latestTicket, openTicket, orderTickets, saveTicket, ticketLines, ticketTotals, touchTicket } from "./_lib/tickets";
+import { keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, textLength, type NumpadKey } from "./_lib/till";
+import { Numpad, Receipt, TicketPad, TicketRow, Tile, entryText, money } from "./_lib/views";
+import { accentFor, ACCENT } from "./_lib/category-accent";
+import { categoryKindFor } from "./_lib/category-kind";
+import { CategoryTile } from "./_lib/category-tile";
+import { ChevronIcon } from "./_lib/nav-icons";
+import { TillNav } from "./till-nav";
 
 type Props = {
   locale: Locale;
@@ -48,6 +54,10 @@ type Props = {
   initialItems: SellItemDto[];
   /** Items per page of the read model: a full page means there may be more. */
   pageSize: number;
+  /** The product the business uses: it decides which standard departments the cards recognise. */
+  pack: PackId;
+  /** The product's own words for the department cards. */
+  departmentWords: PackWords["till"];
   /** localStorage key of this device's held carts (per business and user). */
   heldKey: string;
   business: string;
@@ -90,6 +100,27 @@ function subscribeHeld(onChange: () => void) {
   };
 }
 
+const subscribeOnline = (onChange: () => void) => {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+};
+
+type BoardTileProps = { locale: Locale; t: Messages; item: SellItemDto; qty: number; onAdd: (item: SellItemDto) => void };
+
+/** A tile that re-renders only when its own item, colour or cart quantity changes (hundreds of them stay quick). */
+const BoardTile = memo(function BoardTile({ locale, t, item, qty, onAdd }: BoardTileProps) {
+  return <Tile locale={locale} t={t} item={item} qty={qty} onAdd={() => onAdd(item)} />;
+});
+
+const SKELETON_TILES = Array.from({ length: 12 }, (_, i) => i);
+
+/** The size of a very large amount: the box width divided by the text length, set as --len. */
+const lenStyle = (text: string) => ({ "--len": textLength(text) }) as CSSProperties;
+
 const isTyping = (el: EventTarget | null) =>
   el instanceof HTMLElement && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
 
@@ -103,12 +134,14 @@ const finePointer = () => typeof window !== "undefined" && window.matchMedia("(p
  * opens the cart as a sheet. A barcode scanner types into the search box and ends with Enter: a
  * single barcode hit goes straight into the cart. The numpad edits quantities and takes the cash.
  */
-export function SellScreen({ locale, t, currency, shift, locationId, categories, initialItems, pageSize, heldKey, business, branch, operator }: Props) {
+export function SellScreen({ locale, t, currency, shift, locationId, categories, initialItems, pageSize, pack, departmentWords, heldKey, business, branch, operator }: Props) {
   const ctx = { locale, t };
   const s = t.sell;
   const tl = t.till;
   const [category, setCategory] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  /** The products side shows the department pictures until one is opened (or a name is searched). */
+  const [browsing, setBrowsing] = useState(false);
   /** The browsed page(s) of the chosen category; a search shows `results` instead. */
   const [browse, setBrowse] = useState<{ items: SellItemDto[]; more: boolean }>({ items: initialItems, more: initialItems.length >= pageSize });
   const [results, setResults] = useState<SellItemDto[] | null>(null);
@@ -117,19 +150,33 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const [lastKey, setLastKey] = useState<string | null>(null);
   const heldRaw = useSyncExternalStore(subscribeHeld, () => readHeldRaw(heldKey), () => null);
   const held = useMemo(() => parseHeld(heldRaw), [heldRaw]);
+  /** The sale being rung up; every open sale (this one included) is saved in the device store. */
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [ticketsOpen, setTicketsOpen] = useState(false);
+  const [ticketMsg, setTicketMsg] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("sell");
-  const [cartOpen, setCartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [qtyFor, setQtyFor] = useState<string | null>(null);
-  const [qtyText, setQtyText] = useState("");
+  /** The line the keypad edits, and the digits typed for it so far. */
+  const [selKey, setSelKey] = useState<string | null>(null);
+  const [entry, setEntry] = useState("");
+  const [armClear, setArmClear] = useState(false);
+  const [padOpen, setPadOpen] = useState(false);
+  const [productsOpen, setProductsOpen] = useState(false);
   const [cashText, setCashText] = useState("");
   const [cardMinor, setCardMinor] = useState(0n);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const [receipt, setReceipt] = useState<ReceiptDto | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** The barcode field at the top of the ticket: scanners and typed codes. */
+  const codeRef = useRef<HTMLInputElement>(null);
+  const [code, setCode] = useState("");
+  const [codeMiss, setCodeMiss] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
   const linesRef = useRef<HTMLUListElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   /** The current attempt's key: kept across a network retry, dropped when the cart or the payment changes. */
@@ -141,9 +188,17 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
   const cashMinor = parseAmount(cashText.replace(/\.$/, "") || "0", currency) ?? 0n;
   const tender = { cashMinor, cardMinor };
   const pay = payState(total, tender);
-  const toneOf = useCallback((id: string | null) => categoryTone(categories, id), [categories]);
-  const qtyLine = qtyFor ? (lines.find((l) => l.key === qtyFor) ?? null) : null;
+  /** The selected line; with none picked, the last one (so the keypad always has a target). */
+  const selLine = lines.find((l) => l.key === selKey) ?? lines[lines.length - 1] ?? null;
   const m = (v: bigint | string) => money(ctx, currency, v);
+  const inCart = useMemo(() => {
+    const q = new Map<string, number>();
+    for (const l of lines) {
+      const k = `${l.variantId}:${l.unitId}`;
+      q.set(k, (q.get(k) ?? 0) + Number(l.quantity));
+    }
+    return q;
+  }, [lines]);
 
   useEffect(() => {
     keyRef.current = null;
@@ -181,13 +236,13 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     return () => window.clearTimeout(id);
   }, [query, fetchItems]);
 
-  const overlay = mode !== "sell" || menuOpen || qtyFor !== null;
+  const overlay = mode !== "sell" || menuOpen;
 
   // Any printable key typed outside a field goes to the search box: a scanner works without a tap first.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (overlay || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || isTyping(e.target)) return;
-      searchRef.current?.focus();
+      codeRef.current?.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -195,7 +250,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   // Back on the sale screen: the search box is ready for the scanner (not on touch, where it would pop the keyboard).
   useEffect(() => {
-    if (!overlay && finePointer()) searchRef.current?.focus({ preventScroll: true });
+    if (!overlay && finePointer()) codeRef.current?.focus({ preventScroll: true });
   }, [overlay]);
 
   // The line just touched stays in view in the cart.
@@ -203,26 +258,57 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     linesRef.current?.querySelector("[data-last]")?.scrollIntoView({ block: "nearest" });
   }, [lastKey, lines]);
 
-  const add = (item: SellItemDto) => {
-    if (item.priceMinor === null) return;
-    setError(null);
-    setNotice(null);
-    setLines((ls) => addItem(ls, item));
-    setLastKey(`${item.variantId}:${item.unitId}`);
-    setAnnounce(fill(s.added, { name: pickName(locale, item) }));
-  };
+  const add = useCallback(
+    (item: SellItemDto) => {
+      if (item.priceMinor === null) return;
+      setError(null);
+      setNotice(null);
+      setLines((ls) => addItem(ls, item));
+      const key = lineKey(item.variantId, item.unitId);
+      setLastKey(key);
+      setSelKey(key);
+      setEntry("");
+      setAnnounce(fill(s.added, { name: pickName(locale, item) }));
+    },
+    [locale, s.added],
+  );
 
   const pickCategory = async (id: string | null) => {
     setCategory(id);
+    setBrowsing(true);
     setQuery("");
     setResults(null);
+    setSwitching(true);
     const found = await fetchItems("", id);
+    setSwitching(false);
     if (found) setBrowse({ items: found, more: found.length >= pageSize });
   };
 
   const loadMore = async () => {
     const found = await fetchItems("", category, browse.items.length);
     if (found) setBrowse((b) => ({ items: [...b.items, ...found], more: found.length >= pageSize }));
+  };
+
+  /** Enter on the barcode field (a scanner ends with Enter): one hit goes into the ticket and the field clears; an unknown code says so. */
+  const onScan = async (e: FormEvent) => {
+    e.preventDefault();
+    const c = code.trim();
+    if (c === "" || scanning) return;
+    setScanning(true);
+    setCodeMiss(null);
+    try {
+      const r = await sellItemsAction({ query: c, categoryId: null, locationId, offset: 0 });
+      if (!r.ok) return setCodeMiss(failureMessage(t, r));
+      const hit = r.value.find((it) => it.matchedBarcode && it.priceMinor !== null);
+      if (!hit) return setCodeMiss(fill(tl.scanNotFound, { code: c }));
+      add(hit);
+      setCode("");
+    } catch {
+      setCodeMiss(s.failures.network);
+    } finally {
+      setScanning(false);
+      codeRef.current?.focus({ preventScroll: true });
+    }
   };
 
   const onSearch = async (e: FormEvent) => {
@@ -240,7 +326,17 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     setResults(found);
   };
 
+  const backToCategories = () => {
+    setBrowsing(false);
+    setCategory(null);
+    setQuery("");
+    setResults(null);
+    searchSeq.current++;
+    setLoading(false);
+  };
+
   const clearSearch = () => {
+    setBrowsing(false);
     setQuery("");
     setResults(null);
     searchSeq.current++;
@@ -250,26 +346,117 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   // Menu ---------------------------------------------------------------------------------------
 
-  const hold = () => {
-    if (lines.length === 0) return;
-    writeHeld(heldKey, holdCart(held, lines, newKey(), new Date()));
-    setLines([]);
+  // Parallel sales ------------------------------------------------------------------------------
+
+  /** Puts a ticket on the screen: its lines, a clean keypad and no leftover messages. */
+  const showTicket = (t: HeldCart | null) => {
+    const ls = t ? ticketLines(t) : [];
+    setActiveId(t?.id ?? null);
+    setLines(ls);
+    setSelKey(ls[ls.length - 1]?.key ?? null);
+    setLastKey(null);
+    setEntry("");
+    setArmClear(false);
+    setError(null);
+    setNotice(null);
+    setTicketMsg(null);
+    setCodeMiss(null);
+    setCode("");
+    setTicketsOpen(false);
     setMenuOpen(false);
+    setProductsOpen(false);
+    if (finePointer()) codeRef.current?.focus({ preventScroll: true });
   };
 
-  const resume = (id: string) => {
-    const r = resumeCart(held, id);
-    if (!r) return;
-    // The current cart, if any, is held in its place so nothing is lost.
-    writeHeld(heldKey, lines.length > 0 ? holdCart(r.held, lines, newKey(), new Date()) : r.held);
-    setLines(r.lines);
-    setMenuOpen(false);
+  const readStore = () => parseHeld(readHeldRaw(heldKey));
+
+  // On load: the sale worked on last comes back, or the first blank one opens.
+  /* eslint-disable react-hooks/set-state-in-effect -- the device store only exists in the browser: read once after mount */
+  useEffect(() => {
+    const store = readStore();
+    const last = latestTicket(store);
+    if (last) {
+      showTicket(last);
+      return;
+    }
+    const o = openTicket([], newKey(), new Date());
+    if (o) {
+      writeHeld(heldKey, o.store);
+      showTicket(o.ticket);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per device store
+  }, [heldKey]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Every change of the active sale is saved at once (a reload or a switch loses nothing).
+  useEffect(() => {
+    if (!activeId) return;
+    const cur = readStore();
+    const next = saveTicket(cur, activeId, lines, new Date());
+    if (next !== cur) writeHeld(heldKey, [...next]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- readStore only reads
+  }, [lines, activeId, heldKey]);
+
+  /** Leaves the active sale; a blank one left behind is dropped so empties never pile up. */
+  const leaveActive = (store: HeldCart[]) => (activeId && lines.length === 0 && store.length > 1 ? closeTicket(store, activeId) : store);
+
+  const newSale = () => {
+    if (lines.length === 0) {
+      setTicketsOpen(false);
+      if (finePointer()) codeRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    const cur = readStore();
+    const o = openTicket(cur, newKey(), new Date());
+    if (!o) {
+      setTicketsOpen(false);
+      setTicketMsg(fill(tl.ticketsLimit, { max: formatNumber(locale, MAX_TICKETS) }));
+      return;
+    }
+    writeHeld(heldKey, o.store);
+    showTicket(o.ticket);
+  };
+
+  const switchTo = (id: string) => {
+    if (id === activeId) return setTicketsOpen(false);
+    const cur = readStore();
+    const target = cur.find((h) => h.id === id);
+    if (!target) return;
+    writeHeld(heldKey, touchTicket(leaveActive(cur), id, new Date()));
+    showTicket(target);
+  };
+
+  /** Paid or voided: this sale's tab closes and the most recent other one (or a blank) comes up. */
+  const closeActive = () => {
+    const cur = readStore();
+    const rest = activeId ? closeTicket(cur, activeId) : cur;
+    const other = latestTicket(rest);
+    if (other) {
+      writeHeld(heldKey, rest);
+      return showTicket(other);
+    }
+    const o = openTicket(rest, newKey(), new Date());
+    if (o) {
+      writeHeld(heldKey, o.store);
+      showTicket(o.ticket);
+    }
   };
 
   const clearCart = () => {
-    setLines([]);
-    setMenuOpen(false);
+    closeActive();
   };
+
+  // The Clear key asks twice: a second tap within three seconds empties the ticket.
+  const clearKey = () => {
+    if (lines.length === 0) return;
+    if (armClear) return clearCart();
+    setArmClear(true);
+  };
+  useEffect(() => {
+    if (!armClear) return;
+    const id = window.setTimeout(() => setArmClear(false), 3000);
+    return () => window.clearTimeout(id);
+  }, [armClear]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -281,46 +468,35 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen]);
 
-  // Quantity numpad -----------------------------------------------------------------------------
+  // The keypad ----------------------------------------------------------------------------------
 
-  const openQty = (key: string) => {
-    setQtyFor(key);
-    setQtyText("");
-    setError(null);
+  const selectLine = (key: string) => {
+    setSelKey(key);
+    setEntry("");
   };
 
-  const commitQty = useCallback(() => {
-    if (!qtyLine) return setQtyFor(null);
-    if (qtyText === "") return setQtyFor(null);
-    if (/^0*\.?0*$/.test(qtyText)) {
-      setLines((ls) => removeLine(ls, qtyLine.key));
-      return setQtyFor(null);
-    }
-    const next = setQuantity(lines, qtyLine.key, qtyText);
-    if (!next) return setError(s.failures.badQuantity);
+  /** Digits type the selected line's new quantity; it shows in the row at once. */
+  const padPress = (k: NumpadKey) => {
+    if (!selLine) return;
     setError(null);
-    setLines(next);
-    setLastKey(qtyLine.key);
-    setQtyFor(null);
-  }, [qtyLine, qtyText, lines, s.failures.badQuantity]);
+    const next = numpadPress(entry, k, selLine.quantityScale);
+    setEntry(next);
+    if (k === "clear" || next === "" || /^0*\.?0*$/.test(next)) return;
+    const updated = setQuantity(lines, selLine.key, next.replace(/\.$/, ""));
+    if (updated) setLines(updated);
+  };
 
-  useEffect(() => {
-    if (!qtyLine) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") return setQtyFor(null);
-      if (e.key === "Enter") {
-        e.preventDefault();
-        return commitQty();
-      }
-      const k = keyFromKeyboard(e.key);
-      if (k) {
-        e.preventDefault();
-        setQtyText((x) => numpadPress(x, k, qtyLine.quantityScale));
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [qtyLine, commitQty]);
+  const padStep = (d: 1 | -1) => {
+    if (!selLine) return;
+    setLines((ls) => stepLine(ls, selLine.key, d));
+    setEntry("");
+  };
+
+  const voidLine = () => {
+    if (!selLine) return;
+    setLines((ls) => removeLine(ls, selLine.key));
+    setEntry("");
+  };
 
   // Paying ---------------------------------------------------------------------------------------
 
@@ -330,7 +506,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     setCashText("");
     setCardMinor(0n);
     setMode("pay");
-    setCartOpen(false);
+    setProductsOpen(false);
   };
 
   const pressCash = (k: NumpadKey) => setCashText((x) => numpadPress(x, k, moneyDecimals(currency)));
@@ -360,7 +536,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
       });
       if (r.ok) {
         setReceipt(r.value);
-        setLines([]);
+        closeActive();
         resetPay();
         setMode("receipt");
         return;
@@ -408,7 +584,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     return () => window.removeEventListener("keydown", onKey);
   }, [mode, sending, currency]);
 
-  const newSale = () => {
+  const afterReceipt = () => {
     setReceipt(null);
     setMode("sell");
     setNotice(null);
@@ -432,7 +608,7 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
           ) : null}
         </div>
         <div className="till-done-actions">
-          <button type="button" className="till-btn till-btn-go till-btn-xl" onClick={newSale} autoFocus data-testid="receipt-new">
+          <button type="button" className="till-btn till-btn-go till-btn-xl" onClick={afterReceipt} autoFocus data-testid="receipt-new">
             {s.receipt.newSale}
           </button>
           <button type="button" className="till-btn till-btn-quiet" onClick={() => window.print()} data-testid="receipt-print">
@@ -447,6 +623,8 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
 
   const shown = query.trim() !== "" && results !== null ? results : browse.items;
   const searching = query.trim() !== "";
+  const showItems = browsing || searching;
+  const totalText = m(total);
 
   const cartBody =
     lines.length === 0 ? (
@@ -458,154 +636,309 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
     ) : (
       <ul className="till-lines" ref={linesRef}>
         {lines.map((l) => (
-          <CartLineRow
-            key={l.key}
-            locale={locale}
-            t={t}
-            line={l}
-            currency={currency}
-            last={l.key === lastKey}
-            onStep={(d) => {
-              setLines((ls) => stepLine(ls, l.key, d));
-              setLastKey(l.key);
-            }}
-            onRemove={() => setLines((ls) => removeLine(ls, l.key))}
-            onEditQty={() => openQty(l.key)}
-          />
+          <TicketRow key={l.key} locale={locale} t={t} line={l} currency={currency} selected={l.key === selLine?.key} last={l.key === lastKey} onSelect={() => selectLine(l.key)} />
         ))}
       </ul>
     );
 
+  const noLines = lines.length === 0;
+  /** One tab per open sale; the active one shows the live lines. */
+  const tabs = orderTickets(held).map((h) => {
+    const live = h.id === activeId ? { count, total } : ticketTotals(h);
+    return { id: h.id, no: h.no, count: live.count, total: live.total };
+  });
+  const activeNo = tabs.find((x) => x.id === activeId)?.no ?? 1;
+
   return (
-    <div className="till-app" data-cart-open={cartOpen || undefined} data-testid="till">
+    <div className="till-app" data-products-open={productsOpen || undefined} data-pad-closed={!padOpen || undefined} data-testid="till">
       <p className="visually-hidden" role="status" aria-live="polite">
         {announce}
       </p>
 
-      <header className="till-top">
-        <div className="till-top-id">
-          <strong className="truncate" title={business}>
-            {business}
-          </strong>
-          <span className="truncate" title={`${branch} · ${operator}`}>
-            {branch} · {tl.operator}: {operator}
-          </span>
-        </div>
-        <form className="till-search" role="search" onSubmit={onSearch}>
-          <label className="visually-hidden" htmlFor="till-search">
-            {s.search}
-          </label>
-          <SearchIcon />
-          <input
-            ref={searchRef}
-            id="till-search"
-            className="till-search-input"
-            type="search"
-            enterKeyHint="search"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={s.search}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              if (e.target.value.trim() === "") setResults(null);
-            }}
-            data-testid="sell-search"
-          />
-          {query !== "" ? (
-            <button type="button" className="till-search-clear" onClick={clearSearch} aria-label={s.clearSearch}>
-              <CloseIcon />
-            </button>
-          ) : null}
-        </form>
-        <button type="button" className="till-menu-btn" onClick={() => setMenuOpen(true)} aria-haspopup="dialog" aria-expanded={menuOpen} data-testid="till-menu">
-          <MenuIcon />
-          <span className="till-menu-label">{tl.menu}</span>
-          {held.length > 0 ? <span className="till-badge">{formatNumber(locale, held.length)}</span> : null}
-        </button>
-      </header>
+      <TillNav t={t} variant="rail" />
 
-      <nav className="till-cats" aria-label={s.categories}>
-        <button type="button" className="till-cat" data-tone="all" aria-pressed={category === null && !searching} onClick={() => void pickCategory(null)} data-testid="sell-cat-all">
-          <GridIcon />
-          <span>{s.all}</span>
-        </button>
-        {categories.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className="till-cat"
-            data-tone={toneOf(c.id) ?? undefined}
-            aria-pressed={category === c.id && !searching}
-            onClick={() => void pickCategory(c.id)}
-            data-testid="sell-cat"
-          >
-            <span>{pickName(locale, c)}</span>
-          </button>
-        ))}
-      </nav>
-
-      <section className="till-products" aria-label={s.items} aria-busy={loading}>
-        {notice ? <Notice tone="success">{notice}</Notice> : null}
-        {error && mode === "sell" && qtyFor === null ? <Notice tone="danger">{error}</Notice> : null}
-        {shown.length === 0 && !loading ? (
-          <div className="till-empty">
-            <strong>{searching ? fill(s.noMatch, { q: query.trim() }) : s.noItemsTitle}</strong>
-            {searching ? null : <span>{s.noItemsBody}</span>}
-          </div>
-        ) : (
-          <div className="till-tiles" data-testid="sell-tiles">
-            {shown.map((it) => (
-              <Tile key={`${it.variantId}:${it.unitId}`} locale={locale} t={t} item={it} tone={toneOf(it.categoryId)} onAdd={() => add(it)} />
+      <aside className="till-ticket" aria-label={s.cart} data-testid="sell-cart">
+        <div className="till-tabs" data-testid="ticket-tabs">
+          <div className="till-tabs-list" role="tablist" aria-label={tl.openSales}>
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={tab.id === activeId}
+                className="till-tab"
+                data-active={tab.id === activeId || undefined}
+                onClick={() => switchTo(tab.id)}
+                data-testid="ticket-tab"
+              >
+                <strong>{fill(tl.saleNo, { n: formatNumber(locale, tab.no) })}</strong>
+                <small>{tab.count > 0 ? `${fill(tl.itemCount, { n: formatNumber(locale, tab.count) })} · ${m(tab.total)}` : tl.saleEmpty}</small>
+              </button>
             ))}
           </div>
-        )}
-        {!searching && browse.more ? (
-          <button type="button" className="till-btn till-btn-quiet till-more" onClick={() => void loadMore()} disabled={loading} data-testid="sell-more">
-            {tl.showMore}
-          </button>
-        ) : null}
-      </section>
-
-      <div className="till-sheet-scrim" onClick={() => setCartOpen(false)} aria-hidden="true" />
-      <aside className="till-cart" aria-label={s.cart} data-testid="sell-cart">
-        <div className="till-cart-head">
-          <h2>
-            {s.cart}
-            {count > 0 ? <span className="till-count">{formatNumber(locale, count)}</span> : null}
-          </h2>
-          <button type="button" className="till-icon-btn till-sheet-close" onClick={() => setCartOpen(false)} aria-label={s.items}>
-            <CloseIcon />
+          <button type="button" className="till-newsale" onClick={newSale} data-testid="new-sale">
+            <PlusIcon />
+            {tl.newSale}
           </button>
         </div>
-        {cartBody}
-        <div className="till-cart-foot">
-          <div className="till-subtotal">
-            <span>{fill(tl.itemCount, { n: formatNumber(locale, count) })}</span>
-            <span>
-              {tl.subtotal} <bdi>{m(total)}</bdi>
-            </span>
-          </div>
-          <div className="till-total">
+        <div className="till-switch" data-testid="ticket-switch">
+          <button type="button" className="till-switch-btn" onClick={() => setTicketsOpen(true)} aria-haspopup="dialog" aria-expanded={ticketsOpen} data-testid="open-sales">
+            <strong>{fill(tl.saleOf, { n: formatNumber(locale, activeNo), total: formatNumber(locale, tabs.length) })}</strong>
+            <small>{count > 0 ? `${fill(tl.itemCount, { n: formatNumber(locale, count) })} · ${totalText}` : tl.saleEmpty}</small>
+          </button>
+          <button type="button" className="till-newsale" onClick={newSale} data-testid="new-sale-compact">
+            <PlusIcon />
+            {tl.newSale}
+          </button>
+        </div>
+        {ticketMsg ? (
+          <p className="till-ticketmsg" role="status" data-testid="tickets-limit">
+            {ticketMsg}
+          </p>
+        ) : null}
+        <div className="till-ticket-head">
+          <h2>
+            {tl.ticket}
+            {count > 0 ? <span className="till-count">{formatNumber(locale, count)}</span> : null}
+          </h2>
+          <button type="button" className="till-products-btn" onClick={() => setProductsOpen(true)} data-testid="open-products">
+            <GridIcon />
+            {tl.productsTab}
+          </button>
+          <button type="button" className="till-menu-btn" onClick={() => setMenuOpen(true)} aria-haspopup="dialog" aria-expanded={menuOpen} data-testid="till-menu">
+            <MenuIcon />
+            <span className="till-menu-label">{tl.menu}</span>
+          </button>
+        </div>
+        <form className="till-scan" role="search" onSubmit={onScan}>
+          <label className="visually-hidden" htmlFor="till-code">
+            {tl.scanLabel}
+          </label>
+          <BarcodeIcon />
+          <input
+            ref={codeRef}
+            id="till-code"
+            className="till-scan-input"
+            type="text"
+            enterKeyHint="go"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={tl.scanPlaceholder}
+            value={code}
+            aria-invalid={codeMiss !== null || undefined}
+            aria-describedby={codeMiss ? "till-code-miss" : undefined}
+            onChange={(e) => {
+              setCode(e.target.value);
+              setCodeMiss(null);
+            }}
+            data-testid="scan-input"
+          />
+        </form>
+        {codeMiss ? (
+          <p className="till-scan-miss" id="till-code-miss" role="alert" data-testid="scan-miss">
+            {codeMiss}
+          </p>
+        ) : null}
+        {!online ? (
+          <p className="till-offline" role="status" data-testid="till-offline">
+            {tl.offline}
+          </p>
+        ) : null}
+        {notice ? <Notice tone="success">{notice}</Notice> : null}
+        {error && mode === "sell" ? <Notice tone="danger">{error}</Notice> : null}
+        {noLines ? null : (
+          <div className="till-cols" aria-hidden="true">
+            <span>{tl.colItem}</span>
+            <span>{tl.colQty}</span>
+            <span className="till-col-price">{tl.colPrice}</span>
             <span>{s.total}</span>
-            <strong data-testid="cart-total">{m(total)}</strong>
           </div>
-          <button type="button" className="till-btn till-btn-go till-pay" onClick={openPay} disabled={lines.length === 0} data-testid="cart-pay">
+        )}
+        {cartBody}
+        <div className="till-ticket-foot">
+          <div className="till-total">
+            <span>
+              {s.total}
+              <small>{fill(tl.itemCount, { n: formatNumber(locale, count) })}</small>
+            </span>
+            <strong data-testid="cart-total" style={lenStyle(totalText)}>
+              {totalText}
+            </strong>
+          </div>
+          {noLines ? null : (
+            <button type="button" className="till-pad-toggle" onClick={() => setPadOpen((v) => !v)} aria-expanded={padOpen} aria-controls="till-keys">
+              {padOpen ? tl.padHide : tl.padShow}
+            </button>
+          )}
+          <div className="till-keys" id="till-keys">
+            <TicketPad locale={locale} t={t} decimals={selLine?.quantityScale ?? 0} name={selLine ? pickName(locale, selLine) : ""} disabled={noLines} onPress={padPress} onStep={padStep} />
+            <div className="till-fn" role="group" aria-label={tl.cartActions}>
+              <button type="button" className="till-fn-key" onClick={voidLine} disabled={noLines} data-testid="cart-void">
+                <MinusIcon />
+                {tl.fnVoid}
+              </button>
+              <button type="button" className="till-fn-key till-clear" data-armed={armClear || undefined} onClick={clearKey} disabled={noLines} data-testid="cart-clear-quick">
+                <TrashIcon />
+                {armClear ? tl.clearCart : tl.fnClear}
+              </button>
+              <button type="button" className="till-fn-key" disabled aria-disabled="true" data-testid="fn-customer">
+                <UserIcon />
+                {tl.fnCustomer}
+                <small>{tl.nav.soon}</small>
+              </button>
+              <button type="button" className="till-fn-key" disabled aria-disabled="true" data-testid="fn-note">
+                <PackageIcon />
+                {tl.fnNote}
+                <small>{tl.nav.soon}</small>
+              </button>
+            </div>
+          </div>
+          <button type="button" className="till-btn till-btn-go till-pay" onClick={openPay} disabled={noLines} data-testid="cart-pay">
             {s.pay}
           </button>
         </div>
       </aside>
 
-      {/* Phone: the bar that is always in reach of the thumb. */}
-      <div className="till-bar">
-        <button type="button" className="till-bar-cart" onClick={() => setCartOpen(true)} aria-label={s.viewCart} data-testid="bar-cart">
+      <div className="till-side">
+        <header className="till-top">
+          <button type="button" className="till-icon-btn till-side-close" onClick={() => setProductsOpen(false)} aria-label={tl.backToTicket} data-testid="close-products">
+            <CloseIcon />
+          </button>
+          <form className="till-search" role="search" onSubmit={onSearch}>
+            <label className="visually-hidden" htmlFor="till-search">
+              {s.search}
+            </label>
+            <SearchIcon />
+            <input
+              ref={searchRef}
+              id="till-search"
+              className="till-search-input"
+              type="search"
+              enterKeyHint="search"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={s.search}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (e.target.value.trim() === "") {
+                  setResults(null);
+                  setBrowsing(false);
+                }
+              }}
+              data-testid="sell-search"
+            />
+            {query !== "" ? (
+              <button type="button" className="till-search-clear" onClick={clearSearch} aria-label={s.clearSearch}>
+                <CloseIcon />
+              </button>
+            ) : null}
+          </form>
+        </header>
+
+        {showItems ? (
+          <div className="till-crumb" data-testid="till-crumb">
+            <button type="button" className="till-crumb-back" onClick={backToCategories} data-testid="cats-back">
+              <ChevronIcon />
+              {tl.allCategories}
+            </button>
+            <span className="till-crumb-sep" aria-hidden="true">
+              ›
+            </span>
+            <strong className="truncate">{searching ? `“${query.trim()}”` : category === null ? s.all : (categories.find((c) => c.id === category) ? pickName(locale, categories.find((c) => c.id === category)!) : s.all)}</strong>
+          </div>
+        ) : null}
+
+        <section className="till-products" aria-label={s.items} aria-busy={loading}>
+          {!showItems ? (
+            <div className="till-cattiles" data-testid="sell-cats" aria-label={s.categories} role="group">
+              <CategoryTile
+                name={s.all}
+                kind="all"
+                accent={ACCENT.all}
+                index="00"
+                meta={fill(departmentWords.departments, { n: formatNumber(locale, categories.length) })}
+                action={departmentWords.open}
+                onPick={() => void pickCategory(null)}
+                testId="sell-cat-all"
+              />
+              {categories.map((c, i) => {
+                const kind = categoryKindFor(pack, c.nameAr, c.nameCkb, c.nameEn);
+                return (
+                  <CategoryTile
+                    key={c.id}
+                    name={pickName(locale, c)}
+                    kind={kind}
+                    accent={accentFor(kind, c.nameAr || c.id)}
+                    index={String(i + 1).padStart(2, "0")}
+                    meta={fill(departmentWords.categoryItems, { n: formatNumber(locale, c.itemCount) })}
+                    action={departmentWords.open}
+                    onPick={() => void pickCategory(c.id)}
+                  />
+                );
+              })}
+            </div>
+          ) : switching ? (
+            <div className="till-tiles" data-testid="sell-skeleton" aria-hidden="true">
+              {SKELETON_TILES.map((i) => (
+                <span key={i} className="till-tile-skel" />
+              ))}
+            </div>
+          ) : shown.length === 0 && !loading ? (
+            <div className="till-empty">
+              <strong>{searching ? fill(s.noMatch, { q: query.trim() }) : s.noItemsTitle}</strong>
+              {searching ? null : <span>{s.noItemsBody}</span>}
+            </div>
+          ) : (
+            <div className="till-tiles" data-testid="sell-tiles">
+              {shown.map((it) => {
+                const k = `${it.variantId}:${it.unitId}`;
+                return <BoardTile key={k} locale={locale} t={t} item={it} qty={inCart.get(k) ?? 0} onAdd={add} />;
+              })}
+            </div>
+          )}
+          {showItems && !searching && browse.more ? (
+            <button type="button" className="till-btn till-btn-quiet till-more" onClick={() => void loadMore()} disabled={loading} data-testid="sell-more">
+              {tl.showMore}
+            </button>
+          ) : null}
+        </section>
+
+        {/* Narrow screens: the products are a sheet; this bar returns to the ticket. */}
+        <button type="button" className="till-back-bar" onClick={() => setProductsOpen(false)} data-testid="back-to-ticket">
           <span className="till-count">{formatNumber(locale, count)}</span>
-          <strong>{m(total)}</strong>
-        </button>
-        <button type="button" className="till-btn till-btn-go till-bar-pay" onClick={openPay} disabled={lines.length === 0} data-testid="bar-pay">
-          {s.pay}
+          <span>{tl.backToTicket}</span>
+          <strong>{totalText}</strong>
         </button>
       </div>
+
+      {ticketsOpen ? (
+        <div className="till-layer" onClick={(e) => e.target === e.currentTarget && setTicketsOpen(false)}>
+          <div className="till-menu till-sheet" role="dialog" aria-modal="true" aria-labelledby="till-sales-title" data-testid="sales-sheet">
+            <div className="till-menu-head">
+              <h2 id="till-sales-title">{tl.openSales}</h2>
+              <button type="button" className="till-icon-btn" onClick={() => setTicketsOpen(false)} aria-label={tl.closeMenu}>
+                <CloseIcon />
+              </button>
+            </div>
+            <ul className="till-sales">
+              {tabs.map((tab) => (
+                <li key={tab.id}>
+                  <button type="button" className="till-sale" data-active={tab.id === activeId || undefined} onClick={() => switchTo(tab.id)} data-testid="sale-row">
+                    <strong>{fill(tl.saleNo, { n: formatNumber(locale, tab.no) })}</strong>
+                    <span>{tab.count > 0 ? fill(tl.itemCount, { n: formatNumber(locale, tab.count) }) : tl.saleEmpty}</span>
+                    <b>{tab.count > 0 ? m(tab.total) : ""}</b>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="till-newsale till-newsale-wide" onClick={newSale}>
+              <PlusIcon />
+              {tl.newSale}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {menuOpen ? (
         <div className="till-layer" onClick={(e) => e.target === e.currentTarget && setMenuOpen(false)}>
@@ -616,12 +949,9 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 <CloseIcon />
               </button>
             </div>
+            <TillNav t={t} variant="list" onNavigate={() => setMenuOpen(false)} />
             <p className="till-menu-shift">{fill(s.shiftSince, { at: formatDateTime(locale, new Date(shift.openedAt)) })}</p>
             <div className="till-menu-actions">
-              <button type="button" className="till-menu-item" onClick={hold} disabled={lines.length === 0} data-testid="cart-hold">
-                <PauseIcon />
-                {tl.holdCart}
-              </button>
               <button type="button" className="till-menu-item" onClick={clearCart} disabled={lines.length === 0} data-testid="cart-clear">
                 <TrashIcon />
                 {tl.clearCart}
@@ -631,21 +961,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 {tl.closeShift}
               </Link>
             </div>
-            {held.length > 0 ? (
-              <section className="till-held" aria-label={s.heldTitle} data-testid="held-list">
-                <h3>{fill(tl.heldCarts, { n: formatNumber(locale, held.length) })}</h3>
-                <ul>
-                  {held.map((h) => (
-                    <li key={h.id}>
-                      <span>{fill(s.heldLine, { n: formatNumber(locale, h.lines.length), at: formatDateTime(locale, new Date(h.at)) })}</span>
-                      <button type="button" className="till-btn till-btn-quiet" onClick={() => resume(h.id)} data-testid="held-resume">
-                        {s.resume}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
             <div className="till-menu-foot">
               <Link href="/retail/home?menu=1" className="till-menu-link" data-testid="open-shop-menu">
                 <GridIcon />
@@ -658,32 +973,6 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                   {t.common.signOut}
                 </button>
               </form>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {qtyLine ? (
-        <div className="till-layer" onClick={(e) => e.target === e.currentTarget && setQtyFor(null)}>
-          <div className="till-qtypad" role="dialog" aria-modal="true" aria-labelledby="qty-title" data-testid="qty-panel">
-            <h2 id="qty-title" className="truncate">
-              {pickName(locale, qtyLine)}
-            </h2>
-            <p className="till-qtypad-hint">
-              {qtyLine.quantityScale > 0 ? fill(tl.qtyWeight, { unit: qtyLine.unitName }) : tl.qtyPieces} · {tl.qtyZero}
-            </p>
-            <output className="till-display" aria-live="polite" data-testid="qty-display" data-placeholder={qtyText === "" || undefined}>
-              {qtyText === "" ? localQuantity(locale, qtyLine.quantity) : entryText(locale, qtyText)}
-            </output>
-            {error ? <Notice tone="danger">{error}</Notice> : null}
-            <Numpad locale={locale} t={t} label={tl.qtyTitle} decimals={qtyLine.quantityScale} onPress={(k) => setQtyText((x) => numpadPress(x, k, qtyLine.quantityScale))} />
-            <div className="till-pad-actions">
-              <button type="button" className="till-btn till-btn-quiet" onClick={() => setQtyFor(null)}>
-                {tl.cancel}
-              </button>
-              <button type="button" className="till-btn till-btn-go" onClick={commitQty} data-testid="qty-ok">
-                {tl.ok}
-              </button>
             </div>
           </div>
         </div>
@@ -702,7 +991,9 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
               <dl className="till-pay-summary" data-testid="pay-summary">
                 <div className="till-pay-due">
                   <dt>{s.payScreen.due}</dt>
-                  <dd data-testid="pay-due">{m(total)}</dd>
+                  <dd data-testid="pay-due" style={lenStyle(totalText)}>
+                    {totalText}
+                  </dd>
                 </div>
                 <div className="till-pay-given">
                   <dt>
@@ -733,11 +1024,21 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                 )}
               </dl>
               <div className="till-pay-keys">
+                <div className="till-methods" role="group" aria-label={tl.methods}>
+                  <span className="till-method" aria-current="true">
+                    <CashIcon />
+                    {tl.payCash}
+                  </span>
+                  <button type="button" className="till-method" onClick={byCard} disabled={sending || pay.remaining === 0n} data-testid="pay-card">
+                    <CardIcon />
+                    {cashMinor > 0n ? s.payScreen.cardRest : tl.payCard}
+                  </button>
+                </div>
                 <div className="till-notes">
                   {quickAmounts(total > cardMinor ? total - cardMinor : 0n, currency).map((v, i) => (
-                    <button key={v.toString()} type="button" className="till-note" onClick={() => (i === 0 ? exact() : setCash(v))} disabled={sending} data-testid="pay-note">
+                    <button key={v.toString()} type="button" className="till-note" onClick={() => (i === 0 ? exact() : setCash(v))} disabled={sending} style={lenStyle(m(v))} data-testid="pay-note">
                       {i === 0 ? <span className="till-note-tag">{tl.exact}</span> : null}
-                      {m(v)}
+                      <span className="till-note-amount">{m(v)}</span>
                     </button>
                   ))}
                 </div>
@@ -746,13 +1047,14 @@ export function SellScreen({ locale, t, currency, shift, locationId, categories,
                   <button type="button" className="till-btn till-btn-quiet" onClick={resetPay} disabled={sending || (cashText === "" && cardMinor === 0n)} data-testid="pay-reset">
                     {tl.clearEntry}
                   </button>
-                  <button type="button" className="till-btn till-btn-quiet" onClick={byCard} disabled={sending || pay.remaining === 0n} data-testid="pay-card">
-                    <CardIcon />
-                    {cashMinor > 0n ? s.payScreen.cardRest : s.payScreen.cardAll}
-                  </button>
                 </div>
               </div>
             </div>
+            {!online ? (
+              <p className="till-offline" role="status">
+                {tl.offline}
+              </p>
+            ) : null}
             {error ? <Notice tone="danger">{error}</Notice> : null}
             <button type="button" className="till-btn till-btn-go till-pay till-pay-confirm" onClick={() => void confirm()} disabled={!pay.ready || sending} aria-busy={sending} data-testid="pay-confirm">
               {sending ? s.payScreen.sending : s.payScreen.confirm}

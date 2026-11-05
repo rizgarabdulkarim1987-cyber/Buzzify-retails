@@ -19,7 +19,14 @@ type Tx = Prisma.TransactionClient;
 export const MAX_SELL_ITEMS = 60;
 const id = z.string().min(1).max(64);
 
-export type SellCategory = { id: string; nameAr: string; nameCkb: string | null; nameEn: string | null };
+export type SellCategory = {
+  id: string;
+  nameAr: string;
+  nameCkb: string | null;
+  nameEn: string | null;
+  /** Sellable products in the category and everything under it (shown quietly on the till tile). */
+  itemCount: number;
+};
 
 export type SellItem = {
   variantId: string;
@@ -49,12 +56,24 @@ export const listSellCategories = defineAction({
   input: z.object({}).strict(),
   writes: false,
   async run({ tx }): Promise<SellCategory[]> {
-    return tx.rtCategory.findMany({
+    const roots = await tx.rtCategory.findMany({
       where: { archivedAt: null, parentId: null },
       orderBy: [{ nameAr: "asc" }, { id: "asc" }],
       select: { id: true, nameAr: true, nameCkb: true, nameEn: true },
       take: 100,
     });
+    const all = await activeCategories(tx);
+    const grouped = await tx.rtProduct.groupBy({
+      by: ["categoryId"],
+      where: { archivedAt: null, isTestData: false, trackingMode: { not: "SERIAL" }, categoryId: { not: null } },
+      _count: { _all: true },
+    });
+    const perRoot = new Map<string, number>();
+    for (const g of grouped) {
+      const root = rootOf(all, g.categoryId);
+      if (root) perRoot.set(root, (perRoot.get(root) ?? 0) + g._count._all);
+    }
+    return roots.map((r) => ({ ...r, itemCount: perRoot.get(r.id) ?? 0 }));
   },
 });
 

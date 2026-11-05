@@ -30,8 +30,14 @@ import {
   type SellItemDto,
   type ShiftDto,
 } from "../../src/app/retail/sell/_lib/cart";
-import { CartLineRow, Numpad, PaySummary, Receipt, ShiftSummaryView, Tile, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
-import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
+import { ACCENT, CARD, DIM, PALETTE, accentFor, contrast } from "../../src/app/retail/sell/_lib/category-accent";
+import { hasGlyph } from "../../src/app/retail/sell/_lib/category-icons";
+import { STANDARD_CATEGORY_KEYS, categoryKind } from "../../src/app/retail/sell/_lib/category-kind";
+import { CategoryTile } from "../../src/app/retail/sell/_lib/category-tile";
+import { Numpad, PaySummary, Receipt, ShiftSummaryView, TicketPad, TicketRow, Tile, differenceText, entryText } from "../../src/app/retail/sell/_lib/views";
+import { offenders } from "../helpers/own-words";
+import { TillNav } from "../../src/app/retail/sell/till-nav";
+import { categoryTone, keyFromKeyboard, minorToEntry, moneyDecimals, numpadKeys, numpadPress, tileInitial, textLength, CATEGORY_TONES, type NumpadKey } from "../../src/app/retail/sell/_lib/till";
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
 
@@ -195,6 +201,55 @@ describe("the numpad and the tiles", () => {
   });
 });
 
+describe("till v3: compact tiles and the shop frame", () => {
+  const ctx = { locale: "ar" as const, t: ar };
+
+  it("textLength counts characters, not UTF-16 units (the total's font size divides by it)", () => {
+    expect(textLength("٩٬٩٩٩٬٩٩٩٬٩٩٩ د.ع")).toBe(17);
+    expect(textLength("😀a")).toBe(2);
+  });
+
+  it("a tile is text first and one neutral style: name, price, the cart count; no colour, no picture area, no big letter", () => {
+    const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "بسكويت ماري" }), qty: 3 }));
+    expect(out).not.toContain("data-tone");
+    expect(out).toContain('data-incart="true"');
+    expect(out).toContain('data-testid="tile-qty"');
+    expect(out).toContain("till-tile-name");
+    expect(out).not.toContain("till-tile-media");
+    expect(out).not.toContain("till-tile-initial");
+    expect(out).not.toContain("<svg");
+    const plain = html(createElement(Tile, { ...ctx, item: item() }));
+    expect(plain).not.toContain("tile-qty");
+    expect(plain).not.toContain("data-incart");
+  });
+
+  it("a very large price keeps its whole text and tells the box its length", () => {
+    const out = html(createElement(Tile, { ...ctx, item: item({ priceMinor: "9999999999" }) }));
+    expect(out).toContain("٩٬٩٩٩٬٩٩٩٬٩٩٩");
+    expect(out).toMatch(/--len:\d+/);
+  });
+
+  it("the shop frame links the screens that exist and shows the rest as soon, without links", () => {
+    const out = html(createElement(TillNav, { t: ar, variant: "rail" }));
+    for (const href of ["/retail/sell", "/retail/sell/close", "/retail/stock", "/retail/catalog", "/retail/setup"]) expect(out).toContain(`href="${href}"`);
+    expect(out).toContain('aria-current="page"');
+    for (const k of ["expenses", "suppliers", "customers", "reports"] as const) {
+      expect(out).toContain(ar.till.nav[k]);
+      expect(out).toMatch(new RegExp(`aria-disabled="true"[^>]*data-testid="nav-${k}"`));
+    }
+    expect((out.match(/<a /g) ?? []).length).toBe(5);
+    expect((out.match(/aria-disabled="true"/g) ?? []).length).toBe(4);
+  });
+
+  it("the new till strings exist in the three languages and keep the words guard", () => {
+    for (const t of [ar, ckb, en]) {
+      for (const k of ["offline", "quickQty", "cartActions", "colItem", "colQty", "colPrice", "ticket", "fnVoid", "fnClear", "fnCustomer", "fnNote", "productsTab", "backToTicket", "padShow", "padHide", "methods", "scanPlaceholder", "scanLabel", "scanNotFound", "allCategories"] as const) expect(t.till[k].length).toBeGreaterThan(1);
+      for (const v of Object.values(t.till.nav)) expect(v.length).toBeGreaterThan(1);
+      expect(offenders(t.till)).toEqual([]);
+    }
+  });
+});
+
 describe("held carts", () => {
   it("hold and resume round-trip; at most MAX_HELD are kept; storage junk is dropped", () => {
     const lines = addItem([], item());
@@ -227,19 +282,75 @@ describe("views", () => {
     expect(html(createElement(Tile, { ...ctx, item: item({ onHand: "0" }) }))).toContain(ar.sell.outOfStock);
   });
 
-  it("a tile carries its category tone and the name's first letter in the photo slot (the Arabic article skipped)", () => {
-    const out = html(createElement(Tile, { ...ctx, item: item({ nameAr: "الرز" }), tone: 3 }));
-    expect(out).toContain('data-tone="3"');
-    expect(out).toContain('aria-hidden="true">ر<');
-    expect(html(createElement(Tile, { ...ctx, item: item() }))).not.toContain("data-tone");
+  it("a category's picture is chosen from the words of its name (ar, ckb, en), with a neutral fallback", () => {
+    const cases: [string, string][] = [
+      ["ألبان", "dairy"], ["ألبان وأجبان", "dairy"], ["Dairy & Eggs", "dairy"], ["مخبوزات", "bakery"], ["خضار وفواكه", "fruit_veg"],
+      ["لحوم ودجاج", "meat_poultry"], ["أسماك ومأكولات بحرية", "fish"], ["مجمدات", "frozen"], ["مواد غذائية أساسية", "staples"],
+      ["معلبات", "canned"], ["بهارات وتوابل", "spices"], ["إفطار وحبوب", "breakfast"], ["وجبات خفيفة", "snacks"], ["حلويات وسكاكر", "sweets"],
+      ["حلويات ووجبات", "sweets"], ["شاي وقهوة", "tea_coffee"], ["مشروبات", "beverages"], ["منظفات", "cleaning"], ["عناية شخصية", "personal_care"],
+      ["أطفال", "baby"], ["مستلزمات الحيوانات الأليفة", "pet"], ["أدوات منزلية", "household"], ["قرطاسية وألعاب", "stationery"], ["ورقيات", "stationery"],
+      ["صحة وفيتامينات", "health"], ["تبغ وكبريت", "tobacco"], ["Bakery", "bakery"], ["Frozen food", "frozen"], ["أشياء متفرقة", "other"], ["", "other"],
+    ];
+    for (const [name, kind] of cases) expect(categoryKind(name), name).toBe(kind);
+    expect(categoryKind(null, undefined, "Fresh fish")).toBe("fish");
   });
 
-  it("the quantity of a cart line is a button that opens the numpad", () => {
-    const out = html(createElement(CartLineRow, { ...ctx, line: line(), currency: "IQD" }));
-    expect(out).toMatch(/<button[^>]*aria-label="تغيير كمية سكر"[^>]*data-testid="cart-qty"/);
-    const weighed = html(createElement(CartLineRow, { ...ctx, line: addItem([], cheese)[0]!, currency: "IQD" }));
-    expect(weighed).not.toContain('data-testid="cart-inc"');
-    expect(weighed).toContain('data-testid="cart-qty"');
+  it("every standard department key has a glyph and a fixed accent (23 keys); All is white", () => {
+    expect(STANDARD_CATEGORY_KEYS).toHaveLength(23);
+    for (const key of STANDARD_CATEGORY_KEYS) {
+      expect(hasGlyph(key), key).toBe(true);
+      if (key !== "other") expect(ACCENT[key], key).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    expect(hasGlyph("all")).toBe(true);
+    expect(ACCENT.all).toBe("#ffffff");
+    expect(ACCENT.dairy).toBe(PALETTE.sky);
+    expect(accentFor("dairy", "any seed")).toBe(accentFor("dairy", "another seed"));
+  });
+
+  it("every accent reads on the near-black card at AA (4.5:1) and the dim ink does too", () => {
+    for (const [name, hex] of Object.entries({ ...PALETTE, all: ACCENT.all })) expect(contrast(hex, CARD), name).toBeGreaterThanOrEqual(4.5);
+    // The dim ink is white at 62%: blend it over the card before measuring.
+    const a = Number(/([\d.]+)\)$/.exec(DIM)![1]);
+    const blend = [1, 3, 5].map((i) => Math.round(255 * a + parseInt(CARD.slice(i, i + 2), 16) * (1 - a)).toString(16).padStart(2, "0")).join("");
+    expect(contrast(`#${blend}`, CARD)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#ffffff", CARD)).toBeGreaterThanOrEqual(15);
+  });
+
+  it("an owner-made category gets a stable accent from the palette (same name, same colour)", () => {
+    const palette = new Set<string>(Object.values(PALETTE));
+    const seeds = ["قسم جديد", "My shelf", "بەشی نوێ", "x", "", "Cat 7"];
+    for (const seed of seeds) {
+      expect(palette.has(accentFor("other", seed)), seed).toBe(true);
+      expect(accentFor("other", seed)).toBe(accentFor("other", seed));
+    }
+    expect(new Set(seeds.map((x) => accentFor("other", x))).size).toBeGreaterThan(2);
+  });
+
+  it("a category tile is a dark card: glyph, index, name, item count and an Open label; no picture, no price", () => {
+    const out = html(createElement(CategoryTile, { name: "ألبان", kind: "dairy", accent: ACCENT.dairy, index: "01", meta: "24 مادة", action: "فتح" }));
+    expect(out).toContain("--accent-night:#60a5fa");
+    expect(out).toContain("--accent-day:#1d4ed8");
+    expect(out).toContain("till-cattile-glyph");
+    expect(out).toMatch(/till-cattile-index[^>]*>01</);
+    expect(out).toContain("ألبان");
+    expect(out).toContain("24 مادة");
+    expect(out).toContain("till-cattile-action");
+    expect(out.indexOf("till-cattile-name")).toBeLessThan(out.indexOf("till-cattile-meta"));
+    expect(out.indexOf("till-cattile-meta")).toBeLessThan(out.indexOf("till-cattile-action"));
+    expect(out).not.toContain("<img");
+    expect(out).not.toContain("till-tile-price");
+  });
+
+  it("a ticket line is one selectable row: name, quantity, unit price and total", () => {
+    const out = html(createElement(TicketRow, { ...ctx, line: line(), currency: "IQD", selected: true }));
+    expect(out).toMatch(/<button[^>]*aria-pressed="true"[^>]*aria-label="تغيير كمية سكر"[^>]*data-testid="cart-select"/);
+    expect(out).toContain('data-selected="true"');
+    expect(out).toContain('data-testid="cart-qty"');
+    expect(out).toContain("till-row-price");
+    expect(out).toContain("till-row-total");
+    expect(html(createElement(TicketRow, { ...ctx, line: line(), currency: "IQD" }))).toContain('aria-pressed="false"');
+    const weighed = html(createElement(TicketRow, { ...ctx, line: addItem([], cheese)[0]!, currency: "IQD" }));
+    expect(weighed).toContain(`<small>${addItem([], cheese)[0]!.unitName}</small>`);
   });
 
   it("the numpad keeps the calculator layout, shows local digits, '000' for dinar and the decimal mark for decimals", () => {
@@ -255,13 +366,18 @@ describe("views", () => {
     expect(entryText("ar", "12.5")).toBe("١٢٫٥");
   });
 
-  it("a cart line has big - and + with spoken labels, in the interface language", () => {
-    const out = html(createElement(CartLineRow, { ...ctx, line: line(), currency: "IQD" }));
-    expect(out).toContain('data-testid="cart-dec"');
-    expect(out).toContain('data-testid="cart-inc"');
+  it("the ticket keypad edits the selected line: Qty mode, + and -, backspace and C; no dead keys", () => {
+    const out = html(createElement(TicketPad, { ...ctx, decimals: 0, name: "سكر", onPress: () => {}, onStep: () => {} }));
+    expect(out).toContain('dir="ltr"');
+    for (const id of ["key-mode-qty", "key-plus", "key-minus", "key-back", "key-clear", "key-0", "key-7"]) expect(out).toContain(`data-testid="${id}"`);
+    expect(out).not.toContain('data-testid="key-dot"');
+    expect(out).not.toContain('data-testid="key-000"');
     expect(out).toContain("زيادة سكر");
-    const enOut = html(createElement(CartLineRow, { locale: "en", t: en, line: line(), currency: "IQD" }));
-    expect(enOut).toContain("Add one Sugar");
+    expect(out).toContain("إنقاص سكر");
+    const weighed = html(createElement(TicketPad, { locale: "en", t: en, decimals: 3, name: "Cheese", onPress: () => {}, onStep: () => {} }));
+    expect(weighed).toContain('data-testid="key-dot"');
+    expect(weighed).toContain("Add one Cheese");
+    expect(html(createElement(TicketPad, { ...ctx, decimals: 0, name: "", disabled: true, onPress: () => {}, onStep: () => {} }))).toContain("disabled");
   });
 
   it("the pay summary shows the change when covered and the remaining otherwise", () => {

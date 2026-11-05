@@ -29,6 +29,9 @@ export function tileInitial(name: string): string {
   return first.toLocaleUpperCase();
 }
 
+/** "12" for twelve digits, a CSS custom property the total's font size divides the box width by. */
+export const textLength = (text: string) => [...text].length;
+
 export type NumpadKey = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "000" | "." | "back" | "clear";
 
 /** The keys a numpad shows: "000" for dinar amounts (no fractions), "." where the value may have decimals. */

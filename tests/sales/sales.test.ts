@@ -418,6 +418,8 @@ describe("the till's catalog", () => {
 
     const cats = await listSellCategories({}, s.as("cashier"));
     expect(cats.ok && cats.value.map((c) => c.nameAr)).toEqual(["ألبان"]);
+    // The department tile quietly shows how many products it holds (sub-categories included).
+    expect(cats.ok && cats.value.map((c) => c.itemCount)).toEqual([2]);
     const inDairy = await listSellItems({ categoryId: dairy.id, locationId: s.locations.Main }, s.as("cashier"));
     if (!inDairy.ok) throw new Error(inDairy.code);
     expect(inDairy.value.map((i) => [i.nameAr, i.priceMinor, i.onHand])).toEqual([

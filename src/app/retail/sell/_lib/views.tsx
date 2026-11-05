@@ -1,8 +1,9 @@
+import type { CSSProperties } from "react";
 import { formatDateTime, formatNumber, type Locale, type Messages } from "@/messages";
 import { fill, formatMoney, pickName } from "../../../_lib/format";
-import { BackspaceIcon, CardIcon, CashIcon, MinusIcon, PlusIcon, TrashIcon } from "../../../_ui/icons";
+import { BackspaceIcon, CardIcon, CashIcon, MinusIcon, PlusIcon } from "../../../_ui/icons";
 import { lineTotal, type CartLine, type Currency, type PayState, type ReceiptDto, type SellItemDto, type ShiftDto } from "./cart";
-import { numpadKeys, tileInitial, type NumpadKey } from "./till";
+import { numpadKeys, type NumpadKey } from "./till";
 
 /*
  * The till's views, pure (no state, no effects): the client screen wires them, and the UI tests
@@ -22,13 +23,14 @@ export function localQuantity(locale: Locale, q: string): string {
 }
 
 /**
- * One product tile: a colour block in its category's tone with the name's first letter (the slot
- * a photo takes once the catalog has them), the name on up to two lines and the price, large. An
- * item without a price is shown but cannot be added.
+ * One product tile, text first: the name on up to two lines, the price, and a thin bar in its
+ * No colour and no picture area (the catalog has no photos). `qty` is how many are
+ * in the cart now. An item without a price is shown but cannot be added.
  */
-export function Tile({ locale, t, item, tone = null, onAdd }: Ctx & { item: SellItemDto; tone?: number | null; onAdd?: () => void }) {
+export function Tile({ locale, t, item, qty = 0, onAdd }: Ctx & { item: SellItemDto; qty?: number; onAdd?: () => void }) {
   const name = pickName(locale, item);
   const priced = item.priceMinor !== null;
+  const priceText = priced ? money({ locale, t }, item.currency, item.priceMinor!) : t.sell.noPrice;
   const out = item.onHand !== null && BigInt(item.onHand) <= 0n;
   return (
     <button
@@ -37,68 +39,108 @@ export function Tile({ locale, t, item, tone = null, onAdd }: Ctx & { item: Sell
       onClick={onAdd}
       disabled={!priced}
       data-out={out || undefined}
-      data-tone={tone ?? undefined}
+      data-incart={qty > 0 || undefined}
       data-testid="sell-tile"
     >
-      <span className="till-tile-media">
-        <span className="till-tile-initial" aria-hidden="true">
-          {tileInitial(name)}
-        </span>
-        {out ? <span className="till-tile-flag">{t.sell.outOfStock}</span> : null}
-      </span>
       <span className="till-tile-name">{name}</span>
-      <span className="till-tile-price">{priced ? money({ locale, t }, item.currency, item.priceMinor!) : t.sell.noPrice}</span>
+      <span className="till-tile-price" style={{ "--len": [...priceText].length } as CSSProperties}>
+        {priceText}
+      </span>
+      {out ? <span className="till-tile-flag">{t.sell.outOfStock}</span> : null}
+      {qty > 0 ? (
+        <span className="till-tile-qty" aria-hidden="true" data-testid="tile-qty" key={qty}>
+          {localQuantity(locale, String(qty))}
+        </span>
+      ) : null}
     </button>
   );
 }
 
-/** One cart line: name and unit price, the quantity (tap: numpad), big - / + for pieces, the line total. */
-export function CartLineRow({
+/**
+ * One ticket line, receipt style: the name (two lines at most), the quantity, the unit price and
+ * the line total in four columns. The whole row is one button that selects it; the numpad then edits it.
+ */
+export function TicketRow({
   locale,
   t,
   line,
   currency,
-  onStep,
-  onRemove,
-  onEditQty,
+  selected = false,
   last = false,
-}: Ctx & { line: CartLine; currency: Currency; onStep?: (d: 1 | -1) => void; onRemove?: () => void; onEditQty?: () => void; last?: boolean }) {
+  onSelect,
+}: Ctx & { line: CartLine; currency: Currency; selected?: boolean; last?: boolean; onSelect?: () => void }) {
   const name = pickName(locale, line);
   const weighed = line.quantityScale > 0;
-  const qty = (
-    <button type="button" className="till-qty" onClick={onEditQty} aria-label={fill(t.till.editQty, { name })} data-testid="cart-qty">
-      {localQuantity(locale, line.quantity)}
-      {weighed ? <span className="till-qty-unit">{line.unitName}</span> : null}
+  const price = money({ locale, t }, currency, line.priceMinor);
+  return (
+    <li className="till-row" data-selected={selected || undefined} data-last={last || undefined} data-testid="cart-line">
+      <button type="button" className="till-row-btn" aria-pressed={selected} onClick={onSelect} aria-label={fill(t.till.editQty, { name })} data-testid="cart-select">
+        <span className="till-row-name">
+          {name}
+          <small className="till-row-sub">
+            {price} / {line.unitName}
+          </small>
+        </span>
+        <span className="till-row-qty" data-testid="cart-qty">
+          {localQuantity(locale, line.quantity)}
+          {weighed ? <small>{line.unitName}</small> : null}
+        </span>
+        <span className="till-row-price">{price}</span>
+        <strong className="till-row-total">{money({ locale, t }, currency, lineTotal(line))}</strong>
+      </button>
+    </li>
+  );
+}
+
+/**
+ * The ticket's permanent keypad. It edits the selected line's quantity: digits (and the decimal mark
+ * for a weighed item) type the new quantity, backspace deletes a digit, C starts the entry over,
+ * + and - add or take one. Qty is the only mode: the app has no price override or discount, so
+ * no dead keys are shown. Layout is a device layout (7 8 9 on top), the same in every language.
+ */
+export function TicketPad({
+  locale,
+  t,
+  decimals,
+  name,
+  disabled = false,
+  onPress,
+  onStep,
+}: Ctx & { decimals: number; name: string; disabled?: boolean; onPress: (key: NumpadKey) => void; onStep: (d: 1 | -1) => void }) {
+  const digit = (k: string) => (
+    <button key={k} type="button" className="till-key" data-key={k} onClick={() => onPress(k as NumpadKey)} disabled={disabled} data-testid={`key-${k}`}>
+      {localDigitsOf(locale, k)}
     </button>
   );
   return (
-    <li className="till-line" data-last={last || undefined} data-testid="cart-line">
-      <div className="till-line-main">
-        <span className="till-line-name">{name}</span>
-        <span className="till-line-meta">
-          {money({ locale, t }, currency, line.priceMinor)} / {line.unitName}
-        </span>
-      </div>
-      <strong className="till-line-total">{money({ locale, t }, currency, lineTotal(line))}</strong>
-      <div className="till-line-controls">
-        {weighed ? (
-          qty
-        ) : (
-          <div className="till-stepper">
-            <button type="button" className="till-step" onClick={() => onStep?.(-1)} aria-label={fill(t.sell.decrease, { name })} data-testid="cart-dec">
-              <MinusIcon />
-            </button>
-            {qty}
-            <button type="button" className="till-step" onClick={() => onStep?.(1)} aria-label={fill(t.sell.increase, { name })} data-testid="cart-inc">
-              <PlusIcon />
-            </button>
-          </div>
-        )}
-        <button type="button" className="till-remove" onClick={onRemove} aria-label={fill(t.sell.remove, { name })} data-testid="cart-remove">
-          <TrashIcon />
+    <div className="till-pad" dir="ltr" role="group" aria-label={t.till.qtyTitle} data-testid="ticket-pad">
+      {["7", "8", "9"].map(digit)}
+      <button type="button" className="till-key till-key-mode" aria-pressed="true" onClick={() => onPress("clear")} disabled={disabled} data-testid="key-mode-qty">
+        {t.till.colQty}
+      </button>
+      {["4", "5", "6"].map(digit)}
+      <button type="button" className="till-key till-key-op" data-op="plus" onClick={() => onStep(1)} disabled={disabled} aria-label={fill(t.sell.increase, { name })} data-testid="key-plus">
+        <PlusIcon />
+      </button>
+      {["1", "2", "3"].map(digit)}
+      <button type="button" className="till-key till-key-op" data-op="minus" onClick={() => onStep(-1)} disabled={disabled} aria-label={fill(t.sell.decrease, { name })} data-testid="key-minus">
+        <MinusIcon />
+      </button>
+      {decimals > 0 ? (
+        <button type="button" className="till-key" data-key="." onClick={() => onPress(".")} disabled={disabled} data-testid="key-dot">
+          {DECIMAL[locale]}
         </button>
-      </div>
-    </li>
+      ) : null}
+      <button type="button" className="till-key" data-key="0" data-wide={decimals === 0 || undefined} onClick={() => onPress("0")} disabled={disabled} data-testid="key-0">
+        {localDigitsOf(locale, "0")}
+      </button>
+      <button type="button" className="till-key" data-key="back" onClick={() => onPress("back")} disabled={disabled} aria-label={t.till.backspace} data-testid="key-back">
+        <BackspaceIcon />
+      </button>
+      <button type="button" className="till-key till-key-op" data-op="clear" onClick={() => onPress("clear")} disabled={disabled} aria-label={t.till.clearEntry} data-testid="key-clear">
+        C
+      </button>
+    </div>
   );
 }
 

@@ -1,7 +1,30 @@
 import { getI18n } from "../../_lib/i18n";
-import { PageSkeleton } from "../../_ui/page-skeleton";
 
+/** The till's own loading state: the same frame as the sale screen (rail, ticket, products), so nothing jumps when it arrives. */
 export default async function Loading() {
   const { t } = await getI18n();
-  return <PageSkeleton label={t.common.loading} rows={2} />;
+  const cards = Array.from({ length: 12 }, (_, i) => i);
+  return (
+    <div className="till-app" role="status" aria-busy="true" data-testid="till-loading">
+      <span className="visually-hidden">{t.common.loading}</span>
+      <nav className="till-nav" aria-hidden="true" />
+      <aside className="till-ticket" aria-hidden="true">
+        <div className="till-ticket-head" />
+        <div className="till-lines" />
+        <div className="till-ticket-foot" />
+      </aside>
+      <div className="till-side" aria-hidden="true">
+        <header className="till-top">
+          <span className="till-skel-bar" />
+        </header>
+        <section className="till-products">
+          <div className="till-cattiles">
+            {cards.map((i) => (
+              <span key={i} className="till-tile-skel" style={{ minHeight: "9.75rem" }} />
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 }

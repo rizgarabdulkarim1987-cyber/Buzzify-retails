@@ -31,7 +31,7 @@ export type SellItemDto = {
   categoryId: string | null;
 };
 
-export type CategoryDto = { id: string; nameAr: string; nameCkb: string | null; nameEn: string | null };
+export type CategoryDto = { id: string; nameAr: string; nameCkb: string | null; nameEn: string | null; itemCount: number };
 
 export type CartLine = {
   key: string;
@@ -245,7 +245,7 @@ export function parseAmount(text: string, currency: Currency): bigint | null {
 // ---------------------------------------------------------------------------------------------
 // Held carts (this device only)
 
-export type HeldCart = { id: string; at: string; lines: { key: string; variantId: string; unitId: string; nameAr: string; nameCkb: string | null; nameEn: string | null; unitName: string; quantityScale: number; priceMinor: string; quantity: string }[] };
+export type HeldCart = { id: string; at: string; /** Sale number shown on the ticket tab (older held carts have none). */ no?: number; lines: { key: string; variantId: string; unitId: string; nameAr: string; nameCkb: string | null; nameEn: string | null; unitName: string; quantityScale: number; priceMinor: string; quantity: string }[] };
 
 export const MAX_HELD = 10;
 
@@ -271,7 +271,7 @@ export function parseHeld(raw: string | null): HeldCart[] {
       .filter((h): h is HeldCart => {
         if (typeof h !== "object" || h === null) return false;
         const e = h as HeldCart;
-        return typeof e.id === "string" && typeof e.at === "string" && Array.isArray(e.lines) && e.lines.every((l) => typeof l?.unitId === "string" && /^\d+$/.test(String(l?.priceMinor)) && typeof l?.quantity === "string");
+        return typeof e.id === "string" && typeof e.at === "string" && (e.no === undefined || (Number.isInteger(e.no) && e.no > 0)) && Array.isArray(e.lines) && e.lines.every((l) => typeof l?.unitId === "string" && /^\d+$/.test(String(l?.priceMinor)) && typeof l?.quantity === "string");
       })
       .slice(0, MAX_HELD);
   } catch {
