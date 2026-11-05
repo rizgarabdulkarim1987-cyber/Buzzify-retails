@@ -122,6 +122,11 @@ test("the till is one fixed screen: lines page instead of scrolling, X removes w
   await page.screenshot({ path: "test-results/one-screen-375-box.png" });
   await page.getByTestId("pane-sell").click();
   await page.screenshot({ path: "test-results/one-screen-375-sell.png" });
+  await page.getByTestId("cart-pay").first().click();
+  await expect(page.getByTestId("pay-panel")).toBeVisible();
+  expect(await fixedScreen(page)).toEqual({ page: true, rows: true });
+  await page.screenshot({ path: "test-results/inline-pay-375.png" });
+  await page.keyboard.press("Escape");
 
   // Close the shift (nothing sold): the drawer holds the opening cash.
   await page.goto("/retail/sell/close");

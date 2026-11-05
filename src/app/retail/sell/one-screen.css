@@ -1050,3 +1050,25 @@ body:has(.ot) {
 .ot-paycard .till-pay-confirm {
   min-height: 2.75rem;
 }
+
+/* Narrow screens (phone, tablet upright): while paying, the pay pane takes the whole box pane; the
+   keys stay near-square instead of stretching tall and thin. */
+@container (max-width: 760px) {
+  .ot-side:has(.ot-paycard) > :not(.ot-paycard) {
+    display: none;
+  }
+
+  .ot-paycard {
+    flex: 1 1 0;
+  }
+
+  .ot-paycard .till-numpad {
+    grid-auto-rows: minmax(0, 4.25rem);
+    align-content: center;
+  }
+
+  .ot-calc {
+    grid-auto-rows: minmax(0, 4.75rem);
+    align-content: center;
+  }
+}
