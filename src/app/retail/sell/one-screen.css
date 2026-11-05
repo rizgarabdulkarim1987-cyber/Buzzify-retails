@@ -119,7 +119,8 @@ body:has(.ot) {
   display: grid;
   gap: var(--space-2);
   padding: var(--space-2);
-  grid-template-columns: 18.5rem minmax(0, 1fr) 14.75rem;
+  /* The payment / calculator column grows with the screen: wide enough for big keys. */
+  grid-template-columns: clamp(19rem, 28cqw, 28rem) minmax(0, 1fr) clamp(15rem, 20cqw, 21rem);
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas:
     "calc main shift"
@@ -1071,4 +1072,45 @@ body:has(.ot) {
     grid-auto-rows: minmax(0, 4.75rem);
     align-content: center;
   }
+}
+
+/* New sale and the Calculator / Pay swap sit together at the top of the right column, bigger to hit. */
+.ot-head-btns {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.ot-calc-top {
+  flex: 0 0 auto;
+  margin-block-end: var(--space-2);
+}
+
+.ot-head-btns button {
+  min-height: 2.875rem;
+  padding-inline: var(--space-4);
+  border-radius: 10px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.ot-calc-top button {
+  flex: 1;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  cursor: pointer;
+}
+
+.ot-paycard .till-pay-head {
+  flex-wrap: wrap;
+}
+
+/* Held sales: each open sale is a tab you can see and hit at a glance. */
+.ot-tab {
+  min-height: 2.5rem;
+  font-size: var(--text-sm);
+}
+
+.ot-menu-btn {
+  min-height: 2.5rem;
+  font-size: var(--text-sm);
 }
