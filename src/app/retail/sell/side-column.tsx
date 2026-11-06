@@ -6,7 +6,7 @@ import { fill, pickName } from "../../_lib/format";
 import { PrintIcon } from "../../_ui/icons";
 import type { CartLine, Currency, ReceiptDto, SellItemDto, ShiftDto } from "./_lib/cart";
 import { calcDisplay, calcPress, initialCalc } from "./_lib/calc";
-import { money } from "./_lib/views";
+import { money, rateLine } from "./_lib/views";
 import { daysUntil, stockIn } from "./line-table";
 
 /* The cards around the table: shift total, the selected product (stock and batches with expiry), the last receipts, the calculator. */
@@ -152,5 +152,51 @@ export function Calculator({ locale, t, onToPaid, onPay, onNewSale, newSaleLabel
         </button>
       </div>
     </section>
+  );
+}
+
+/**
+ * The dollar rate, always on the till: "$1 = 1,450 IQD" once the shift has one, and (for a manager or the
+ * owner) a field to set or change it in place. A cashier without that permission sees what to ask for.
+ */
+export function RateRow({ locale, t, rateMicro, canSet, busy, onSave }: { locale: Locale; t: Messages; rateMicro: string | null; canSet: boolean; busy: boolean; onSave: (text: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  const one = t.till.one;
+  const open = editing || (rateMicro === null && canSet);
+  return (
+    <div className="ot-rate" data-testid="rate-row">
+      {open ? (
+        <>
+          <label>
+            <span>{t.till.rate}</span>
+            <input value={text} onChange={(e) => setText(e.target.value)} inputMode="decimal" dir="ltr" placeholder="1450" aria-label={t.till.rate} data-testid="rate-input" />
+          </label>
+          <button
+            type="button"
+            disabled={busy || text.trim() === ""}
+            onClick={() => {
+              onSave(text);
+              setEditing(false);
+              setText("");
+            }}
+            data-testid="rate-save"
+          >
+            {one.rateSave}
+          </button>
+        </>
+      ) : rateMicro !== null ? (
+        <>
+          <b data-testid="rate-now">{rateLine({ locale, t }, rateMicro)}</b>
+          {canSet ? (
+            <button type="button" onClick={() => setEditing(true)} data-testid="rate-edit">
+              {one.rateEdit}
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <small>{one.rateNeedManager}</small>
+      )}
+    </div>
   );
 }

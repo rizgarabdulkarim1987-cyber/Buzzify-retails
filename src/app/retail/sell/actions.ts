@@ -4,7 +4,7 @@ import { listShiftExpenses, recordExpense, voidExpense } from "@/server/sales/ex
 import { currentUnitPrices, listSellItems } from "@/server/sales/catalog";
 import { listRecentSales } from "@/server/sales/recent";
 import { createSale } from "@/server/sales/sales";
-import { closeShift, openShift } from "@/server/sales/shifts";
+import { closeShift, openShift, setShiftRate } from "@/server/sales/shifts";
 import { loadShell } from "../_shell";
 import { call, fail } from "../catalog/_lib/call";
 import type { ReceiptDto, SellItemDto, SellResult } from "./_lib/cart";
@@ -50,6 +50,15 @@ export async function closeShiftAction(
       differenceUsdMinor: v.differenceUsdMinor === null ? null : v.differenceUsdMinor.toString(),
       shift: shiftDto(v),
     }),
+  );
+}
+
+/** Sets the dollar rate of the open shift (a manager / owner). The sale screen refreshes to pick it up. */
+export async function setShiftRateAction(key: unknown, input: { shiftId: unknown; usdRateMicro: unknown; expectedVersion: unknown }): Promise<SellResult<{ usdRateMicro: string; version: number }>> {
+  return call(
+    key,
+    (m) => setShiftRate(input, m),
+    (v) => ({ usdRateMicro: v.usdRateMicro === null ? "" : v.usdRateMicro.toString(), version: v.version }),
   );
 }
 

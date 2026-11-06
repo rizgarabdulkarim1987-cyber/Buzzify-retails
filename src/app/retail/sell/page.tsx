@@ -56,6 +56,7 @@ export default async function SellPage() {
         business={businessName}
         branch={shell.branch?.name ?? ""}
         operator={shell.user.name || shell.user.email}
+        canSetRate={shell.options?.ok === true && can(shell.options.value.role, "shift.manage")}
         canVoidExpense={shell.options?.ok === true && can(shell.options.value.role, "shift.manage")}
       />
     </main>

@@ -12,7 +12,7 @@ import { Notice } from "../../_ui/state";
 import { signOut } from "../../session-actions";
 import { failureMessage } from "../catalog/_lib/failures";
 import { newKey } from "../catalog/_lib/keys";
-import { createSaleAction, pricesAction, recentSalesAction, sellItemsAction } from "./actions";
+import { createSaleAction, pricesAction, recentSalesAction, sellItemsAction, setShiftRateAction } from "./actions";
 import {
   addItem,
   lineKey,
@@ -26,6 +26,7 @@ import {
   paymentsOf,
   quickAmounts,
   quickUsdAmounts,
+  rateToMicro,
   removeLine,
   repriceLines,
   setQuantity,
@@ -42,7 +43,7 @@ import { keyFromKeyboard, minorToEntry, moneyDecimals, numpadPress, type NumpadK
 import { Numpad, PayMethods, Receipt, UsdDue, entryText, localQuantity, money, rateLine } from "./_lib/views";
 import { ExpensePanel } from "./expense-panel";
 import { LineTable } from "./line-table";
-import { Calculator, ProductCard, ReceiptsCard, ShiftCard } from "./side-column";
+import { Calculator, ProductCard, RateRow, ReceiptsCard, ShiftCard } from "./side-column";
 import { TillNav } from "./till-nav";
 
 type Props = {
@@ -52,6 +53,8 @@ type Props = {
   shift: ShiftDto;
   /** The business takes dollars: with the shift's rate, the pay screen offers Cash USD. */
   usdEnabled?: boolean;
+  /** A manager or the owner may set the dollar rate of the open shift. */
+  canSetRate?: boolean;
   locationId: string;
   /** The first page of products with their stock and expiry (what a line shows before it is searched again). */
   initialItems: SellItemDto[];
@@ -127,7 +130,7 @@ const VISIBLE_TABS = 4;
  * the last receipts at the inline-end. Open sales are tabs. Paying is the one full-screen step (cash,
  * card, dollars, mixed) and returns here. Phones show two fixed panes switched from a bottom bar.
  */
-export function SellScreen({ locale, t, currency, shift, usdEnabled = false, locationId, initialItems, heldKey, business, branch, operator, canVoidExpense = false }: Props) {
+export function SellScreen({ locale, t, currency, shift, usdEnabled = false, canSetRate = false, locationId, initialItems, heldKey, business, branch, operator, canVoidExpense = false }: Props) {
   const ctx = { locale, t };
   const s = t.sell;
   const tl = t.till;
@@ -506,6 +509,15 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
     setCash(r.cashMinor);
     if (rateMicro !== null) setUsd(r.usdMinor ?? 0n);
   };
+  const saveRate = async (text: string) => {
+    const micro = rateToMicro(text.replace(/[.٫]$/, ""));
+    if (micro === null) return setError(s.failures.badRate);
+    setError(null);
+    const r = await setShiftRateAction(newKey(), { shiftId: shift.id, usdRateMicro: micro.toString(), expectedVersion: shift.version });
+    if (!r.ok) return setError(failureMessage(t, r));
+    router.refresh();
+  };
+
   const resetPay = () => {
     setCashText("");
     setUsdText("");
@@ -833,6 +845,7 @@ export function SellScreen({ locale, t, currency, shift, usdEnabled = false, loc
                 </button>
               </div>
             </div>
+            {usdEnabled ? <RateRow locale={locale} t={t} rateMicro={shift.usdRateMicro} canSet={canSetRate} busy={sending} onSave={(x) => void saveRate(x)} /> : null}
             <div className="till-pay-body">
               <dl className="till-pay-summary" data-testid="pay-summary">
                 <div className="till-pay-due">
